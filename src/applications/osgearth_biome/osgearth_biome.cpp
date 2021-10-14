@@ -71,7 +71,7 @@ struct App
 struct LifeMapGUI : public GUI::BaseGUI
 {
     App _app;
-    LifeMapLayer* lifemap;
+    osg::observer_ptr<LifeMapLayer> _lifemap;
     bool _lifemap_direct;
     float _rugged_power;
     float _dense_power;
@@ -83,12 +83,14 @@ struct LifeMapGUI : public GUI::BaseGUI
         _dense_power(1.0f),
         _lush_power(1.0f)
     {
-        lifemap = _app._map->getLayer<LifeMapLayer>();
-        OE_HARD_ASSERT(lifemap != nullptr);
+        //nop
     }
 
     void draw(osg::RenderInfo& ri) override
     {
+        if (!findLayerOrHide(_lifemap, ri))
+            return;
+
         ImGui::Begin("LifeMap");
 
         // lifemap adjusters
@@ -105,7 +107,6 @@ struct LifeMapGUI : public GUI::BaseGUI
                 _lush_power = std::min(_lush_power, 1.0f);
             }
             else {
-                //stateset(ri)->removeDefine("OE_LIFEMAP_DIRECT");
                 stateset(ri)->setDefine("OE_LIFEMAP_DIRECT", "0", 0x7);
             }
         }
@@ -127,41 +128,42 @@ struct LifeMapGUI : public GUI::BaseGUI
         ImGui::TextColored(ImVec4(1, 1, 0, 1), "Generator Settings");
         ImGui::Indent();
 
-        LifeMapLayer::Options& o = lifemap->options();
-        
-        ImGui::Checkbox("Use landcover", &o.useLandCover().mutable_value());
-        if (o.useLandCover() == true)
+        LifeMapLayer::Options& o = _lifemap->options();
+
+        ImGui::TextColored(ImVec4(1,1,0,1),"LifeMap contributions levels:");
+        ImGui::Separator();
+        ImGui::SliderFloat("Landcover contrib", &o.landCoverWeight().mutable_value(), 0.0f, 1.0f);
+        ImGui::Indent();
+        float value = o.landCoverBlur()->as(Units::METERS);
+        if (ImGui::SliderFloat("Landcover blur (m)", &value, 0.0f, 100.0f))
+            o.landCoverBlur()->set(value, Units::METERS);
+        ImGui::Unindent();
+
+        if (_lifemap->getColorLayer())
         {
-            float value = o.landCoverBlur()->as(Units::METERS);
-            if (ImGui::SliderFloat("Landcover blur (m)", &value, 0.0f, 100.0f))
-                o.landCoverBlur()->set(value, Units::METERS);
+            ImGui::SliderFloat("Imagery color contrib", &o.colorWeight().mutable_value(), 0.0f, 1.0f);
         }
 
-        ImGui::Checkbox("Use terrain elevation/slope", &o.useTerrain().mutable_value());
-        if (o.useTerrain() == true)
+        ImGui::SliderFloat("Terrain contrib", &o.terrainWeight().mutable_value(), 0.0f, 1.0f);
+        ImGui::Indent();
+        ImGui::SliderFloat("Slope contrib", &o.slopeIntensity().mutable_value(), 1.0f, 10.0f);
+        ImGui::SliderFloat("Slope cutoff", &o.slopeCutoff().mutable_value(), 0.0f, 1.0f);
+        ImGui::Unindent();
+
+        if (_lifemap->getLandUseLayer())
         {
-            ImGui::SliderFloat("Terrain weight", &o.terrainWeight().mutable_value(), 0.0f, 1.0f);
+            ImGui::SliderFloat("Land Use contrib", &o.landUseWeight().mutable_value(), 0.0f, 1.0f);
         }
 
-        if (lifemap->getLandUseLayer())
-        {
-            ImGui::Checkbox("Use OSM landuse vectors", &o.useLandUse().mutable_value());
-        }
+        ImGui::SliderFloat("Noise contrib", &o.noiseWeight().mutable_value(), 0.0f, 1.0f);
 
-        if (lifemap->getColorLayer())
+        if (ImGui::Button("Apply Changes"))
         {
-            ImGui::Checkbox("Use coloration", &o.useColor().mutable_value());
-        }
+            // make sure the cache is off
+            _lifemap->setCachePolicy(CachePolicy::NO_CACHE);
 
-        ImGui::SliderFloat(
-            "Slope intensity",
-            &o.slopeIntensity().mutable_value(),
-            1.0f, 10.0f);
-
-        if (ImGui::Button("Apply"))
-        {
             _app._mapNode->getTerrainEngine()->invalidateRegion(
-                { lifemap },
+                { _lifemap.get() },
                 GeoExtent::INVALID);
         }
 
@@ -184,6 +186,8 @@ struct TextureSplattingGUI : public GUI::BaseGUI
     float _ao_power;
     float _brightness;
     float _contrast;
+    float _dense_contrast;
+    float _dense_brightness;
     float _snow;
     float _snow_min_elev;
     float _snow_max_elev;
@@ -194,24 +198,49 @@ struct TextureSplattingGUI : public GUI::BaseGUI
         _blend_start = 2500.0f;
         _blend_end = 500.0f;
         _blend_rgbh_mix = 0.85f;
-        _blend_normal_mix = 0.72f;
+        _blend_normal_mix = 0.85f;
         _depth = 0.02f;
         _normal_power = 1.0f;
         _ao_power = 1.0f;
         _brightness = 1.0f;
         _contrast = 1.0f;
+        _dense_contrast = 0.0f;
+        _dense_brightness = 0.0f;
         _snow = 0.0f;
         _snow_min_elev = 0.0f;
         _snow_max_elev = 3500.0f;
     }
 
+    void load(const Config& conf) override
+    {
+        conf.get("brightness", _brightness);
+        conf.get("contrast", _contrast);
+        conf.get("dense_contrast", _dense_contrast);
+        conf.get("dense_brightness", _dense_brightness);
+        conf.get("snow", _snow);
+        conf.get("snow_min_elev", _snow_min_elev);
+        conf.get("snow_max_elev", _snow_max_elev);
+    }
+
+    void save(Config& conf) override
+    {
+        conf.set("brightness", _brightness);
+        conf.set("contrast", _contrast);
+        conf.set("dense_contrast", _dense_contrast);
+        conf.set("dense_brightness", _dense_brightness);
+        conf.set("snow", _snow);
+        conf.set("snow_min_elev", _snow_min_elev);
+        conf.set("snow_max_elev", _snow_max_elev);
+    }
+
     void draw(osg::RenderInfo& ri) override
     {
-        ImGui::Begin("Texture Splatting");
+        ImGui::Begin("Ground");
 
         if (!_installed)
         {
             // activate tweakable uniforms
+            stateset(ri)->setDataVariance(osg::Object::DYNAMIC);
             stateset(ri)->setDefine("OE_SPLAT_TWEAKS", 0x7);
         }
 
@@ -244,6 +273,12 @@ struct TextureSplattingGUI : public GUI::BaseGUI
         ImGui::SliderFloat("Global contrast", &_contrast, 0.0f, 4.0f);
         stateset(ri)->addUniform(new osg::Uniform("contrast", _contrast));
 
+        ImGui::SliderFloat("Density contrast boost", &_dense_contrast, -1.0f, 1.0f);
+        stateset(ri)->addUniform(new osg::Uniform("dense_contrast", _dense_contrast));
+
+        ImGui::SliderFloat("Density brightness boost", &_dense_brightness, -1.0f, 1.0f);
+        stateset(ri)->addUniform(new osg::Uniform("dense_brightness", _dense_brightness));
+
         ImGui::SliderFloat("Snow", &_snow, 0.0f, 1.0f);
         stateset(ri)->addUniform(new osg::Uniform("oe_snow", _snow));
 
@@ -257,11 +292,12 @@ struct TextureSplattingGUI : public GUI::BaseGUI
     }
 };
 
-struct BiomeGUI : public GUI::BaseGUI
+struct VegetationGUI : public GUI::BaseGUI
 {
     using Clock = std::chrono::steady_clock;
 
     App _app;
+    bool _first;
     float _sse;
     bool _auto_sse;
     std::queue<float> _times;
@@ -274,16 +310,17 @@ struct BiomeGUI : public GUI::BaseGUI
     osg::ref_ptr<osg::Uniform> _sseUni;
     osg::observer_ptr<BiomeLayer> _biolayer;
     osg::observer_ptr<VegetationLayer> _veglayer;
+    float _maxMaxRanges[NUM_ASSET_GROUPS];
 
-    BiomeGUI(App& app) : GUI::BaseGUI("Biomes"),
+    VegetationGUI(App& app) : GUI::BaseGUI("Vegetation"),
         _app(app),
+        _first(true),
         _sse(100.0f),
         _auto_sse(false),
         _forceGenerate(false),
         _manualBiomes(false),
         _sse_target_ms(15.0f)
     {
-        //nop
         for (int i = 0; i < 60; ++i) _times.push(0.0f);
         _total = 0.0f;
     }
@@ -307,6 +344,13 @@ struct BiomeGUI : public GUI::BaseGUI
         if (!findLayerOrHide(_biolayer, ri))
             return;
 
+        if (_first)
+        {
+            _first = false;
+            for (int i = 0; i < NUM_ASSET_GROUPS; ++i)
+                _maxMaxRanges[i] = _veglayer->options().groups()[i].maxRange().get() * 2.0f;
+        }
+
         Clock::time_point now = Clock::now();
         float elapsed_ms = (float)(std::chrono::duration_cast<std::chrono::milliseconds>(now - _lastVisit).count());
         _lastVisit = now;
@@ -316,7 +360,7 @@ struct BiomeGUI : public GUI::BaseGUI
         _times.pop();
         float t = _total / (float)_times.size();
 
-        ImGui::Begin("Biomes", NULL, ImGuiWindowFlags_MenuBar);
+        ImGui::Begin("Vegetation", nullptr, ImGuiWindowFlags_MenuBar);
         {
             if (ImGui::SliderFloat("SSE", &_sse, 1.0f, 1000.0f)) {
                 _veglayer->setMaxSSE(_sse);
@@ -347,9 +391,27 @@ struct BiomeGUI : public GUI::BaseGUI
                 }
             }
 
-            if (ImGui::Checkbox("Regenerate vegetation every frame", &_forceGenerate)) {
-                _app._map->getLayer<VegetationLayer>()->setAlwaysGenerate(_forceGenerate);
+            if (ImGui::Checkbox("Regenerate vegetation every frame", &_forceGenerate))
+            {
+                _veglayer->setAlwaysGenerate(_forceGenerate);
             }
+
+            ImGui::Text("Num tiles: %d", _veglayer->getNumTilesRendered());
+
+            ImGui::Text("Max ranges:");
+            ImGui::Indent();
+            for (int i = 0; i < NUM_ASSET_GROUPS; ++i)
+            {
+                AssetGroup::Type type = (AssetGroup::Type)i;
+                if (ImGui::SliderFloat(
+                    AssetGroup::name(type).c_str(),
+                    &_veglayer->options().group(type).maxRange().mutable_value(),
+                    0.0f, _maxMaxRanges[i]))
+                {
+                    _veglayer->setMaxRange(type, _veglayer->options().group(type).maxRange().get());
+                }
+            }
+            ImGui::Unindent();
 
             if (ImGui::CollapsingHeader("All Biomes"))
             {
@@ -377,16 +439,17 @@ struct BiomeGUI : public GUI::BaseGUI
 
                 if (_manualBiomes)
                 {
-                    int num = 1;
                     for (auto biome : biocat->getBiomes())
                     {
                         ImGui::PushID(biome);
-                        if (ImGui::Checkbox(biome->name()->c_str(), &_isManualBiomeActive[biome]))
+                        char buf[255];
+                        sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                        if (ImGui::Checkbox(buf, &_isManualBiomeActive[biome]))
                         {
                             if (_isManualBiomeActive[biome])
                             {
                                 bioman.ref(biome);
-                                stateset(ri)->setDefine("OE_BIOME_INDEX", std::to_string(num), 0x7);
+                                stateset(ri)->setDefine("OE_BIOME_INDEX", std::to_string(biome->index()), 0x7);
                             }
                             else
                             {
@@ -394,13 +457,16 @@ struct BiomeGUI : public GUI::BaseGUI
                             }
                         }
                         ImGui::PopID();
-                        ++num;
                     }
                 }
                 else
                 {
                     for (auto biome : biocat->getBiomes())
-                        ImGui::Text(biome->name()->c_str());
+                    {
+                        char buf[255];
+                        sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                        ImGui::Text(buf);
+                    }
                 }
             }
 
@@ -411,7 +477,9 @@ struct BiomeGUI : public GUI::BaseGUI
                 auto biomes = bioman.getActiveBiomes();
                 for (auto biome : biomes)
                 {
-                    if (ImGui::TreeNode(biome->name()->c_str()))
+                    char buf[255];
+                    sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                    if (ImGui::TreeNode(buf))
                     {
                         for(int group=0; group<NUM_ASSET_GROUPS; ++group)
                         {
@@ -480,13 +548,13 @@ public:
         addAllBuiltInTools(&args);
 
         add("Procedural", new LifeMapGUI(app), true);
-        add("Procedural", new BiomeGUI(app), true);
+        add("Procedural", new VegetationGUI(app), true);
         add("Procedural", new TextureSplattingGUI(app), true);
     }
 
     App& _app;
     LifeMapGUI _lifemap;
-    BiomeGUI _biomes;
+    VegetationGUI _biomes;
     TextureSplattingGUI _splatting;
 };
 
@@ -569,22 +637,22 @@ main(int argc, char** argv)
     osgViewer::Viewer viewer(arguments);
     viewer.setThreadingModel(viewer.SingleThreaded);
     viewer.setRealizeOperation(new MainGUI::RealizeOperation());
+    
+    App app;
+    app._view = &viewer;
+    app._manip = new EarthManipulator(arguments);
+    viewer.setCameraManipulator(app._manip);
 
     // load an earth file, and support all or our example command-line options
     // and earth file <external> tags
-    osg::Node* node = MapNodeHelper().loadWithoutControls(arguments, &viewer);
-    if (node)
+    osg::ref_ptr<osg::Node> node = MapNodeHelper().loadWithoutControls(arguments, &viewer);
+    if (node.valid())
     {
-        App app;
-
-        app._mapNode = MapNode::get(node);
+        app._mapNode = MapNode::get(node.get());
         if (!app._mapNode)
             return usage("No map node");
 
         app._map = app._mapNode->getMap();
-        app._view = &viewer;
-        app._manip = new EarthManipulator(arguments);
-        viewer.setCameraManipulator(app._manip);
         viewer.getEventHandlers().push_front(new MainGUI(arguments, app));
         viewer.setSceneData(node);
 

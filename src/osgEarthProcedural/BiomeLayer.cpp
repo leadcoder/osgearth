@@ -247,30 +247,34 @@ BiomeLayer::loadPolygonControlSet()
 
         for (auto& feature : _features)
         {
-            int biomeid = feature->getInt(biomeid_field);
-            double buffer = feature->getDouble("buffer", 0.0);
-
-            Geometry* g = feature->getGeometry();
-            GeometryIterator iter(g, false);
-            while (iter.hasMore())
+            std::string biomeid = feature->getString(biomeid_field);
+            const Biome* biome = getBiomeCatalog()->getBiome(biomeid);
+            if (biome)
             {
-                Geometry* part = iter.next();
-                if (part->isPolygon())
+                double buffer = feature->getDouble("buffer", 0.0);
+
+                Geometry* g = feature->getGeometry();
+                GeometryIterator iter(g, false);
+                while (iter.hasMore())
                 {
-                    part->open();
-                    part->removeDuplicates();
-                    part->removeColinearPoints();
+                    Geometry* part = iter.next();
+                    if (part->isPolygon())
+                    {
+                        part->open();
+                        part->removeDuplicates();
+                        part->removeColinearPoints();
 
-                    Bounds b = part->getBounds();
-                    double a_min[2] = { b.xMin(), b.yMin() };
-                    double a_max[2] = { b.xMax(), b.yMax() };
+                        Bounds b = part->getBounds();
+                        double a_min[2] = { b.xMin(), b.yMin() };
+                        double a_max[2] = { b.xMax(), b.yMax() };
 
-                    index->Insert(
-                        a_min, a_max,
-                        PolygonRecordPtr(new PolygonRecord({ 
-                            biomeid,
-                            part,
-                            buffer })));
+                        index->Insert(
+                            a_min, a_max,
+                            PolygonRecordPtr(new PolygonRecord({
+                                biome->index(),
+                                part,
+                                buffer })));
+                    }
                 }
             }
         }
@@ -323,6 +327,7 @@ BiomeLayer::createImageImplementation(
     const TileKey& key,
     ProgressCallback* progress) const
 {
+#if 0
     MySpatialIndex* pointIndex = static_cast<MySpatialIndex*>(_pointIndex);
     if (pointIndex)
     {
@@ -385,6 +390,7 @@ BiomeLayer::createImageImplementation(
 
         return std::move(result);
     }
+#endif
 
     PolygonSpatialIndex* polygonIndex = static_cast<PolygonSpatialIndex*>(_polygonIndex);
     if (polygonIndex)
@@ -422,10 +428,6 @@ BiomeLayer::createImageImplementation(
 
                 if (radius > temp.getUnitsPerPixel())
                 {
-                    //double dx = (prng.next()*2.0 - 1.0), dy = (prng.next()*2.0 - 1.0);
-                    //double len = sqrt(dx*dx + dy*dy);
-                    //dx /= len, dy /= len;
-                    //x += radius * dx, y += radius * dy;
                     x += radius * (prng.next()*2.0 - 1.0);
                     y += radius * (prng.next()*2.0 - 1.0);
                 }
@@ -452,7 +454,7 @@ BiomeLayer::createImageImplementation(
                     }
                 }
 
-                value.r() = biome_index;
+                value.r() = (float)biome_index;
 
                 write(value, iter.s(), iter.t());
             });
@@ -461,7 +463,7 @@ BiomeLayer::createImageImplementation(
 
         trackImage(result, key, biome_indexes_seen);
 
-        return std::move(result);
+        return result;
     }
 
     return GeoImage::INVALID;
@@ -486,10 +488,10 @@ BiomeLayer::postCreateImageImplementation(
 
         iter.forEachPixel([&]()
             {
-                int biomeid = 0;
                 read(pixel, iter.s(), iter.t());
                 int biome_index = (int)pixel.r();
-                biome_indexes_seen.insert(biome_index);
+                if (biome_index > 0)
+                    biome_indexes_seen.insert(biome_index);
             });
 
         trackImage(createdImage, key, biome_indexes_seen);

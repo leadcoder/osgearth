@@ -20,6 +20,7 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include "TextureSplattingLayer"
+#include "TextureSplattingMaterials"
 #include "ProceduralShaders"
 #include "NoiseTextureFactory"
 #include <osgEarth/TerrainEngineNode>
@@ -29,17 +30,16 @@
 #include <osg/Drawable>
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
+#include <osgDB/FileNameUtils>
 #include <cstdlib> // getenv
 
 #define LC0 "[TextureSplattingLayer] "
 #define LC LC0 << getName() << ": "
 
+#define RENDERPARAMS_LAYOUT_BINDING_INDEX 6
+
 using namespace osgEarth::Procedural;
 
-REGISTER_OSGEARTH_LAYER(splat, TextureSplattingLayer);
-REGISTER_OSGEARTH_LAYER(splatimage, TextureSplattingLayer);
-REGISTER_OSGEARTH_LAYER(splat_image, TextureSplattingLayer);
-REGISTER_OSGEARTH_LAYER(splat_imagery, TextureSplattingLayer);
 REGISTER_OSGEARTH_LAYER(proceduralimage, TextureSplattingLayer);
 REGISTER_OSGEARTH_LAYER(procedural_image, TextureSplattingLayer);
 
@@ -49,65 +49,15 @@ Config
 TextureSplattingLayer::Options::getConfig() const
 {
     Config conf = VisibleLayer::Options::getConfig();
+    conf.set("num_levels", numLevels());
     return conf;
 }
 
 void
 TextureSplattingLayer::Options::fromConfig(const Config& conf)
 {
-}
-
-//........................................................................
-
-namespace
-{
-    // Job for loading materials into an arena
-    osg::ref_ptr<TextureArena>
-    loadMaterials(const AssetCatalog& cat, Cancelable* progress)
-    {
-        osg::ref_ptr<TextureArena> arena = new TextureArena();
-
-        if (cat.getLifeMapMatrixHeight() * cat.getLifeMapMatrixWidth() !=
-            cat.getLifeMapTextures().size())
-        {
-            OE_WARN << LC0 << "Configuration error: LifeMapTextures count does not match width*height"
-                << std::endl;
-            return nullptr;
-        }
-
-        for (int i = 0; i < 2; ++i)
-        {
-            auto texList =
-                i == 0 ? cat.getLifeMapTextures() :
-                         cat.getSpecialTextures();
-
-            for (auto& tex : texList)
-            {
-                auto t0 = std::chrono::steady_clock::now();
-
-                Texture::Ptr rgbh = Texture::create();
-                rgbh->_uri = URI(tex.uri()->full() + ".oe_splat_rgbh");
-                arena->add(rgbh);
-
-                // protect the NNRA from compression, b/c it confuses the normal maps
-                Texture::Ptr nnra = Texture::create();
-                nnra->_uri = URI(tex.uri()->full() + ".oe_splat_nnra");
-                nnra->_compress = false;
-                arena->add(nnra);
-
-                auto t1 = std::chrono::steady_clock::now();
-
-                OE_INFO << LC0 << "Loaded texture " << tex.uri()->base()
-                    << ", t=" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "ms"
-                    << std::endl;
-
-                if (progress && progress->isCanceled())
-                    return nullptr;
-            }
-        }
-
-        return arena;
-    }
+    numLevels().setDefault(1);
+    conf.get("num_levels", numLevels());
 }
 
 //........................................................................
@@ -184,12 +134,82 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
 
         if (biome_cat && !biome_cat->getAssets().empty())
         {
-            _materials = Job().dispatch<osg::ref_ptr<TextureArena>>(
-                [biome_cat](Cancelable* progress)
+            int numLevels = options().numLevels().get();
+
+            const AssetCatalog& assets = biome_cat->getAssets();
+
+            std::vector<GeoExtent> ex;
+            ex.push_back(engine->getMap()->getProfile()->calculateExtent(14, 0, 0));
+            ex.push_back(engine->getMap()->getProfile()->calculateExtent(19, 0, 0));
+
+            std::vector<double> tile_height_m;
+            tile_height_m.push_back(ex[0].height(Units::METERS));
+            tile_height_m.push_back(ex[1].height(Units::METERS));
+
+            // Function to load all material textures.
+            auto loadMaterials = [assets, tile_height_m](Cancelable* c) -> Materials::Ptr
+            {
+                Materials::Ptr result = Materials::Ptr(new Materials);
+
+                // contains the textures and their bindless handles
+                result->_arena = new TextureArena();
+
+                // contains metadata about the textures (size etc.)
+                result->_renderParams.setNumElements(assets.getLifeMapTextures().size() * tile_height_m.size());
+
+                if (assets.getLifeMapMatrixHeight() * assets.getLifeMapMatrixWidth() !=
+                    assets.getLifeMapTextures().size())
                 {
-                    return loadMaterials(biome_cat->getAssets(), progress);
+                    OE_WARN << LC0 << "Configuration error: LifeMapTextures count does not match width*height"
+                        << std::endl;
+                    return nullptr;
                 }
-            );
+
+                int ptr0 = 0;
+                int ptr1 = assets.getLifeMapTextures().size();
+
+                for (auto& tex : assets.getLifeMapTextures())
+                {
+                    auto t0 = std::chrono::steady_clock::now();
+
+                    result->_assets.push_back(&tex);
+
+                    RGBH_NNRA_Loader::load(tex.uri()->full(), result->_arena.get());
+
+                    auto t1 = std::chrono::steady_clock::now();
+
+                    OE_INFO << LC0 << "Loaded texture " << tex.uri()->base()
+                        << ", t=" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "ms"
+                        << std::endl;
+
+                    if (c && c->isCanceled())
+                        return nullptr;
+
+                    // Set up the texture scaling:
+                    RenderParams& params0 = result->_renderParams[ptr0++];
+                    params0._scaleV = tex.size().isSet() ? tile_height_m[0] / tex.size()->as(Units::METERS) : 1.0f;
+                    params0._scaleU = params0._scaleV;
+
+                    if (tile_height_m.size() > 1)
+                    {
+                        RenderParams& params1 = result->_renderParams[ptr1++];
+                        params1._scaleV = tex.size().isSet() ? tile_height_m[1] / tex.size()->as(Units::METERS) : 1.0f;
+                        params1._scaleU = params1._scaleV;
+                    }
+
+                    //OE_INFO << LC0 << "   size=" << tex.size()->as(Units::METERS) << "m  scale=" << params._scaleU << std::endl;
+                }
+
+                result->_renderParams.dirty();
+
+                // bind the buffer to a layout index in the shader
+                result->_renderParams.setBindingIndex(RENDERPARAMS_LAYOUT_BINDING_INDEX);
+
+                return result;
+            };
+
+            // Load material asynchronously
+            _materialsJob = Job().dispatch<Materials::Ptr>(loadMaterials);
         }
     }
     else
@@ -208,9 +228,10 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
 void
 TextureSplattingLayer::update(osg::NodeVisitor& nv)
 {
-    if (!_arena.valid() && _materials.isAvailable())
+    // once the materials are loaded, install them and build the state set.
+    if (_materials == nullptr && _materialsJob.isAvailable())
     {
-        _arena = _materials.release();
+        _materials = _materialsJob.release();
         buildStateSets();
     }
 }
@@ -218,13 +239,15 @@ TextureSplattingLayer::update(osg::NodeVisitor& nv)
 void
 TextureSplattingLayer::buildStateSets()
 {
-    if (_arena.valid() &&
-        getLifeMapLayer())
+    if (_materials != nullptr && getLifeMapLayer())
     {
         osg::StateSet* ss = getOrCreateStateSet();
 
         // Install the texture arena as a state attribute:
-        ss->setAttribute(_arena.get());
+        ss->setAttribute(_materials->_arena);
+
+        // install the LUT buffer for per-texture render parameters.
+        ss->setAttribute(new StateAttributeAdapter(&_materials->_renderParams));
 
         // Install the texture splatting shader
         VirtualProgram* vp = VirtualProgram::getOrCreate(ss);
@@ -246,6 +269,10 @@ TextureSplattingLayer::buildStateSets()
             ss->setDefine("OE_TEX_DIM_X", std::to_string(assets.getLifeMapMatrixWidth()));
             ss->setDefine("OE_TEX_DIM_Y", std::to_string(assets.getLifeMapMatrixHeight()));
         }
+
+        ss->setDefine(
+            "OE_SPLAT_NUM_LEVELS",
+            std::to_string(clamp(options().numLevels().get(), 1, 2)));
     }
 }
 
@@ -255,6 +282,8 @@ TextureSplattingLayer::resizeGLObjectBuffers(unsigned maxSize)
     VisibleLayer::resizeGLObjectBuffers(maxSize);
 
     // no need to process _arena because it's in the StateSet
+    if (_materials)
+        _materials->_renderParams.resizeGLObjectBuffers(maxSize);
 }
 
 void
@@ -263,4 +292,6 @@ TextureSplattingLayer::releaseGLObjects(osg::State* state) const
     VisibleLayer::releaseGLObjects(state);
 
     // no need to process _arena because it's in the StateSet
+    if (_materials)
+        _materials->_renderParams.releaseGLObjects(state);
 }

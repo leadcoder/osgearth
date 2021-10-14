@@ -86,20 +86,21 @@ BiomeManager::BiomeManager() :
 void
 BiomeManager::ref(const Biome* biome)
 {
-    ScopedMutexLock lock(_mutex);
+    ScopedMutexLock lock(_refsAndRevision_mutex);
 
     auto item = _refs.emplace(biome, 0);
     ++item.first->second;
     if (item.first->second == 1) // ref count of 1 means it's new
     {
         ++_revision;
+        OE_INFO << LC << "Hello, " << biome->name().get() << std::endl;
     }
 }
 
 void
 BiomeManager::unref(const Biome* biome)
 {
-    ScopedMutexLock lock(_mutex);
+    ScopedMutexLock lock(_refsAndRevision_mutex);
 
     auto iter = _refs.find(biome);
     
@@ -107,13 +108,11 @@ BiomeManager::unref(const Biome* biome)
     if (iter == _refs.end() || iter->second == 0)
         return;
 
-    //OE_SOFT_ASSERT_AND_RETURN(iter != _refs.end(), void());
-    //OE_SOFT_ASSERT_AND_RETURN(iter->second > 0, void());
-
     --iter->second;
     if (iter->second == 0)
     {
         ++_revision;
+        OE_INFO << LC << "Goodbye, " << biome->name().get() << std::endl;
     }
 }
 
@@ -126,40 +125,72 @@ BiomeManager::getRevision() const
 void
 BiomeManager::reset()
 {
-    ScopedMutexLock lock(_mutex);
-
     // reset the reference counts, and bump the revision so the
     // next call to update will remove any resident data
-    _refs.clear();
-    ++_revision;
+    {
+        ScopedMutexLock lock(_refsAndRevision_mutex);
+
+        for (auto& iter : _refs)
+        {
+            const Biome* biome = iter.first;
+            OE_INFO << LC << "Goodbye, " << biome->name().get() << std::endl;
+            iter.second = 0;
+        }
+
+        ++_revision;
+    }
+
+    // Update will resolve the references and unload any resident
+    // assets from memory.
+    update();
 }
 
 void
 BiomeManager::update()
 {
-    // NOTE: ASSUMES _mutex is LOCKED
-
+    std::vector<const Biome*> biomes_to_add;
     std::vector<const Biome*> biomes_to_remove;
 
     // Figure out which biomes we need to load and which we can discard.
-    for (auto& ref : _refs)
     {
-        const Biome* biome = ref.first;
-        int refcount = ref.second;
-
-        // creates the biome data entry if it doesn't exist
-        auto& biomeData = _residentBiomeData[biome];
-
-        if (refcount == 0)
+        ScopedMutexLock lock(_refsAndRevision_mutex);
+        
+        for (auto& ref : _refs)
         {
-            biomes_to_remove.push_back(biome);
+            const Biome* biome = ref.first;
+            int refcount = ref.second;
+
+            // creates the biome data entry if it doesn't exist
+            //auto& biomeData = _residentBiomeData[biome];
+
+            if (refcount > 0)
+            {
+                biomes_to_add.push_back(biome);
+            }
+            else
+            {
+                biomes_to_remove.push_back(biome);
+            }
         }
     }
 
-    // get rid of biomes we no longer need.
-    for (auto biome : biomes_to_remove)
+    // Update the resident biome data structure:
     {
-        _residentBiomeData.erase(biome);
+        ScopedMutexLock lock(_residentData_mutex);
+
+        // add biomes that might need adding
+        for (auto biome : biomes_to_add)
+        {
+            auto& dummy = _residentBiomeData[biome];
+        }
+
+        // get rid of biomes we no longer need.
+        for (auto biome : biomes_to_remove)
+        {
+            _residentBiomeData.erase(biome);
+        }
+
+        discardUnreferencedAssets();
     }
 }
 
@@ -180,16 +211,17 @@ BiomeManager::discardUnreferencedAssets()
 
     for (auto& asset : to_delete)
     {
-        OE_DEBUG << LC << "Unloading asset " << asset->name().get() << std::endl;
         _residentModelAssetData.erase(asset);
+        OE_DEBUG << LC << "Unloaded asset " << asset->name().get() << std::endl;
     }
 }
 
 std::vector<const Biome*>
 BiomeManager::getActiveBiomes() const
 {
+    ScopedMutexLock lock(_refsAndRevision_mutex);
+
     std::vector<const Biome*> result;
-    ScopedMutexLock lock(_mutex);
 
     for (auto& ref : _refs)
     {
@@ -202,7 +234,8 @@ BiomeManager::getActiveBiomes() const
 BiomeManager::ModelAssetDataTable
 BiomeManager::getResidentAssets() const
 {
-    ScopedMutexLock lock(_mutex);
+    ScopedMutexLock lock(_residentData_mutex);
+
     return _residentModelAssetData;
 }
 
@@ -215,18 +248,19 @@ namespace
     };
 }
 
-void
+GeometryCloudCollection
 BiomeManager::updateResidency(
     CreateImposterFunction createImposter,
-    const osgDB::Options* readOptions,
-    std::set<AssetGroup::Type>& out_groups)
+    const osgDB::Options* readOptions)
 {
-    // exclusive access to the biome instance map
-    ScopedMutexLock lock(_mutex);
-
-    // update the collection of resident data
+    // First update the resident biome collection based on current refcounts.
     update();
 
+    // exclusive access to the biome instance map
+    ScopedMutexLock lock(_residentData_mutex);
+
+    std::set<AssetGroup::Type> asset_groups;
+    
     // Any billboard that doesn't have its own normal map will use this one.
     osg::ref_ptr<osg::Texture> defaultNormalMap = osgEarth::createEmptyNormalMapTexture();
 
@@ -256,7 +290,7 @@ BiomeManager::updateResidency(
     materialLoader.setMangler(NORMAL_MAP_TEX_UNIT,
         [](const std::string& filename)
         {
-            return osgDB::getNameLessExtension(filename) + "_Normal.tga";
+            return osgDB::getNameLessExtension(filename) + "_NML.png";
         }
     );
 
@@ -279,7 +313,7 @@ BiomeManager::updateResidency(
     {
         const Biome* biome = iter.first;
 
-        for(int group=0; group<NUM_ASSET_GROUPS; ++group)
+        for (int group = 0; group < NUM_ASSET_GROUPS; ++group)
         {
             auto& assetPointers = biome->assetPointers(group);
             auto& assetUsages = iter.second[group];
@@ -300,7 +334,7 @@ BiomeManager::updateResidency(
                 // First reference to this instance? Populate it:
                 if (data == nullptr)
                 {
-                    OE_DEBUG << LC << "Loading asset " << asset->name().get() << std::endl;
+                    OE_INFO << LC << "  Loading asset " << asset->name().get() << std::endl;
 
                     data = ModelAssetData::create();
 
@@ -450,13 +484,33 @@ BiomeManager::updateResidency(
 
             if (!assetUsages.empty())
             {
-                out_groups.insert((AssetGroup::Type)group);
+                asset_groups.insert((AssetGroup::Type)group);
             }
         }
     }
 
     // discard any resident assets that are no longer referenced
-    discardUnreferencedAssets();
+    //discardUnreferencedAssets();
+
+
+    // Now assemble the new geometry clouds based on the updated 
+    // resident biome information.
+    GeometryCloudCollection clouds;
+
+    for (auto group : asset_groups)
+    {
+        osg::ref_ptr<GeometryCloud> cloud = createGeometryCloud(
+            group,
+            _residentBiomeData,
+            nullptr);
+
+        if (cloud.valid())
+        {
+            clouds[group] = cloud;
+        }
+    }
+
+    return std::move(clouds);
 }
 
 namespace
@@ -483,6 +537,7 @@ namespace
 GeometryCloud*
 BiomeManager::createGeometryCloud(
     AssetGroup::Type group,
+    BiomeInstanceTable& residentBiomeData,
     TextureArena* arena)
 {
     if (arena == nullptr)
@@ -498,7 +553,7 @@ BiomeManager::createGeometryCloud(
 
     // For each resident biome, locate all asset instances that belong
     // to the specified category. Add each to the geometry cloud.
-    for (auto& b_iter : _residentBiomeData)
+    for (auto& b_iter : residentBiomeData)
     {
         // Find the instance list for the requested group,
         // and if it's not empty, carry on:
@@ -541,7 +596,7 @@ BiomeManager::createGeometryCloud(
 
     // attach the GPU lookup tables for this cloud:
     stateSet->setAttribute(
-        createGPULookupTables(group),
+        createGPULookupTables(group, residentBiomeData),
         osg::StateAttribute::ON);
 
     // attach the texture arena:
@@ -554,7 +609,8 @@ BiomeManager::createGeometryCloud(
 
 osg::StateAttribute*
 BiomeManager::createGPULookupTables(
-    AssetGroup::Type group) const
+    AssetGroup::Type group,
+    BiomeInstanceTable& residentBiomeData)
 {
     // Our SSBOs to be reflected on the GPU:
     auto luts = new BiomeManager::BiomeGPUData();
@@ -573,7 +629,7 @@ BiomeManager::createGPULookupTables(
     float weightTotal = 0.0f;
     float smallestWeight = FLT_MAX;
 
-    for (const auto& b : _residentBiomeData)
+    for (const auto& b : residentBiomeData)
     {
         const Biome* biome = b.first;
         const ModelAssetUsageCollection& usages = b.second[group];
@@ -620,7 +676,7 @@ BiomeManager::createGPULookupTables(
 
     // Calcluate the total number of possible slots and allocate them:
     int numElements = 0;
-    for (const auto& b : _residentBiomeData)
+    for (const auto& b : residentBiomeData)
     {
         const Biome* biome = b.first;
         const ModelAssetUsageCollection& instances = b.second[group];
@@ -632,16 +688,24 @@ BiomeManager::createGPULookupTables(
     luts->assetLUT().setNumElements(numElements);
 
     // Next, build the asset table using weightings.
+    // Slot zero (0) will not be used because biome index starts at 1.
+    // Reserve it for later use.
     constexpr int MAX_NUM_BIOMES = 1024;
     luts->biomeLUT().setNumElements(MAX_NUM_BIOMES);
 
     int offset = 0;
-    for (const auto& b : _residentBiomeData)
+    for (const auto& b : residentBiomeData)
     {
         const Biome* biome = b.first;
         const ModelAssetUsageCollection& usages = b.second[group];
 
         int biome_index = biome->index();
+
+        if (biome_index <= 0)
+        {
+            OE_WARN << LC << "Found a biome index <= 0...skipping" << std::endl;
+            continue;
+        }
 
         if (biome_index >= MAX_NUM_BIOMES)
         {

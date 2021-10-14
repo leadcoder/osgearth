@@ -87,9 +87,15 @@ TileNode::TileNode(
     double x = (double)_key.getTileX();
     double y = (double)(th - _key.getTileY() - 1);
 
+    //_tileKeyValue.set(
+    //    (float)(int)fmod(x, m),
+    //    (float)(int)fmod(y, m),
+    //    (float)_key.getLOD(),
+    //    -1.0f);
+
     _tileKeyValue.set(
-        (float)fmod(x, m),
-        (float)fmod(y, m),
+        (float)(x-tw/2), //(int)fmod(x, m),
+        (float)(y-th/2), // (int)fmod(y, m),
         (float)_key.getLOD(),
         -1.0f);
 
@@ -702,11 +708,13 @@ TileNode::createChildren()
             for (unsigned quadrant = 0; quadrant < 4; ++quadrant)
             {
                 TileKey childkey = getKey().createChildKey(quadrant);
+                osg::observer_ptr<TileNode> tile_weakptr(this);
 
-                auto op = [context, parentkey, childkey](Cancelable* state)
+                auto op = [context, tile_weakptr, childkey](Cancelable* state)
                 {
-                    osg::ref_ptr<TileNode> tile = context->liveTiles()->get(parentkey);
-                    if (tile.valid() && !state->isCanceled())
+                    //osg::ref_ptr<TileNode> tile = context->liveTiles()->get(parentkey);
+                    osg::ref_ptr<TileNode> tile;
+                    if (tile_weakptr.lock(tile) && !state->isCanceled())
                         return tile->createChild(childkey, state);
                     else
                         return (TileNode*)nullptr;

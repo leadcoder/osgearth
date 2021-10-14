@@ -23,21 +23,9 @@
 #include <osgViewer/View>
 #include <osg/State>
 
-#ifndef GL_TEXTURE_SPARSE_ARB
-    #define GL_TEXTURE_SPARSE_ARB 0x91A6
-#endif
-
 // osg 3.6:
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
-#endif
-
-#ifndef GL_VIRTUAL_PAGE_SIZE_INDEX_ARB
-    #define GL_VIRTUAL_PAGE_SIZE_INDEX_ARB 0x91A7
-    #define GL_NUM_VIRTUAL_PAGE_SIZES_ARB 0x91A8
-    #define GL_VIRTUAL_PAGE_SIZE_X_ARB 0x9195
-    #define GL_VIRTUAL_PAGE_SIZE_Y_ARB 0x9196 
-    #define GL_VIRTUAL_PAGE_SIZE_Z_ARB 0x9197
 #endif
 
 using namespace osgEarth;
@@ -58,7 +46,7 @@ Texture::get(const osg::State& state) const
 bool
 Texture::isCompiled(const osg::State& state) const
 {
-    return _gc[state.getContextID()]._gltexture != nullptr; // .valid();
+    return _gc[state.getContextID()]._gltexture != nullptr;
 }
 
 void
@@ -242,7 +230,7 @@ Texture::makeResident(const osg::State& state, bool toggle) const
 {
     GCState& gc = get(state);
 
-    if (gc._gltexture != nullptr) //.valid())
+    if (gc._gltexture != nullptr)
     {
         gc._gltexture->makeResident(toggle);
 
@@ -265,7 +253,7 @@ Texture::releaseGLObjects(osg::State* state) const
 {
     if (state)
     {
-        if (_gc[state->getContextID()]._gltexture != nullptr) //.valid())
+        if (_gc[state->getContextID()]._gltexture != nullptr)
         {
             GCState& gc = get(*state);
 

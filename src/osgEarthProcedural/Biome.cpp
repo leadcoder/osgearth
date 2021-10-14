@@ -86,12 +86,9 @@ ModelAsset::getConfig() const
 
 LifeMapTextureAsset::LifeMapTextureAsset(const Config& conf)
 {
-    code().setDefault(0);
-
     conf.get("name", name());
     conf.get("url", uri());
-    conf.get("width", width());
-    conf.get("height", height());
+    conf.get("size", size());
 }
 
 Config
@@ -100,8 +97,7 @@ LifeMapTextureAsset::getConfig() const
     Config conf("texture");
     conf.set("name", name());
     conf.set("url", uri());
-    conf.set("width", width());
-    conf.set("height", height());
+    conf.set("size", size());
     return conf;
 }
 
@@ -336,7 +332,7 @@ Biome::assetPointers(int type) const
 //..........................................................
 
 BiomeCatalog::BiomeCatalog(const Config& conf) :
-    _biomeIndexGenerator(1) // start at 1; 0 has a special meaning
+    _biomeIndexGenerator(1) // start at 1; 0 means "undefined"
 {
     _assets = AssetCatalog(conf.child("assetcatalog"));
 

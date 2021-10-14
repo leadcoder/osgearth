@@ -115,11 +115,16 @@ namespace osgEarth { namespace Procedural
         // e.g. void setMaxRange(AssetGroupType, float);
         // e.g. void setLOD(AssetGroupType, unsigned);
         // ...
+        void setMaxRange(AssetGroup::Type, float);
+        float getMaxRange(AssetGroup::Type) const;
 
         //! Force constant regeneration of locations (for debugging)
         void setAlwaysGenerate(bool value) {
             _forceGenerate = value;
         }
+
+        //! Number of vegetation tiles passed to the most recent draw call
+        unsigned getNumTilesRendered() const;
 
     protected:
 
@@ -190,11 +195,6 @@ namespace osgEarth { namespace Procedural
         }; 
 
 
-        using GeometryCloudCollection = std::unordered_map<
-            AssetGroup::Type,
-            osg::ref_ptr<GeometryCloud>>;
-
-
         // Custom GL renderer for ground cover.
         // This is a PatchLayer callback that intercepts the drawing of a
         // terrain tile to do custom rendering with access to the tile's data.
@@ -205,6 +205,9 @@ namespace osgEarth { namespace Procedural
 
             Renderer(VegetationLayer* layer);
             ~Renderer();
+
+            //! Resets to initial state.
+            void reset();
 
             // Uniform data must be maintained for each unique PCP
             struct PCPUniforms
@@ -320,6 +323,7 @@ namespace osgEarth { namespace Procedural
             GeometryCloudCollection _geomClouds; // veg instance cloud
             osg::ref_ptr<osg::Texture> _noiseTex; // noise for placement
             osg::FrameStamp _lastVisit; // for timeouts
+            std::size_t _lastTileBatchSize; // stats use only
 
             const std::string& getName() const;
 
@@ -329,6 +333,7 @@ namespace osgEarth { namespace Procedural
             Future<GeometryCloudCollection> _geomCloudsInProgress;
             std::atomic_int _biomeRevision;
             bool isNewGeometryCloudAvailable(osg::RenderInfo&);
+            void compileClouds(osg::RenderInfo&);
 
         public: // TileRenderer API
 

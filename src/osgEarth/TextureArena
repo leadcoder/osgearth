@@ -39,7 +39,7 @@ namespace osgEarth
      * 3. GPU resident - GPU handle is in GPU table; GPU memory might not be allocated
      * 4. GPU commited - GPU handle active, GPU texture fully available
      */
-    class OSGEARTH_EXPORT Texture // : public osg::Referenced
+    class OSGEARTH_EXPORT Texture
     {
     public:
         struct GCState {
@@ -112,11 +112,11 @@ namespace osgEarth
         virtual ~TextureArena();
 
     public: // StateAttribute
-        void apply(osg::State&) const;
-        void compileGLObjects(osg::State&) const;
-        void resizeGLObjectBuffers(unsigned);
-        void releaseGLObjects(osg::State*) const;
-        int compare(const osg::StateAttribute& rhs) const { return -1; }
+        void apply(osg::State&) const override;
+        void compileGLObjects(osg::State&) const override;
+        void resizeGLObjectBuffers(unsigned) override;
+        void releaseGLObjects(osg::State*) const override;
+        int compare(const osg::StateAttribute& rhs) const override { return -1; }
 
     private:
         //! disable copy
