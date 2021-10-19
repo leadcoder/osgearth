@@ -296,11 +296,11 @@ ComputeDrawable::populateRenderingStateSets(
             shaders.rendering_functions +
             shaders.radiance_api;
 
-        vp->setFunction(
-            "atmos_eb_ground_init_vert",
-            shaders.ground_vert_init,
-            ShaderComp::LOCATION_VERTEX_MODEL,
-            0.0f);
+        //vp->setFunction(
+        //    "atmos_eb_ground_init_frag",
+        //    shaders.ground_init_frag,
+        //    ShaderComp::LOCATION_FRAGMENT_COLORING,
+        //    -FLT_MAX);
 
         if (i == 0) // ground
         {

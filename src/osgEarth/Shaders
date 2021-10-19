@@ -50,7 +50,8 @@ namespace osgEarth { namespace Util
         std::string SimpleOceanLayer;
         std::string RTTPicker;
         std::string WindComputer;
-        std::string Fog;
+        std::string PBR;
+		std::string Fog;
 	};	
 
 } } 

@@ -49,8 +49,6 @@ void oe_splat_View(inout vec4 vertex_view)
 
 
 [break]
-
-
 #version 430
 #pragma vp_name Texture Splatter FS
 #pragma vp_function oe_splat_Frag, fragment, 0.8
@@ -150,13 +148,21 @@ vec3 unpackNormal(in vec4 p)
 struct Pixel {
     vec4 rgbh;
     vec3 normal;
-    vec4 material;
+    vec3 material;
 };
 
 #define ROUGHNESS 0
 #define AO 1
 #define METAL 2
-float oe_roughness, oe_ao, oe_metal;
+
+// fragment stage global PBR parameters.
+struct OE_PBR {
+    float roughness;
+    float ao;
+    float metal;
+    float brightness;
+    float contrast;
+} oe_pbr;
 
 // testing code for scale
 uniform float tex_size_scale = 1.0;
@@ -177,7 +183,7 @@ void get_pixel(out Pixel res, in int index, in vec2 coord)
     res.rgbh = texture(sampler2D(texHandle[index * 2]), coord);
     vec4 temp = texture(sampler2D(texHandle[index * 2 + 1]), coord);
     res.normal = unpackNormal(temp);
-    res.material.xyz = vec3(temp.z, temp.w, 0.0); // roughness, ao, metal
+    res.material = vec3(temp[2], temp[3], 0.0); // roughness, ao, metal
 }
 
 float heightAndEffectMix(in float h1, in float a1, in float h2, in float a2, in float roughness)
@@ -276,22 +282,16 @@ void oe_splat_Frag(inout vec4 quad)
         resolveLevel(pixel, i, rugged, lush);
     }
 
-    pixel.normal.xy = vec2(
-        DECEL(pixel.normal.x, normal_power),
-        DECEL(pixel.normal.y, normal_power));
-
-    vp_Normal = normalize(vp_Normal + oe_normalMapTBN * pixel.normal.yxz);
-
-    oe_roughness *= pixel.material[ROUGHNESS];
-    oe_ao *= pow(pixel.material[AO], ao_power);
-    oe_metal = pixel.material[METAL];
+    oe_pbr.roughness *= pixel.material[ROUGHNESS];
+    oe_pbr.ao *= pow(pixel.material[AO], ao_power);
+    oe_pbr.metal = pixel.material[METAL];
 
     vec3 color;
 
-    float f_contrast = contrast + (dense * dense_contrast);
-    float f_brightness = brightness + (dense * dense_brightness);
+    float f_c = contrast + (dense * dense_contrast);
+    float f_b = brightness + (dense * dense_brightness);
 
-    pixel.rgbh.rgb = clamp(((pixel.rgbh.rgb - 0.5)*f_contrast + 0.5) * f_brightness, 0, 1);
+    pixel.rgbh.rgb = clamp(((pixel.rgbh.rgb - 0.5)*f_c + 0.5) * f_b, 0, 1);
 
 #if 1
     // perma-snow caps:
@@ -302,10 +302,24 @@ void oe_splat_Frag(inout vec4 quad)
     float cos_angle = dot(vp_Normal, oe_UpVectorView);
     float snowiness = step(min_snow_cos_angle, cos_angle);
     color = mix(pixel.rgbh.rgb, vec3(1), snowiness);
-    oe_roughness = mix(oe_roughness, 0.1, snowiness);
+    oe_pbr.roughness = mix(oe_pbr.roughness, 0.1, snowiness);
 #else
     color = pixel.rgbh.rgb;
 #endif
+
+    // WATER
+    float water = life.a;
+    const vec3 water_color = vec3(0.03, 0.07, 0.12); // vec3(0.1, 0.2, 0.4);
+    color = mix(color, water_color, water);
+    oe_pbr.roughness = mix(oe_pbr.roughness, 0.3, water);
+    oe_pbr.ao = mix(oe_pbr.ao, 1.0, water);
+
+    // NORMAL
+    float np = mix(normal_power, normal_power * 0.5, water);
+    pixel.normal.xy = vec2(
+        DECEL(pixel.normal.x, np),
+        DECEL(pixel.normal.y, np));
+    vp_Normal = normalize(vp_Normal + oe_normalMapTBN * pixel.normal);
 
 #ifdef OE_COLOR_LAYER_TEX
     vec3 cltexel = texture(OE_COLOR_LAYER_TEX, (OE_COLOR_LAYER_MAT*oe_layer_tilec).st).rgb;
@@ -315,12 +329,4 @@ void oe_splat_Frag(inout vec4 quad)
 
     // final color output:
     quad = vec4(color, oe_layer_opacity);
-
-#if 0 //debug
-    if (oe_snow > 0.99)
-    {
-        vec3 n = vp_Normal;
-        quad = vec4(n.x, 0, 0, 1)*0.5 + 0.5;
-    }
-#endif
 }

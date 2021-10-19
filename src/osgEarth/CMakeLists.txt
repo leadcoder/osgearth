@@ -76,6 +76,7 @@ set(TARGET_GLSL
     SimpleOceanLayer.glsl
     RTTPicker.glsl
     WindLayer.CS.glsl
+    PBR.glsl
 	Fog.glsl
 )
 
