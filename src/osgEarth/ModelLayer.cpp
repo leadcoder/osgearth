@@ -297,8 +297,8 @@ ModelLayer::openImplementation()
             geo->setPosition(options().location().get());
             if (pat)
                 geo->addChild(pat);
-
-            modelNodeParent = geo;
+            else
+                modelNodeParent = geo;
         }
 
         if(geo)
