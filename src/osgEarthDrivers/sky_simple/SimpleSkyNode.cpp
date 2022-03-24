@@ -577,8 +577,8 @@ SimpleSkyNode::makeSceneLighting()
             // nothing to do here since we have to run precomputation first
 
             //TODO: api
-            stateset->getOrCreateUniform("atmos_haze_cutoff", osg::Uniform::FLOAT)->set(0.0f);
-            stateset->getOrCreateUniform("atmos_haze_strength", osg::Uniform::FLOAT)->set(1.0f);
+            stateset->getOrCreateUniform("atmos_haze_cutoff", osg::Uniform::FLOAT)->set(_options.hazeCutoff().value());
+            stateset->getOrCreateUniform("atmos_haze_strength", osg::Uniform::FLOAT)->set(_options.hazeStrength().value());
         }
         else if (_useONeil)
         {
@@ -604,6 +604,10 @@ SimpleSkyNode::makeSceneLighting()
 
     stateset->getOrCreateUniform("oe_sky_exposure", osg::Uniform::FLOAT)->set(
         _options.exposure().value());
+
+    stateset->getOrCreateUniform("oe_sky_contrast", osg::Uniform::FLOAT)->set(
+        _options.contrast().value());
+
 }
 
 void
