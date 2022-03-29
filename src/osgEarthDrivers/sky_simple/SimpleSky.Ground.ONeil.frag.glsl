@@ -8,6 +8,8 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 #pragma import_defines(OE_LIGHTING)
 #pragma import_defines(OE_NUM_LIGHTS)
 #pragma import_defines(OE_USE_PBR)
+#pragma import_defines(IRRADIANCEMAP)
+
 
 uniform float oe_sky_exposure = 3.3; // HDR scene exposure (ground level)
 uniform float oe_sky_contrast = 1.0;
@@ -21,6 +23,12 @@ in float atmos_space;      // camera altitude (0=ground, 1=atmos outer radius)
 in vec3 atmos_vert;
 
 vec3 vp_Normal; // surface normal (from osgEarth)
+
+#ifdef IRRADIANCEMAP
+      uniform samplerCube oe_pbr_irradiance;
+      uniform mat4 osg_ViewMatrixInverse;
+      uniform sampler2D oe_pbr_brdf_lut;
+#endif
 
 // frag stage global PBR parameters
 #ifdef OE_USE_PBR
@@ -109,6 +117,23 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
 }
 
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+vec4 SRGBtoLINEAR(vec4 srgbIn)
+{
+    vec3 linOut = pow(srgbIn.xyz, vec3(2.2));
+    return vec4(linOut,srgbIn.w);
+}
+vec4 LINEARtoSRGB(vec4 srgbIn)
+{
+    vec3 linOut = pow(srgbIn.xyz, vec3(1.0 / 2.2));
+    return vec4(linOut, srgbIn.w);
+}
+
+
 #ifdef OE_USE_PBR
 void atmos_fragment_main_pbr(inout vec4 color)
 {
@@ -116,7 +141,7 @@ void atmos_fragment_main_pbr(inout vec4 color)
     return;
 #endif
 
-    vec3 albedo = color.rgb;
+    vec3 albedo = SRGBtoLINEAR(color).rgb;
 
     vec3 N = normalize(vp_Normal);
     vec3 V = normalize(-atmos_vert);
@@ -154,11 +179,36 @@ void atmos_fragment_main_pbr(inout vec4 color)
 
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
+#ifdef IRRADIANCEMAP
+	vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
+	vec3 ibl_kD = 1.0 - ibl_kS;
+	ibl_kD *= 1.0 - oe_pbr.metal;
+	//vec3 rot_n = vec3(N.x,N.z,N.y);
+	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
+	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
+	vec3 ibl_irradiance = textureLod(oe_pbr_irradiance, rot_n, 7).rgb;
+	vec3 ibl_diffuse = ibl_irradiance * albedo;
 
-    vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
-
+     vec3 R = reflect(-V, N);
+     R = normalize(mat3(osg_ViewMatrixInverse)  * R);
+     R = vec3(-R.x,R.z,R.y);
+     vec2 envBRDF = textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0),oe_pbr.roughness),0.0).rg;
+            
+    const float MAX_REFLECTION_LOD = 11.0;
+    const float ROUGHNESS_1_MIP_RESOLUTION = 1.5;
+    float deltaLod = MAX_REFLECTION_LOD - ROUGHNESS_1_MIP_RESOLUTION;
+    float miplod = deltaLod * (sqrt(1.0 + 124.0 * oe_pbr.roughness)-1.0) / 4.0;
+    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, miplod).rgb;
+    //envBRDF = max(vec2(0.0), min(envBRDF, vec2(1.0)));
+    vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
+    vec3 ambient = ((ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb*2;// * oe_pbr.ao;
+    //vec3 ambient = ibl_kD * ibl_diffuse;
+#else
+	vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
+#endif
     color.rgb = ambient + Lo;
 
+    color = LINEARtoSRGB(color);
     // tone map:
     color.rgb = color.rgb / (color.rgb + vec3(1.0));
 
@@ -287,7 +337,7 @@ void atmos_fragment_material(inout vec4 color)
 
     // add the atmosphere color, and incorpoate the lights.
     color.rgb += atmos_color;
-
+    
     vec3 lightColor =
         osg_FrontMaterial.emission.rgb +
         totalDiffuse * osg_FrontMaterial.diffuse.rgb +
@@ -299,6 +349,8 @@ void atmos_fragment_material(inout vec4 color)
 
     // Simulate HDR by applying an exposure factor (1.0 is none, 2-3 are reasonable)
     color.rgb = 1.0 - exp(-oe_sky_exposure * 0.33 * color.rgb);
+    
+
 }
 
 #endif

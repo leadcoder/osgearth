@@ -149,6 +149,25 @@ namespace osgEarth
 
                         if (ImGui::SliderFloat("Ambient", &_ambient, 0.0f, 1.0f)) dirtySettings();
                         _skyNode->getSunLight()->setAmbient(osg::Vec4(_ambient, _ambient, _ambient, 1.0f));
+
+                        static float oe_model_brightness = 1.0;
+                        static float oe_model_contrast = 1.0;
+                        static float oe_model_roughness = 1.0;
+                        static float oe_model_metal = 0.0;
+                        if (ImGui::SliderFloat("oe_model_contrast", &oe_model_contrast, 0.5f, 4.0f))
+                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_contrast", osg::Uniform::FLOAT)->set(oe_model_contrast);
+
+                        if (ImGui::SliderFloat("oe_model_brightness", &oe_model_brightness, 0.5f, 4.0f))
+                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_brightness", osg::Uniform::FLOAT)->set(oe_model_brightness);
+
+                        if (ImGui::SliderFloat("oe_model_roughness ", &oe_model_roughness, 0.0f, 1.0f))
+                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_roughness", osg::Uniform::FLOAT)->set(oe_model_roughness);
+
+                        if (ImGui::SliderFloat("oe_model_metal", &oe_model_metal, 0.0f, 1.0f))
+                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_metal", osg::Uniform::FLOAT)->set(oe_model_metal);
+
+                        
+
                     }
                     else
                     {
@@ -169,10 +188,10 @@ namespace osgEarth
 
                         ImGui::Separator();
 
-                        if (ImGui::SliderFloat("Haze cutoff", &_haze_cutoff, 0.0f, 0.2f)) dirtySettings();
+                        if (ImGui::SliderFloat("Haze cutoff", &_haze_cutoff, 0.0f, 1.2f)) dirtySettings();
                         _skyNode->getOrCreateStateSet()->getOrCreateUniform("atmos_haze_cutoff", osg::Uniform::FLOAT)->set(_haze_cutoff);
 
-                        if (ImGui::SliderFloat("Haze strength", &_haze_strength, 0.0f, 24.0f)) dirtySettings();
+                        if (ImGui::SliderFloat("Haze strength", &_haze_strength, 0.0f, 124.0f)) dirtySettings();
                         _skyNode->getOrCreateStateSet()->getOrCreateUniform("atmos_haze_strength", osg::Uniform::FLOAT)->set(_haze_strength);
 
                         bool atmos_visible = _skyNode->getAtmosphereVisible();

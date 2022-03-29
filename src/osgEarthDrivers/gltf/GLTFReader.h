@@ -483,11 +483,55 @@ public:
                 {
                     tex->setFilter(osg::Texture::MIN_FILTER, (osg::Texture::FilterMode)osg::Texture::LINEAR_MIPMAP_LINEAR);
                     tex->setFilter(osg::Texture::MAG_FILTER, (osg::Texture::FilterMode)osg::Texture::LINEAR);
-                    tex->setWrap(osg::Texture::WRAP_S, (osg::Texture::WrapMode)osg::Texture::CLAMP_TO_EDGE);
-                    tex->setWrap(osg::Texture::WRAP_T, (osg::Texture::WrapMode)osg::Texture::CLAMP_TO_EDGE);
+                    tex->setWrap(osg::Texture::WRAP_S, (osg::Texture::WrapMode)osg::Texture::REPEAT);
+                    tex->setWrap(osg::Texture::WRAP_T, (osg::Texture::WrapMode)osg::Texture::REPEAT);
                 }
             }
             return tex.release();
+        }
+
+        void loadTexture(int index, osg::Geometry* geom, int tex_unit) const
+        {
+            const tinygltf::Texture& texture = model.textures[index];
+            const tinygltf::Image& image = model.images[texture.source];
+            // don't cache embedded textures!
+            bool imageEmbedded =
+                tinygltf::IsDataURI(image.uri) ||
+                image.image.size() > 0;
+            osgEarth::URI imageURI(image.uri, env.referrer);
+            osg::ref_ptr<osg::Texture2D> tex;
+            bool cachedTex = false;
+            TextureCache* texCache = reader->_texCache;
+            if (!imageEmbedded && texCache)
+            {
+                ScopedMutexLock lock(*texCache);
+                auto texItr = texCache->find(imageURI.full());
+                if (texItr != texCache->end())
+                {
+                    tex = texItr->second;
+                    cachedTex = true;
+                }
+            }
+
+            if (!tex.valid())
+            {
+                tex = makeTextureFromModel(texture);
+            }
+
+            if (tex.valid())
+            {
+                if (!imageEmbedded && texCache && !cachedTex)
+                {
+                    ScopedMutexLock lock(*texCache);
+                    auto insResult = texCache->insert(TextureCache::value_type(imageURI.full(), tex));
+                    if (insResult.second)
+                    {
+                        // Some other loader thread beat us in the cache
+                        tex = insResult.first->second;
+                    }
+                }
+                geom->getOrCreateStateSet()->setTextureAttributeAndModes(tex_unit, tex.get());
+            }
         }
 
         osg::Group* makeMesh(const tinygltf::Mesh& mesh, bool prepInstancing) const
@@ -561,7 +605,15 @@ public:
                       OSG_NOTICE << paramItr->first << "=" << paramItr->second.string_value << std::endl;
                       }
                     */
+#if 1
+                    if(material.pbrMetallicRoughness.baseColorTexture.index > -1)
+                        loadTexture(material.pbrMetallicRoughness.baseColorTexture.index, geom, 0);
 
+                    if (material.pbrMetallicRoughness.metallicRoughnessTexture.index > -1)
+                        loadTexture(material.pbrMetallicRoughness.metallicRoughnessTexture.index, geom, 1);
+                    if (material.normalTexture.index > -1)
+                        loadTexture(material.normalTexture.index, geom, 2);
+#else
                     for (tinygltf::ParameterMap::const_iterator paramItr = material.values.begin(); paramItr != material.values.end(); ++paramItr)
                     {
                         if (paramItr->first == "baseColorTexture")
@@ -629,6 +681,7 @@ public:
                             }
                         }
                     }
+#endif
                 }
 
                 std::map<std::string, int>::const_iterator it(primitive.attributes.begin());
@@ -661,6 +714,12 @@ public:
                         OE_DEBUG << "Setting color array " << arrays[it->second].get() << std::endl;
                         geom->setColorArray(arrays[it->second].get());
                     }
+                    else if (it->first.compare("TANGENT") == 0)
+                    {
+                        geom->setVertexAttribArray(6, arrays[it->second].get());
+                    }
+                    
+
                     else
                     {
                         OE_DEBUG << "Skipping array " << it->first << std::endl;
@@ -754,7 +813,7 @@ public:
                     }
                 }
 
-                osgEarth::Registry::shaderGenerator().run(geom.get());
+                //osgEarth::Registry::shaderGenerator().run(geom.get());
             }
 
             return group;

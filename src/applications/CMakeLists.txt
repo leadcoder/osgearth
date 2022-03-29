@@ -92,6 +92,7 @@ IF(NOT OSGEARTH_BUILD_PLATFORM_IPHONE)
         ADD_SUBDIRECTORY(osgearth_heatmap)
         ADD_SUBDIRECTORY(osgearth_createtile)
         ADD_SUBDIRECTORY(osgearth_collecttriangles)
+		ADD_SUBDIRECTORY(osgearth_pbrdemo)
 
         IF(SILVERLINING_FOUND)
             ADD_SUBDIRECTORY(osgearth_silverlining)
