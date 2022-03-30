@@ -152,13 +152,123 @@ osg::ref_ptr<osg::TextureCubeMap> loadCubeMap(const std::string& filePath)
     return cubemap.get();
 }
 
-
-int
-main(int argc, char** argv)
+namespace osgEarth
 {
+    const char* PBR_VS = R"(
+    #version 330 compatibility
+    in vec4 oe_pbr_tangent;
+    out vec4 oe_pbr_texcoord0;
+    out mat3 oe_pbr_TBN;
+    vec3 vp_Normal;
+    void pbr_vs(inout vec4 vertex_model)
+    {
+        oe_pbr_texcoord0 = gl_MultiTexCoord0;
+        vec3 normal = normalize(vp_Normal);
+        vec3 tangent = normalize(gl_NormalMatrix*oe_pbr_tangent.xyz);
+        vec3 bitangent = normalize(cross(normal, tangent) * oe_pbr_tangent.w);
+        oe_pbr_TBN = mat3(tangent, bitangent, normal);
+    }
+)";
+
+    const char* PBR_FS = R"(
+    #version 430
+    #pragma import_defines(PBR_HAS_RM_MAP)
+    // fragment stage global PBR parameters.
+    struct OE_PBR {
+        float roughness;
+        float ao;
+        float metal;
+        float brightness;
+        float contrast;
+    } oe_pbr;
+    uniform float oe_model_brightness = 1.0;
+    uniform float oe_model_contrast = 1.0;
+    uniform float oe_model_roughness = 1.0;
+    uniform float oe_model_metal = 1.0;
+
+    vec3 vp_Normal;
+    in vec4 oe_pbr_texcoord0;
+    in mat3 oe_pbr_TBN;
+    uniform sampler2D oe_pbr_color_sampler;
+#ifdef PBR_HAS_RM_MAP
+    uniform sampler2D oe_pbr_roughness_metal_sampler;
+#endif
+    uniform sampler2D oe_pbr_normal_sampler;
+    void pbr_fs(inout vec4 color)
+    {
+        vec3 n = texture(oe_pbr_normal_sampler, oe_pbr_texcoord0.xy).xyz * 2 -1;
+        vp_Normal = normalize(oe_pbr_TBN * n);
+        oe_pbr.roughness = oe_model_roughness;
+		oe_pbr.metal = oe_model_metal;
+#ifdef PBR_HAS_RM_MAP
+        vec4 rm_map = texture(oe_pbr_roughness_metal_sampler, oe_pbr_texcoord0.xy);
+        oe_pbr.roughness = oe_pbr.roughness * rm_map.g;
+		oe_pbr.metal = oe_model_metal * rm_map.b;
+#endif
+      oe_pbr.brightness = oe_model_brightness;
+	  oe_pbr.contrast = oe_model_contrast;
+        color = color * texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
+    }
+)";
+
+    class PbrUberMaterial : public osg::StateSet
+    {
+    public:
+        enum class TexUnits
+        {
+            COLOR = 0,
+            ROUGHNESS_METAL = 1,
+            NORMAL = 2,
+            IBL_IRRADIANCE = 3,
+            IBL_BRDF_LUT = 4,
+        };
+
+        enum class VertexAttrib
+        {
+            TANGENT = 6,
+        };
+
+        PbrUberMaterial()
+        {
+            auto* vp = osgEarth::VirtualProgram::getOrCreate(this);
+            vp->setInheritShaders(true);
+            vp->setFunction("pbr_vs", PBR_VS, osgEarth::ShaderComp::LOCATION_VERTEX_VIEW, 1.1f);
+            vp->setFunction("pbr_fs", PBR_FS, osgEarth::ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f);
+            vp->addBindAttribLocation("oe_pbr_tangent", (int) VertexAttrib::TANGENT);
+            getOrCreateUniform("oe_pbr_color_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::COLOR);
+            getOrCreateUniform("oe_pbr_roughness_metal_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::ROUGHNESS_METAL);
+            getOrCreateUniform("oe_pbr_normal_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::NORMAL);
+            setDefine("PBR_HAS_RM_MAP");
+            setDefine("IRRADIANCEMAP");
+            setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
+            auto irradiance_texture = loadCubeMap("Environment0");
+            setTextureAttribute((int)TexUnits::IBL_IRRADIANCE, irradiance_texture, osg::StateAttribute::ON);
+            getOrCreateUniform("oe_pbr_irradiance", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
+
+            //osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
+            osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.png");
+            osg::Texture2D* texture = new osg::Texture2D;
+            texture->setImage(image);
+            texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
+            texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
+            texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            ///texture->setMaxAnisotropy(16.0f);
+            setTextureAttribute((int)TexUnits::IBL_BRDF_LUT, texture, osg::StateAttribute::ON);
+            addUniform(new osg::Uniform("oe_pbr_brdf_lut", (int)TexUnits::IBL_BRDF_LUT));
+        }
+    };
+}
+
+int main(int argc, char** argv)
+{
+
     osg::ArgumentParser arguments(&argc, argv);
     if (arguments.read("--help"))
         return usage(argv[0]);
+
+    const std::string  DATA_PATH = "D:/dev_zone/osgEarth/pbr_data/";
+    osgDB::Registry::instance()->getDataFilePathList().push_back(DATA_PATH);
 
     osgEarth::initialize();
 
@@ -174,6 +284,7 @@ main(int argc, char** argv)
     osg::Node* node = MapNodeHelper().loadWithoutControls(arguments, &viewer);
     if (node)
     {
+        
         // Call this to add the GUI. 
         // Passing "true" tells it to install all the built-in osgEarth GUI tools.
         // Put it on the front of the list so events don't filter
@@ -185,108 +296,20 @@ main(int argc, char** argv)
         MapNode* mapNode = MapNode::findMapNode(node);
         // Group to hold all our annotation elements.
         osg::Group* model_group = new osg::Group();
+        model_group->setStateSet(new PbrUberMaterial());
         mapNode->addChild(model_group);
 
         const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
-        Style style;
-        style.getOrCreate<ModelSymbol>()->autoScale() = false;
         std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
         osgDB::Registry::instance()->loadLibrary(libname);
-        //style.getOrCreate<ModelSymbol>()->url()->setLiteral("D:/dev_zone/GASS/gass-leadcoder/repo/samples/common/data/gfx/osg/3dmodels/gta/gta_chassis.obj.10.scale");
-        style.getOrCreate<ModelSymbol>()->url()->setLiteral("C:/tmp/DamagedHelmet/DamagedHelmet.gltf.10.scale");
-        //ModelNode* modelNode = new ModelNode(mapNode, style);
-        // A lat/long SRS for specifying points.
-        osg::Node* mesh = osgDB::readNodeFile("C:/tmp/DamagedHelmet/gltf/DamagedHelmet.gltf.10.scale");
+        osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
         auto modelNode = new GeoTransform();
         modelNode->setPosition(GeoPoint(geoSRS, 15.35552, 58.47792, 90));
         auto rot_node = new osg::PositionAttitudeTransform();
         rot_node->setAttitude(osg::Quat(0, osg::Vec3d(0, 0, 1)));
         rot_node->addChild(mesh);
         modelNode->addChild(rot_node);
-
-        auto stateset = modelNode->getOrCreateStateSet();
-
-        //Create object shader
-        auto* vp = osgEarth::VirtualProgram::getOrCreate(stateset);
-        vp->setInheritShaders(true);
-		const char* vs = R"(
-    #version 330 compatibility
-    in vec4 oe_pbr_tangent;
-    out vec4 oe_pbr_texcoord0;
-    out mat3 oe_pbr_TBN;
-    vec3 vp_Normal;
-    void vs(inout vec4 vertex_model)
-    {
-        oe_pbr_texcoord0 = gl_MultiTexCoord0;
-        vec3 normal = normalize(vp_Normal);
-        vec3 tangent = normalize(gl_NormalMatrix*oe_pbr_tangent.xyz);
-        vec3 bitangent = normalize(cross(normal, tangent) * oe_pbr_tangent.w);
-        oe_pbr_TBN = mat3(tangent, bitangent, normal);
-    }
-)";
-
-
-
-        const char* fs = R"(
-    #version 430
-    // fragment stage global PBR parameters.
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
-    uniform float oe_model_brightness = 1.0;
-    uniform float oe_model_contrast = 1.0;
-    uniform float oe_model_roughness = 1.0;
-    uniform float oe_model_metal = 1.0;
-
-    vec3 vp_Normal;
-    in vec4 oe_pbr_texcoord0;
-    in mat3 oe_pbr_TBN;
-    uniform sampler2D oe_pbr_color_sampler;
-    uniform sampler2D oe_pbr_roughness_metal_sampler;
-    uniform sampler2D oe_pbr_normal;
-    void fs(inout vec4 color)
-    {
-        vec4 n = texture(oe_pbr_normal, oe_pbr_texcoord0.xy);
-        n.xyz = n.xyz*2.0 - 1.0;
-        vp_Normal = normalize(oe_pbr_TBN * n.xyz);
-
-        vec4 roughness_metal = texture(oe_pbr_roughness_metal_sampler, oe_pbr_texcoord0.xy);
-        oe_pbr.roughness = roughness_metal.g * oe_model_roughness;
-		oe_pbr.metal = roughness_metal.b * oe_model_metal;
-		oe_pbr.brightness = oe_model_brightness;
-		oe_pbr.contrast = oe_model_contrast;
-        color = color * texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
-    }
-)";
-        vp->setFunction("vs", vs, osgEarth::ShaderComp::LOCATION_VERTEX_VIEW, 1.1f);
-        vp->setFunction("fs", fs, osgEarth::ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f);
-        vp->addBindAttribLocation("oe_pbr_tangent", 6);
-        stateset->getOrCreateUniform("oe_pbr_color_sampler", osg::Uniform::SAMPLER_2D)->set(0);
-        stateset->getOrCreateUniform("oe_pbr_roughness_metal_sampler", osg::Uniform::SAMPLER_2D)->set(1);
-        stateset->getOrCreateUniform("oe_pbr_normal", osg::Uniform::SAMPLER_2D)->set(2);
-        stateset->getOrCreateUniform("oe_pbr_irradiance", osg::Uniform::SAMPLER_CUBE)->set(3);
         model_group->addChild(modelNode);
-
-        stateset->setDefine("IRRADIANCEMAP");
-        stateset->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
-        auto irradiance_texture = loadCubeMap("D:/dev_zone/osgpbr/osgEffect/effectcompositor/data/Assets/Environment2.cubemap/");
-        stateset->setTextureAttribute(3, irradiance_texture, osg::StateAttribute::ON);
-
-        //osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
-        osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("D:/dev_zone/osgpbr/osgEffect/effectcompositor/data/brdfLUT.png");
-        osg::Texture2D* texture = new osg::Texture2D;
-        texture->setImage(image);
-        texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
-        texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
-        texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
-        texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-        ///texture->setMaxAnisotropy(16.0f);
-        stateset->setTextureAttribute(4, texture, osg::StateAttribute::ON);
-        stateset->addUniform(new osg::Uniform("oe_pbr_brdf_lut", 4));
 
         viewer.setSceneData(node);
         viewer.getCamera()->getGraphicsContext()->getState()->setUseModelViewAndProjectionUniforms(true);
