@@ -31,6 +31,18 @@ namespace osgEarth
         using namespace osgEarth;
         using namespace osgEarth::Util;
 
+        osg::Uniform* overrideUniform(osg::StateSet* ss, std::string name, osg::Uniform::Type type)
+        {
+            auto uniform = ss->getUniform(name);
+            if (!uniform)
+            {
+                uniform = new osg::Uniform(type, name);
+                ss->addUniform(uniform, osg::StateAttribute::OVERRIDE);
+            }
+            return uniform;
+        }
+        
+
         class EphemerisGUI : public BaseGUI
         {
         private:
@@ -153,18 +165,28 @@ namespace osgEarth
                         static float oe_model_brightness = 1.0;
                         static float oe_model_contrast = 1.0;
                         static float oe_model_roughness = 1.0;
-                        static float oe_model_metal = 0.0;
+                        static float oe_model_metal = 1.0;
+                        static float oe_model_emissive = 1.0;
+
+                        static bool init = true;
+                        if (init)
+                        {
+                            
+                        }
+                        auto ss = _skyNode->getOrCreateStateSet();
+                        
                         if (ImGui::SliderFloat("oe_model_contrast", &oe_model_contrast, 0.5f, 4.0f))
                             _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_contrast", osg::Uniform::FLOAT)->set(oe_model_contrast);
-
+                        
                         if (ImGui::SliderFloat("oe_model_brightness", &oe_model_brightness, 0.5f, 4.0f))
                             _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_brightness", osg::Uniform::FLOAT)->set(oe_model_brightness);
 
                         if (ImGui::SliderFloat("oe_model_roughness ", &oe_model_roughness, 0.0f, 1.0f))
-                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_roughness", osg::Uniform::FLOAT)->set(oe_model_roughness);
-
+                            overrideUniform(ss,"oe_pbr_roughness_factor", osg::Uniform::FLOAT)->set(oe_model_roughness);
                         if (ImGui::SliderFloat("oe_model_metal", &oe_model_metal, 0.0f, 1.0f))
-                            _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_metal", osg::Uniform::FLOAT)->set(oe_model_metal);
+                            overrideUniform(ss, "oe_pbr_metal_factor", osg::Uniform::FLOAT)->set(oe_model_metal);
+                        if (ImGui::SliderFloat("oe_model_emissive", &oe_model_emissive, 0.0f, 1.0f))
+                            overrideUniform(ss, "oe_pbr_emissive_factor", osg::Uniform::FLOAT)->set(oe_model_emissive);
 
                         
 

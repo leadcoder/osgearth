@@ -41,6 +41,7 @@
 #include <osgEarth/ShaderUtils>
 #include <osgEarth/InstanceBuilder>
 #include <osgEarth/StateTransition>
+#include <osgEarth/PBRMaterial>
 
 using namespace osgEarth;
 using namespace osgEarth::Util;
@@ -490,7 +491,7 @@ public:
             return tex.release();
         }
 
-        void loadTexture(int index, osg::Geometry* geom, int tex_unit) const
+        osg::ref_ptr<osg::Texture2D> loadTexture(int index) const
         {
             const tinygltf::Texture& texture = model.textures[index];
             const tinygltf::Image& image = model.images[texture.source];
@@ -530,8 +531,8 @@ public:
                         tex = insResult.first->second;
                     }
                 }
-                geom->getOrCreateStateSet()->setTextureAttributeAndModes(tex_unit, tex.get());
             }
+            return tex;
         }
 
         osg::Group* makeMesh(const tinygltf::Mesh& mesh, bool prepInstancing) const
@@ -606,13 +607,34 @@ public:
                       }
                     */
 #if 1
-                    if(material.pbrMetallicRoughness.baseColorTexture.index > -1)
-                        loadTexture(material.pbrMetallicRoughness.baseColorTexture.index, geom, 0);
-
+                    //assume pbr material for now...
+                    PbrMaterial* pbr = new PbrMaterial();
+                    geom->setStateSet(pbr);
+                    pbr->setRoughnessFactor(material.pbrMetallicRoughness.roughnessFactor);
+                    pbr->setMetalFactor(material.pbrMetallicRoughness.metallicFactor);
+                    if (!material.pbrMetallicRoughness.baseColorFactor.empty())
+                    {
+                        if (material.pbrMetallicRoughness.baseColorFactor.size() > 2)
+                            pbr->setColorFactor(osg::Vec3(material.pbrMetallicRoughness.baseColorFactor[0], 
+                                material.pbrMetallicRoughness.baseColorFactor[1], 
+                                material.pbrMetallicRoughness.baseColorFactor[2]));
+                    }
+                    if (!material.emissiveFactor.empty())
+                    {
+                        if (material.emissiveFactor.size() > 2)
+                            pbr->setEmissiveFactor(osg::Vec3(material.emissiveFactor[0],
+                                material.emissiveFactor[1],
+                                material.emissiveFactor[2]));
+                    }
+                   
+                    if (material.pbrMetallicRoughness.baseColorTexture.index > -1)
+                        pbr->setColorMap(loadTexture(material.pbrMetallicRoughness.baseColorTexture.index).get());
                     if (material.pbrMetallicRoughness.metallicRoughnessTexture.index > -1)
-                        loadTexture(material.pbrMetallicRoughness.metallicRoughnessTexture.index, geom, 1);
+                        pbr->setMetalRoughnessMap(loadTexture(material.pbrMetallicRoughness.metallicRoughnessTexture.index).get());
                     if (material.normalTexture.index > -1)
-                        loadTexture(material.normalTexture.index, geom, 2);
+                        pbr->setNormalMap(loadTexture(material.normalTexture.index).get());
+                    if (material.emissiveTexture.index > -1)
+                        pbr->setEmissiveMap(loadTexture(material.emissiveTexture.index).get());
 #else
                     for (tinygltf::ParameterMap::const_iterator paramItr = material.values.begin(); paramItr != material.values.end(); ++paramItr)
                     {
@@ -716,7 +738,7 @@ public:
                     }
                     else if (it->first.compare("TANGENT") == 0)
                     {
-                        geom->setVertexAttribArray(6, arrays[it->second].get());
+                        geom->setVertexAttribArray((int)PbrUberMaterial::VertexAttrib::TANGENT, arrays[it->second].get());
                     }
                     
 

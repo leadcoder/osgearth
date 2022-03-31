@@ -8,7 +8,7 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 #pragma import_defines(OE_LIGHTING)
 #pragma import_defines(OE_NUM_LIGHTS)
 #pragma import_defines(OE_USE_PBR)
-#pragma import_defines(IRRADIANCEMAP)
+#pragma import_defines(PBR_IRRADIANCE_MAP)
 
 
 uniform float oe_sky_exposure = 3.3; // HDR scene exposure (ground level)
@@ -24,11 +24,12 @@ in vec3 atmos_vert;
 
 vec3 vp_Normal; // surface normal (from osgEarth)
 
-#ifdef IRRADIANCEMAP
+#ifdef PBR_IRRADIANCE_MAP
       uniform samplerCube oe_pbr_irradiance;
       uniform mat4 osg_ViewMatrixInverse;
       uniform sampler2D oe_pbr_brdf_lut;
 #endif
+
 
 // frag stage global PBR parameters
 #ifdef OE_USE_PBR
@@ -40,6 +41,7 @@ struct OE_PBR {
     float brightness;
     float contrast;
 } oe_pbr;
+vec3 oe_pbr_emissive;
 #endif
 
 // Parameters of each light:
@@ -179,7 +181,8 @@ void atmos_fragment_main_pbr(inout vec4 color)
 
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
-#ifdef IRRADIANCEMAP
+    
+#ifdef PBR_IRRADIANCE_MAP
 	vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
 	vec3 ibl_kD = 1.0 - ibl_kS;
 	ibl_kD *= 1.0 - oe_pbr.metal;
@@ -207,8 +210,9 @@ void atmos_fragment_main_pbr(inout vec4 color)
 	vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
 #endif
     color.rgb = ambient + Lo;
-
+    color.rgb += oe_pbr_emissive*0.5;
     color = LINEARtoSRGB(color);
+    
     // tone map:
     color.rgb = color.rgb / (color.rgb + vec3(1.0));
 
