@@ -27,6 +27,7 @@
 #include <osg/MatrixTransform>
 #include <osg/Texture2D>
 #include <osg/CullFace>
+#include <osg/BlendFunc>
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
 #include <osgDB/ReaderWriter>
@@ -635,6 +636,25 @@ public:
                         pbr->setNormalMap(loadTexture(material.normalTexture.index).get());
                     if (material.emissiveTexture.index > -1)
                         pbr->setEmissiveMap(loadTexture(material.emissiveTexture.index).get());
+
+                    if (material.alphaMode != "OPAQUE")
+                    {
+                        if (material.alphaMode == "BLEND")
+                        {
+                            geom->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);
+                         
+                            geom->getOrCreateStateSet()->setAttributeAndModes(new osg::BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA), osg::StateAttribute::ON);
+                            geom->getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+                           // osgEarth::Util::DiscardAlphaFragments().install(geom->getOrCreateStateSet(), 0.15);
+                        }
+                        else if (material.alphaMode == "MASK")
+                        {
+                            geom->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);
+                            geom->getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+                            osgEarth::Util::DiscardAlphaFragments().install(geom->getOrCreateStateSet(), material.alphaCutoff);
+                        }
+                    }
+                
 #else
                     for (tinygltf::ParameterMap::const_iterator paramItr = material.values.begin(); paramItr != material.values.end(); ++paramItr)
                     {

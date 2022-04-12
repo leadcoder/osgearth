@@ -11,6 +11,101 @@
 
 namespace osgEarth
 {
+#if 1
+	osg::ref_ptr<osg::TextureCubeMap> loadCubeMap(const std::string& filePath)
+	{
+		osg::ref_ptr<osg::TextureCubeMap> cubemap;
+
+		std::string absolutePath = osgDB::findDataFile(filePath);
+		std::map<std::string, std::string> imageMap;
+
+		osgDB::DirectoryContents contents = osgDB::getDirectoryContents(absolutePath);
+		for (unsigned int i = 0; i < contents.size(); ++i)
+		{
+			std::string filenameInDir = osgDB::convertToLowerCase(contents[i]);
+
+			if (filenameInDir == "." ||
+				filenameInDir == "..")
+			{
+				continue;
+			}
+
+
+			if (filenameInDir.find("c00") != std::string::npos || filenameInDir.find("right") != std::string::npos)
+			{
+				imageMap["posx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("c01") != std::string::npos || filenameInDir.find("left") != std::string::npos)
+			{
+				imageMap["negx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("c02") != std::string::npos || filenameInDir.find("top") != std::string::npos)
+			{
+				imageMap["posy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("c03") != std::string::npos || filenameInDir.find("bottom") != std::string::npos)
+			{
+				imageMap["negy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("c04") != std::string::npos || filenameInDir.find("front") != std::string::npos)
+			{
+				imageMap["posz"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("c05") != std::string::npos || filenameInDir.find("back") != std::string::npos)
+			{
+				imageMap["negz"] = absolutePath + "\\" + contents[i];
+			}
+		}
+
+		if (imageMap.size() < 6)
+			return cubemap;
+
+		osg::ref_ptr<osg::Image> imagePosX = osgDB::readImageFile(imageMap["posx"]);
+		osg::ref_ptr<osg::Image> imageNegX = osgDB::readImageFile(imageMap["negx"]);
+		osg::ref_ptr<osg::Image> imagePosY = osgDB::readImageFile(imageMap["posy"]);
+		osg::ref_ptr<osg::Image> imageNegY = osgDB::readImageFile(imageMap["negy"]);
+		osg::ref_ptr<osg::Image> imagePosZ = osgDB::readImageFile(imageMap["posz"]);
+		osg::ref_ptr<osg::Image> imageNegZ = osgDB::readImageFile(imageMap["negz"]);
+
+
+		if (imagePosX.valid() && imageNegX.valid() && imagePosY.valid() && imageNegY.valid() && imagePosZ.valid() && imageNegZ.valid())
+		{
+		
+			/*imagePosX->setInternalTextureFormat(GL_SRGB8);
+			imageNegX->setInternalTextureFormat(GL_SRGB8);
+			imagePosY->setInternalTextureFormat(GL_SRGB8);
+			imageNegY->setInternalTextureFormat(GL_SRGB8);
+			imagePosZ->setInternalTextureFormat(GL_SRGB8);
+			imageNegZ->setInternalTextureFormat(GL_SRGB8);*/
+			
+			cubemap = new osg::TextureCubeMap;
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_X, imagePosX);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_X, imageNegX);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Y, imagePosY);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Y, imageNegY);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Z, imagePosZ);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Z, imageNegZ);
+
+			cubemap->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+
+
+			cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+			cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+
+			//cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
+			//cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
+		}
+
+		return cubemap.get();
+	}
+#else
 	osg::ref_ptr<osg::TextureCubeMap> loadCubeMap(const std::string& filePath)
 	{
 		osg::ref_ptr<osg::TextureCubeMap> cubemap;
@@ -117,7 +212,7 @@ namespace osgEarth
 
 		return cubemap.get();
 	}
-
+#endif
 
 	 const char* PBR_VS = R"(
     #version 330 compatibility
@@ -199,13 +294,16 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		oe_pbr.metal = oe_pbr_metal_factor;
 #ifdef PBR_METALROUGHNESS_MAP
         vec4 mr_map = texture(oe_pbr_metal_roughness_sampler, oe_pbr_texcoord0.xy);
-        oe_pbr.roughness = oe_pbr.roughness * mr_map.g;
+        oe_pbr.roughness = oe_pbr.roughness *  sqrt(mr_map.g); //pow(mr_map.g, 1.0 / 2.2);
 		oe_pbr.metal = oe_pbr.metal * mr_map.b;
+		oe_pbr.ao = mr_map.r;
 #endif
         oe_pbr.brightness = oe_model_brightness;
 	    oe_pbr.contrast = oe_model_contrast;
 #ifdef PBR_COLOR_MAP
-        color = color * texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
+		vec4 albedo = texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
+        color = color * albedo;
+		color.a = albedo.a;
 #endif
 	oe_pbr_emissive = vec3(oe_pbr_emissive_factor);
 #ifdef PBR_EMISSIVE_MAP
@@ -244,20 +342,23 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			getOrCreateUniform("oe_pbr_metal_roughness_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::ROUGHNESS_METAL);
 			getOrCreateUniform("oe_pbr_normal_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::NORMAL);
 			getOrCreateUniform("oe_pbr_emissive_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::EMISSIVE);
+
 			setDefine("PBR_IRRADIANCE_MAP");
 			setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
-			auto irradiance_texture = loadCubeMap("Environment0");
+			//auto irradiance_texture = loadCubeMap("Environment0");
+			auto irradiance_texture = loadCubeMap("C:/Users/johan/Downloads/Basketball_Court/out/test");
 			setTextureAttribute((int)TexUnits::IBL_IRRADIANCE, irradiance_texture, osg::StateAttribute::ON);
 			getOrCreateUniform("oe_pbr_irradiance", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
 
 			//osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
-			osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.png");
+			osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.dds");
 			osg::Texture2D* texture = new osg::Texture2D;
 			texture->setImage(image);
 			texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
 			texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
 			texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
 			texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+			//texture->setInternalFormatMode(GL_SRGB8);
 			///texture->setMaxAnisotropy(16.0f);
 			setTextureAttribute((int)TexUnits::IBL_BRDF_LUT, texture, osg::StateAttribute::ON);
 			addUniform(new osg::Uniform("oe_pbr_brdf_lut", (int)TexUnits::IBL_BRDF_LUT));

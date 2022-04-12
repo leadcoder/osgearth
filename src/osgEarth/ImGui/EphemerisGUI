@@ -31,7 +31,7 @@ namespace osgEarth
         using namespace osgEarth;
         using namespace osgEarth::Util;
 
-        osg::Uniform* overrideUniform(osg::StateSet* ss, std::string name, osg::Uniform::Type type)
+        inline osg::Uniform* overrideUniform(osg::StateSet* ss, std::string name, osg::Uniform::Type type)
         {
             auto uniform = ss->getUniform(name);
             if (!uniform)
@@ -181,9 +181,9 @@ namespace osgEarth
                         if (ImGui::SliderFloat("oe_model_brightness", &oe_model_brightness, 0.5f, 4.0f))
                             _skyNode->getOrCreateStateSet()->getOrCreateUniform("oe_model_brightness", osg::Uniform::FLOAT)->set(oe_model_brightness);
 
-                        if (ImGui::SliderFloat("oe_model_roughness ", &oe_model_roughness, 0.0f, 1.0f))
+                        if (ImGui::SliderFloat("oe_model_roughness ", &oe_model_roughness, 0.0f, 10.0f))
                             overrideUniform(ss,"oe_pbr_roughness_factor", osg::Uniform::FLOAT)->set(oe_model_roughness);
-                        if (ImGui::SliderFloat("oe_model_metal", &oe_model_metal, 0.0f, 1.0f))
+                        if (ImGui::SliderFloat("oe_model_metal", &oe_model_metal, 0.0f, 2.0f))
                             overrideUniform(ss, "oe_pbr_metal_factor", osg::Uniform::FLOAT)->set(oe_model_metal);
                         if (ImGui::SliderFloat("oe_model_emissive", &oe_model_emissive, 0.0f, 1.0f))
                             overrideUniform(ss, "oe_pbr_emissive_factor", osg::Uniform::FLOAT)->set(oe_model_emissive);

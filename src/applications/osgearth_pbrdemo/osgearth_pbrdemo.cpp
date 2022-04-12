@@ -92,7 +92,8 @@ int main(int argc, char** argv)
         const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
         std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
         osgDB::Registry::instance()->loadLibrary(libname);
-        osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
+        //osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
+        osg::Node* mesh = osgDB::readNodeFile("C:/tmp/beetlefusca_version_1/scene.gltf");
         auto modelNode = new GeoTransform();
         modelNode->setPosition(GeoPoint(geoSRS, 15.35552, 58.47792, 90));
         auto rot_node = new osg::PositionAttitudeTransform();

@@ -135,6 +135,11 @@ vec4 LINEARtoSRGB(vec4 srgbIn)
     return vec4(linOut, srgbIn.w);
 }
 
+float getLuminance(vec3 color)
+{
+    return clamp(dot(color, vec3(0.2126, 0.7152, 0.0722)), 0., 1.);
+}
+
 
 #ifdef OE_USE_PBR
 void atmos_fragment_main_pbr(inout vec4 color)
@@ -179,7 +184,7 @@ void atmos_fragment_main_pbr(inout vec4 color)
         float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL;
         vec3 specular = numerator / max(denominator, 0.001);
 
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+        Lo += (color.a * kD * albedo / PI + specular) * radiance * NdotL;
     }
     
 #ifdef PBR_IRRADIANCE_MAP
@@ -189,29 +194,33 @@ void atmos_fragment_main_pbr(inout vec4 color)
 	//vec3 rot_n = vec3(N.x,N.z,N.y);
 	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
 	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
-	vec3 ibl_irradiance = textureLod(oe_pbr_irradiance, rot_n, 7).rgb;
+	vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance, rot_n, 6)).rgb;
 	vec3 ibl_diffuse = ibl_irradiance * albedo;
 
      vec3 R = reflect(-V, N);
      R = normalize(mat3(osg_ViewMatrixInverse)  * R);
      R = vec3(-R.x,R.z,R.y);
-     vec2 envBRDF = textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0),oe_pbr.roughness),0.0).rg;
+     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0),oe_pbr.roughness),0.0)).rg;
             
-    const float MAX_REFLECTION_LOD = 11.0;
-    const float ROUGHNESS_1_MIP_RESOLUTION = 1.5;
-    float deltaLod = MAX_REFLECTION_LOD - ROUGHNESS_1_MIP_RESOLUTION;
-    float miplod = deltaLod * (sqrt(1.0 + 124.0 * oe_pbr.roughness)-1.0) / 4.0;
-    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, miplod).rgb;
+    const float MAX_REFLECTION_LOD = 6.0;
+    //const float ROUGHNESS_1_MIP_RESOLUTION = 1.5;
+    //float deltaLod = MAX_REFLECTION_LOD - ROUGHNESS_1_MIP_RESOLUTION;
+    //float miplod = deltaLod * (sqrt(1.0 + 124.0 * oe_pbr.roughness)-1.0) / 4.0;
+    //vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, miplod).rgb;
+    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, MAX_REFLECTION_LOD*oe_pbr.roughness).rgb;
     //envBRDF = max(vec2(0.0), min(envBRDF, vec2(1.0)));
     vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
-    vec3 ambient = ((ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb*2;// * oe_pbr.ao;
+    vec3 ambient = ((color.a*ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb*2 * oe_pbr.ao;
     //vec3 ambient = ibl_kD * ibl_diffuse;
 #else
 	vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
 #endif
-    color.rgb = ambient + Lo;
+    color.rgb = (ambient + Lo * oe_pbr.ao);
     color.rgb += oe_pbr_emissive*0.5;
+
+    
     color = LINEARtoSRGB(color);
+
     
     // tone map:
     color.rgb = color.rgb / (color.rgb + vec3(1.0));
@@ -222,6 +231,9 @@ void atmos_fragment_main_pbr(inout vec4 color)
     // add in the haze
     color.rgb += atmos_color;
 
+    float luminanceOverAlpha = getLuminance(color.rgb);
+    color.a = clamp(color.a + luminanceOverAlpha,0,1);
+    
     // exposure:
     color.rgb = 1.0 - exp(-oe_sky_exposure*0.33 * color.rgb);
 
@@ -346,6 +358,7 @@ void atmos_fragment_material(inout vec4 color)
         osg_FrontMaterial.emission.rgb +
         totalDiffuse * osg_FrontMaterial.diffuse.rgb +
         totalAmbient * osg_FrontMaterial.ambient.rgb;
+
 
     color.rgb =
         color.rgb * lightColor +
