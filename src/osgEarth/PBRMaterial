@@ -241,6 +241,7 @@ namespace osgEarth
     #pragma import_defines(PBR_NORMAL_MAP)
     #pragma import_defines(PBR_COLOR_MAP)
 	#pragma import_defines(PBR_EMISSIVE_MAP)
+	#pragma import_defines(PBR_OCCLUSION_IN_METALROUGHNESS_MAP)
 
     // fragment stage global PBR parameters.
     struct OE_PBR {
@@ -252,11 +253,13 @@ namespace osgEarth
     } oe_pbr;
 	vec3 oe_pbr_emissive;
 
-    uniform float oe_model_brightness = 1.0;
-    uniform float oe_model_contrast = 1.0;
+    uniform float oe_pbr_brightness = 1.0;
+    uniform float oe_pbr_contrast = 1.0;
     uniform float oe_pbr_roughness_factor = 1.0;
     uniform float oe_pbr_metal_factor = 1.0;
-	uniform float oe_pbr_emissive_factor = 1.0;
+	uniform float oe_pbr_ao_factor = 1.0;
+	uniform vec3 oe_pbr_emissive_factor = vec3(1.0);
+	uniform vec3 oe_pbr_color_factor = vec3(1.0);
 	
     vec3 vp_Normal;
     in vec4 oe_pbr_texcoord0;
@@ -294,18 +297,25 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		oe_pbr.metal = oe_pbr_metal_factor;
 #ifdef PBR_METALROUGHNESS_MAP
         vec4 mr_map = texture(oe_pbr_metal_roughness_sampler, oe_pbr_texcoord0.xy);
-        oe_pbr.roughness = oe_pbr.roughness *  sqrt(mr_map.g); //pow(mr_map.g, 1.0 / 2.2);
+        oe_pbr.roughness = oe_pbr.roughness *  mr_map.g; //pow(mr_map.g, 1.0 / 2.2);
 		oe_pbr.metal = oe_pbr.metal * mr_map.b;
-		oe_pbr.ao = mr_map.r;
+		//oe_pbr.ao =  mix(1.0, mr_map.r, oe_pbr_ao_factor);
+#ifdef PBR_OCCLUSION_IN_METALROUGHNESS_MAP
+		oe_pbr.ao =  mix(mr_map.r, 1.0, oe_pbr_ao_factor);
 #endif
-        oe_pbr.brightness = oe_model_brightness;
-	    oe_pbr.contrast = oe_model_contrast;
+
+#endif
+		
+
+        oe_pbr.brightness = oe_pbr_brightness;
+	    oe_pbr.contrast = oe_pbr_contrast;
+		color.rgb = oe_pbr_color_factor;
 #ifdef PBR_COLOR_MAP
 		vec4 albedo = texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
         color = color * albedo;
 		color.a = albedo.a;
 #endif
-	oe_pbr_emissive = vec3(oe_pbr_emissive_factor);
+	oe_pbr_emissive = oe_pbr_emissive_factor;
 #ifdef PBR_EMISSIVE_MAP
 	oe_pbr_emissive *= SRGBtoLINEAR2(texture(oe_pbr_emissive_sampler, oe_pbr_texcoord0.xy)).rgb;
 #endif
@@ -326,12 +336,14 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			EMISSIVE = 5
 		};
 
+		osg::Texture2D* m_LutTexture = nullptr;
+
 		enum class VertexAttrib
 		{
 			TANGENT = 6,
 		};
 
-		PbrUberMaterial()
+		PbrUberMaterial(osg::Texture2D* lut_tex = nullptr)
 		{
 			auto* vp = osgEarth::VirtualProgram::getOrCreate(this);
 			vp->setInheritShaders(true);
@@ -351,17 +363,37 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			getOrCreateUniform("oe_pbr_irradiance", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
 
 			//osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
-			osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.dds");
-			osg::Texture2D* texture = new osg::Texture2D;
-			texture->setImage(image);
-			texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
-			texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
-			texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
-			texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+			m_LutTexture = lut_tex;
+			if (m_LutTexture == nullptr)
+			{
+				osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.dds");
+				m_LutTexture = new osg::Texture2D;
+				m_LutTexture->setImage(image);
+				m_LutTexture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
+				m_LutTexture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
+				m_LutTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+				m_LutTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+			}
 			//texture->setInternalFormatMode(GL_SRGB8);
 			///texture->setMaxAnisotropy(16.0f);
-			setTextureAttribute((int)TexUnits::IBL_BRDF_LUT, texture, osg::StateAttribute::ON);
+			setTextureAttribute((int)TexUnits::IBL_BRDF_LUT, m_LutTexture, osg::StateAttribute::ON);
 			addUniform(new osg::Uniform("oe_pbr_brdf_lut", (int)TexUnits::IBL_BRDF_LUT));
+		}
+
+		//Debug methods
+		void setColorMapEnabled(bool value)
+		{
+			setDefine("PBR_COLOR_MAP", osg::StateAttribute::OVERRIDE | (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		void setNormalMapEnabled(bool value)
+		{
+			setDefine("PBR_NORMAL_MAP", osg::StateAttribute::OVERRIDE | (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+		
+		void setEmissiveMapEnabled(bool value)
+		{
+			setDefine("PBR_EMISSIVE_MAP", osg::StateAttribute::OVERRIDE | (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
 		}
 	};
 
@@ -377,6 +409,45 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			}
 		}
 
+		osg::Texture2D* getColorMap()
+		{
+			return dynamic_cast<osg::Texture2D*>(getTextureAttribute((int)PbrUberMaterial::TexUnits::COLOR, osg::StateAttribute::TEXTURE));
+		}
+
+		void setColorMapEnabled(bool value)
+		{
+			if (hasColorMap())
+				setDefine("PBR_COLOR_MAP", (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		bool hasColorMap() const
+		{
+			return getDefinePair("PBR_COLOR_MAP") != nullptr;
+		}
+
+		bool getColorMapEnabled() const
+		{
+			auto def = getDefinePair("PBR_COLOR_MAP");
+			if (!def)
+				return false;
+			return def->second == osg::StateAttribute::ON;
+		}
+
+		void setColorFactor(const osg::Vec3f& value)
+		{
+			getOrCreateUniform("oe_pbr_color_factor", osg::Uniform::FLOAT_VEC3)->set(value);
+		}
+
+		osg::Vec3f getColorFactor() const
+		{
+			osg::Vec3f value(1.0f, 1.0f, 1.0f);
+			auto uniform = getUniform("oe_pbr_color_factor");
+			if (uniform)
+				uniform->get(value);
+			return value;
+		}
+
+
 		void setMetalRoughnessMap(osg::Texture2D* tex)
 		{
 			if (tex)
@@ -386,9 +457,42 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			}
 		}
 
+		osg::Texture2D* getMetalRoughnessMap()
+		{
+			return dynamic_cast<osg::Texture2D*>(getTextureAttribute((int)PbrUberMaterial::TexUnits::ROUGHNESS_METAL, osg::StateAttribute::TEXTURE));
+		}
+
+		void setMetalRoughnessMapEnabled(bool value)
+		{
+			if(hasMetalRoughness())
+				setDefine("PBR_METALROUGHNESS_MAP", (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		bool hasMetalRoughness() const
+		{
+			return getDefinePair("PBR_METALROUGHNESS_MAP") != nullptr;
+		}
+
+		bool getMetalRoughnessMapEnabled() const
+		{
+			auto def = getDefinePair("PBR_METALROUGHNESS_MAP");
+			if (!def)
+				return false;
+			return def->second == osg::StateAttribute::ON;
+		}
+
 		void setRoughnessFactor(float value)
 		{
 			getOrCreateUniform("oe_pbr_roughness_factor", osg::Uniform::FLOAT)->set(value);
+		}
+
+		float getRoughnessFactor() const
+		{
+			float value = 1.0f;
+			auto uniform = getUniform("oe_pbr_roughness_factor");
+			if (uniform)
+				uniform->get(value);
+			return value;
 		}
 
 		void setMetalFactor(float value)
@@ -396,14 +500,13 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			getOrCreateUniform("oe_pbr_metal_factor", osg::Uniform::FLOAT)->set(value);
 		}
 
-		void setColorFactor(const osg::Vec3 &value)
+		float getMetalFactor() const
 		{
-
-		}
-
-		void setEmissiveFactor(const osg::Vec3& value)
-		{
-			getOrCreateUniform("oe_pbr_emissive_factor", osg::Uniform::FLOAT)->set(value.x());
+			float value = 1.0f;
+			auto uniform = getUniform("oe_pbr_metal_factor");
+			if (uniform)
+				uniform->get(value);
+			return value;
 		}
 
 		void setNormalMap(osg::Texture2D* tex)
@@ -415,6 +518,30 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			}
 		}
 
+		osg::Texture2D* getNormalMap()
+		{
+			return dynamic_cast<osg::Texture2D*>(getTextureAttribute((int)PbrUberMaterial::TexUnits::NORMAL, osg::StateAttribute::TEXTURE));
+		}
+
+		void setNormalMapEnabled(bool value)
+		{
+			if (hasNormalMap())
+				setDefine("PBR_NORMAL_MAP", (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		bool hasNormalMap() const
+		{
+			return getDefinePair("PBR_NORMAL_MAP") != nullptr;
+		}
+
+		bool getNormalMapEnabled() const
+		{
+			auto def = getDefinePair("PBR_NORMAL_MAP");
+			if (!def)
+				return false;
+			return def->second == osg::StateAttribute::ON;
+		}
+
 		void setEmissiveMap(osg::Texture2D* tex)
 		{
 			if (tex)
@@ -423,6 +550,93 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 				setTextureAttributeAndModes((int)PbrUberMaterial::TexUnits::EMISSIVE, tex);
 			}
 		}
+
+		osg::Texture2D* getEmmisiveMap()
+		{
+			return dynamic_cast<osg::Texture2D*>(getTextureAttribute((int)PbrUberMaterial::TexUnits::EMISSIVE, osg::StateAttribute::TEXTURE));
+		}
+
+		void setEmissiveMapEnabled(bool value)
+		{
+			if(hasEmmisiveMap())
+				setDefine("PBR_EMISSIVE_MAP", (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		bool getEmmisiveMapEnabled() const
+		{
+			auto def = getDefinePair("PBR_EMISSIVE_MAP");
+			if (!def)
+				return false;
+			return def->second == osg::StateAttribute::ON;
+		}
+
+		bool hasEmmisiveMap() const
+		{
+			return getDefinePair("PBR_EMISSIVE_MAP") != nullptr;
+		}
+
+		void setEmissiveFactor(const osg::Vec3& value)
+		{
+			getOrCreateUniform("oe_pbr_emissive_factor", osg::Uniform::FLOAT_VEC3)->set(value);
+		}
+
+		osg::Vec3f getEmissiveFactor() const
+		{
+			
+			osg::Vec3f value(1.0f, 1.0f, 1.0f);
+			auto uniform = getUniform("oe_pbr_emissive_factor");
+			if (uniform)
+				uniform->get(value);
+			return value;
+		}
+
+
+		void setBrightness(float value)
+		{
+			getOrCreateUniform("oe_pbr_brightness", osg::Uniform::FLOAT)->set(value);
+		}
+
+		float getBrightness() const
+		{
+			float value = 1.0f;
+			auto uniform = getUniform("oe_pbr_brightness");
+			if (uniform)
+				uniform->get(value);
+			return value;
+		}
+
+		void setContrast(float value)
+		{
+			getOrCreateUniform("oe_pbr_contrast", osg::Uniform::FLOAT)->set(value);
+		}
+
+		float getContrast() const
+		{
+			float value = 1.0f;
+			auto uniform = getUniform("oe_pbr_contrast");
+			if (uniform)
+				uniform->get(value);
+			return value;
+		}
+
+		void setOcclusionMapEnabled(bool value)
+		{
+			setDefine("PBR_OCCLUSION_IN_METALROUGHNESS_MAP", (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
+		bool getOcclusionMapEnabled() const
+		{
+			auto def = getDefinePair("PBR_OCCLUSION_IN_METALROUGHNESS_MAP");
+			if (!def)
+				return false;
+			return def->second == osg::StateAttribute::ON;
+		}
+
+		bool hasOcclusionMap() const
+		{
+			return getDefinePair("PBR_OCCLUSION_IN_METALROUGHNESS_MAP") != nullptr;
+		}
+
 	};
 }
 

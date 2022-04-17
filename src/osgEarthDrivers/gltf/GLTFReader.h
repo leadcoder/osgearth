@@ -637,6 +637,11 @@ public:
                     if (material.emissiveTexture.index > -1)
                         pbr->setEmissiveMap(loadTexture(material.emissiveTexture.index).get());
 
+                    //Special case, todo support separate occulusion map?
+                   // if (material.occlusionTexture.index > -1 && material.occlusionTexture.index == material.pbrMetallicRoughness.metallicRoughnessTexture.index)
+                   //     pbr->setOcclusionMapEnabled(true);
+                    
+                 
                     if (material.alphaMode != "OPAQUE")
                     {
                         if (material.alphaMode == "BLEND")

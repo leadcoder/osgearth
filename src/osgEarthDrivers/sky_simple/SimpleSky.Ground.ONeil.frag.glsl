@@ -149,6 +149,7 @@ void atmos_fragment_main_pbr(inout vec4 color)
 #endif
 
     vec3 albedo = SRGBtoLINEAR(color).rgb;
+    //vec3 albedo = color.rgb;
 
     vec3 N = normalize(vp_Normal);
     vec3 V = normalize(-atmos_vert);
@@ -191,7 +192,6 @@ void atmos_fragment_main_pbr(inout vec4 color)
 	vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
 	vec3 ibl_kD = 1.0 - ibl_kS;
 	ibl_kD *= 1.0 - oe_pbr.metal;
-	//vec3 rot_n = vec3(N.x,N.z,N.y);
 	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
 	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
 	vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance, rot_n, 6)).rgb;
@@ -200,33 +200,33 @@ void atmos_fragment_main_pbr(inout vec4 color)
      vec3 R = reflect(-V, N);
      R = normalize(mat3(osg_ViewMatrixInverse)  * R);
      R = vec3(-R.x,R.z,R.y);
-     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0),oe_pbr.roughness),0.0)).rg;
+     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
             
     const float MAX_REFLECTION_LOD = 6.0;
+    //float lod = max(oe_pbr.roughness * MAX_REFLECTION_LOD, textureQueryLod(oe_pbr_irradiance, R).x);
+    float lod = MAX_REFLECTION_LOD*pow(oe_pbr.roughness, 1.0 / 2.2);
     //const float ROUGHNESS_1_MIP_RESOLUTION = 1.5;
     //float deltaLod = MAX_REFLECTION_LOD - ROUGHNESS_1_MIP_RESOLUTION;
     //float miplod = deltaLod * (sqrt(1.0 + 124.0 * oe_pbr.roughness)-1.0) / 4.0;
     //vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, miplod).rgb;
-    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, MAX_REFLECTION_LOD*oe_pbr.roughness).rgb;
-    //envBRDF = max(vec2(0.0), min(envBRDF, vec2(1.0)));
+    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, lod).rgb;
     vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
-    vec3 ambient = ((color.a*ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb*2 * oe_pbr.ao;
+    vec3 ambient = ((color.a*ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb * oe_pbr.ao;
+    //vec3 ambient = ibl_specular * osg_LightSource[0].ambient.rgb * oe_pbr.ao;
     //vec3 ambient = ibl_kD * ibl_diffuse;
 #else
 	vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
 #endif
     color.rgb = (ambient + Lo * oe_pbr.ao);
-    color.rgb += oe_pbr_emissive*0.5;
-
+    color.rgb += oe_pbr_emissive;
     
     color = LINEARtoSRGB(color);
-
     
     // tone map:
     color.rgb = color.rgb / (color.rgb + vec3(1.0));
 
     // boost:
-    color.rgb *= 2.2;
+    //color.rgb *= 2.2;
 
     // add in the haze
     color.rgb += atmos_color;
