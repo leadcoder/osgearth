@@ -5,6 +5,7 @@ header = R"(
 #pragma import_defines(RADIANCE_API_ENABLED)
 #pragma import_defines(COMBINED_SCATTERING_TEXTURES)
 #pragma import_defines(UNIT_LENGTH_METERS_INVERSE)
+
 )";
 
 
@@ -54,6 +55,19 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
 }
 
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+#pragma import_defines(PBR_IRRADIANCE_MAP)
+
+#ifdef PBR_IRRADIANCE_MAP
+      uniform samplerCube oe_pbr_irradiance;
+      uniform mat4 osg_ViewMatrixInverse;
+      uniform sampler2D oe_pbr_brdf_lut;
+#endif
+
 #ifdef OE_USE_PBR
 // fragment stage global PBR params
 struct OE_PBR {
@@ -64,7 +78,7 @@ struct OE_PBR {
     float contrast;
 } oe_pbr;
 
-void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout vec3 ambience, inout vec3 COLOR)
+void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout vec3 ambience, inout vec3 COLOR, in vec3 sun_irradiance,in vec3 sky_irradiance)
 {
     // PBR (https://learnopengl.com/PBR/Lighting)
     vec3 V = -vertex_dir;
@@ -93,12 +107,36 @@ void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout 
 
     // ONLY calcuate the specularity here since we are incoporating
     // the radiance, etc. elsewhere.
-    vec3 Lo = (kD * albedo + specular*NdotL);
+    //vec3 Lo = (kD * albedo + specular*NdotL);
 
     // Original equation for reference
-    //vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+    vec3 Lo = (kD * albedo / PI + specular) * sun_irradiance * NdotL;
 
     COLOR = Lo;
+
+#ifdef PBR_IRRADIANCE_MAP
+    vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
+	vec3 ibl_kD = 1.0 - ibl_kS;
+	ibl_kD *= 1.0 - oe_pbr.metal;
+	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
+	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
+    
+	vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance, rot_n, 7)).rgb;
+	vec3 ibl_diffuse = ibl_irradiance * albedo;
+
+     vec3 R = reflect(-V, N);
+     R = normalize(mat3(osg_ViewMatrixInverse)  * R);
+     R = vec3(-R.x,R.z,R.y);
+     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
+            
+    const float MAX_REFLECTION_LOD = 7.0;
+    float lod = MAX_REFLECTION_LOD*oe_pbr.roughness;//pow(oe_pbr.roughness, 1.0 / 2.2);
+    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, lod).rgb;
+    vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
+    vec3 ambient = ((ibl_kD * ibl_diffuse) + ibl_specular)*(sky_irradiance + sun_irradiance)/PI *ambience*10;// * oe_pbr.ao;
+    COLOR = COLOR + ambient;//COLOR + ambient;
+#endif
+
 }
 #endif
 )";
@@ -180,23 +218,23 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 {
 #ifdef OE_LIGHTING
 	vec3 sky_irradiance;
-	vec3 sun_irradiance = GetSunAndSkyIrradiance(atmos_center_to_vert, vp_Normal, atmos_light_dir, sky_irradiance);
+    vec3 sun_irradiance = GetSunAndSkyIrradiance(atmos_center_to_vert, atmos_light_dir, sky_irradiance);
 	vec3 radiance = (1.0 / PI) * (sun_irradiance + sky_irradiance);
 	vec3 atmos_transmittance;
 	vec3 atmos_scatter = GetSkyRadianceToPoint(atmos_center_to_camera, atmos_center_to_vert, 4.0, atmos_light_dir, atmos_transmittance);
     vec3 ambience = atmos_ambient;
-    vec3 ambient_floor = ambience * COLOR.rgb;
+    //vec3 ambient_floor = ambience * COLOR.rgb;
 #ifdef OE_USE_PBR
-    atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, vp_Normal, ambience, COLOR.rgb);
+    atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, vp_Normal, ambience, COLOR.rgb, sun_irradiance,sky_irradiance);
 #endif
-
 
     float vert_unitz = clamp((length(atmos_center_to_vert)-bottom_radius)/(top_radius-bottom_radius), 0, 1);
     float atmos_haze = vert_unitz < atmos_haze_cutoff ? mix(atmos_haze_strength, 1, vert_unitz/atmos_haze_cutoff) : 1.0;
 
 
     // apply radiance and atmospheric effects:
-    COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter * atmos_haze;
+    COLOR.rgb = COLOR.rgb * atmos_transmittance + atmos_scatter * atmos_haze;
+    //COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter * atmos_haze;
 
     // apply white point, exposure, and gamma correction:
 	COLOR.rgb = pow(vec3(1,1,1) - exp(-COLOR.rgb / white_point * oe_sky_exposure*1e-5), vec3(1.0 / 2.2));
@@ -207,7 +245,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 #endif
 
     // limit to ambient floor:
-    COLOR.rgb = max(COLOR.rgb, ambient_floor);
+    //COLOR.rgb = max(COLOR.rgb, ambient_floor);
 #endif
 }
 
@@ -308,7 +346,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
     vec3 ambience = atmos_ambient;
     vec3 ambient_floor = COLOR.rgb*ambience;
 #ifdef OE_USE_PBR
-    atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, vp_Normal, ambience, COLOR.rgb);
+    atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, vp_Normal, ambience, COLOR.rgb,sun_irradiance,sky_irradiance);
 #endif
 
     

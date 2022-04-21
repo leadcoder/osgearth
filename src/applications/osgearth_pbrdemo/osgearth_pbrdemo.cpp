@@ -153,7 +153,7 @@ namespace osgEarth
 								auto enabled = material->getMetalRoughnessMapEnabled();
 								if (ImGui::Checkbox("Enabled", &enabled))
 									material->setMetalRoughnessMapEnabled(enabled);
-								drawTexture(*_renderInfo, material->getNormalMap());
+								drawTexture(*_renderInfo, material->getMetalRoughnessMap());
 								ImGui::TreePop();
 							}
 
@@ -221,15 +221,21 @@ namespace osgEarth
 					static bool color_map_enabled = true;
 					static bool normal_map_enabled = true;
 					static bool emissive_map_enabled = true;
+					static bool ibl_enabled = true;
 
-					if (ImGui::Checkbox("ColorMapEnabled", &color_map_enabled))
+					if (ImGui::Checkbox("ColorMap", &color_map_enabled))
 						_UberMaterial->setColorMapEnabled(color_map_enabled);
 
-					if (ImGui::Checkbox("NormalMapEnabled", &normal_map_enabled))
+					if (ImGui::Checkbox("NormalMap", &normal_map_enabled))
 						_UberMaterial->setNormalMapEnabled(normal_map_enabled);
 
-					if (ImGui::Checkbox("EmissiveMapEnabled", &emissive_map_enabled))
+					if (ImGui::Checkbox("EmissiveMap", &emissive_map_enabled))
 						_UberMaterial->setEmissiveMapEnabled(emissive_map_enabled);
+
+					if (ImGui::Checkbox("IBL", &ibl_enabled))
+						_UberMaterial->setIBLEnabled(ibl_enabled);
+
+					
 
 					
 					if (ImGui::SliderFloat("Contrast", &oe_model_contrast, 0.5f, 4.0f))
@@ -298,7 +304,6 @@ int main(int argc, char** argv)
 	osg::Node* node = MapNodeHelper().loadWithoutControls(arguments, &viewer);
 	if (node)
 	{
-
 		// Call this to add the GUI. 
 		// Passing "true" tells it to install all the built-in osgEarth GUI tools.
 		// Put it on the front of the list so events don't filter
@@ -311,6 +316,20 @@ int main(int argc, char** argv)
 
 		// find the map node that we loaded.
 		MapNode* mapNode = MapNode::findMapNode(node);
+		
+		int normal;
+		int rm;
+		int ibl;
+		int brdf;
+		int emission;
+
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(normal);
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(rm);
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(ibl);
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(brdf);
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(emission);
+
+		
 		// Group to hold all our annotation elements.
 		osg::Group* model_group = new osg::Group();
 		auto pbr_material = new PbrUberMaterial(LUT_TEX);
@@ -320,10 +339,7 @@ int main(int argc, char** argv)
 		const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
 		std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
 		osgDB::Registry::instance()->loadLibrary(libname);
-		//osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
-		//osg::Node* mesh = osgDB::readNodeFile("C:/tmp/beetlefusca_version_1/scene.gltf");
-		osg::Node* mesh = osgDB::readNodeFile("C:/tmp/t72/t72.gltf.10.scale");
-		//osg::Node* mesh = osgDB::readNodeFile("C:/temp/glTF-Sample-Models-master/2.0/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
+		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "t72/t72.gltf.10.scale");
 
 	
 		auto modelNode = new GeoTransform();
@@ -335,8 +351,11 @@ int main(int argc, char** argv)
 		model_group->addChild(modelNode);
 
 		auto pbr_gui = new GUI::PBRGUI(mesh, pbr_material);
+		pbr_gui->_models.push_back(DATA_PATH + "t72/t72.gltf.10.scale");
 		pbr_gui->_models.push_back(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
-		pbr_gui->_models.push_back("C:/tmp/beetlefusca_version_1/scene.gltf");
+		pbr_gui->_models.push_back(DATA_PATH + "beetlefusca/scene.gltf");
+		pbr_gui->_models.push_back(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
+		
 		
 
 		gui->add(pbr_gui, true);

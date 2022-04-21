@@ -329,11 +329,11 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		enum class TexUnits
 		{
 			COLOR = 0,
-			ROUGHNESS_METAL = 1,
-			NORMAL = 2,
-			IBL_IRRADIANCE = 3,
-			IBL_BRDF_LUT = 4,
-			EMISSIVE = 5
+			ROUGHNESS_METAL = 9,
+			NORMAL = 10,
+			IBL_IRRADIANCE = 11,
+			IBL_BRDF_LUT = 12,
+			EMISSIVE = 13
 		};
 
 		osg::Texture2D* m_LutTexture = nullptr;
@@ -355,7 +355,7 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 			getOrCreateUniform("oe_pbr_normal_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::NORMAL);
 			getOrCreateUniform("oe_pbr_emissive_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::EMISSIVE);
 
-			setDefine("PBR_IRRADIANCE_MAP");
+			setIBLEnabled(true);
 			setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
 			//auto irradiance_texture = loadCubeMap("Environment0");
 			auto irradiance_texture = loadCubeMap("C:/Users/johan/Downloads/Basketball_Court/out/test");
@@ -381,6 +381,12 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		}
 
 		//Debug methods
+
+		void setIBLEnabled(bool value)
+		{
+			setDefine("PBR_IRRADIANCE_MAP", osg::StateAttribute::OVERRIDE | (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));
+		}
+
 		void setColorMapEnabled(bool value)
 		{
 			setDefine("PBR_COLOR_MAP", osg::StateAttribute::OVERRIDE | (value ? osg::StateAttribute::ON : osg::StateAttribute::OFF));

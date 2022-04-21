@@ -2271,6 +2271,23 @@ IrradianceSpectrum GetSunAndSkyIrradiance(
 	return solar_irradiance * GetTransmittanceToSun(transmittance_texture, r, mu_s) * max(dot(normal, sun_direction), 0.0);
 }
 
+IrradianceSpectrum GetSunAndSkyIrradiance(
+	TransmittanceTexture transmittance_texture,
+	IrradianceTexture irradiance_texture,
+    Position pos,
+	Direction sun_direction,
+	out IrradianceSpectrum sky_irradiance)
+{
+	Length r = length(pos);
+	Number mu_s = dot(pos, sun_direction) / r;
+
+	// Indirect irradiance (approximated if the surface is not horizontal).
+	sky_irradiance = GetIrradiance(irradiance_texture, r, mu_s);
+
+	// Direct irradiance.
+	return solar_irradiance * GetTransmittanceToSun(transmittance_texture, r, mu_s);
+}
+
 )";
 
 radiance_api = R"(
@@ -2321,6 +2338,14 @@ IrradianceSpectrum GetSunAndSkyIrradiance(
 		irradiance_texture, p, normal, sun_direction, sky_irradiance);
 }
 
+IrradianceSpectrum GetSunAndSkyIrradiance(
+	Position p, Direction sun_direction,
+	out IrradianceSpectrum sky_irradiance) 
+{
+	return GetSunAndSkyIrradiance(transmittance_texture,
+		irradiance_texture, p, sun_direction, sky_irradiance);
+}
+
 // ------------------------------------------------------------------
 
 #else
@@ -2364,6 +2389,18 @@ Illuminance3 GetSunAndSkyIrradiance(
 {
 	IrradianceSpectrum sun_irradiance = GetSunAndSkyIrradiance(
 		transmittance_texture, irradiance_texture, p, normal,
+		sun_direction, sky_irradiance);
+	sky_irradiance *= SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
+	return sun_irradiance * SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
+}
+
+
+Illuminance3 GetSunAndSkyIrradiance(
+	Position p, Direction sun_direction,
+	out IrradianceSpectrum sky_irradiance) 
+{
+	IrradianceSpectrum sun_irradiance = GetSunAndSkyIrradiance(
+		transmittance_texture, irradiance_texture, p,
 		sun_direction, sky_irradiance);
 	sky_irradiance *= SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
 	return sun_irradiance * SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
