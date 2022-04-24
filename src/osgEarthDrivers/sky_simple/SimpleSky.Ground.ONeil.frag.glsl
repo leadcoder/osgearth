@@ -25,9 +25,12 @@ in vec3 atmos_vert;
 vec3 vp_Normal; // surface normal (from osgEarth)
 
 #ifdef PBR_IRRADIANCE_MAP
-      uniform samplerCube oe_pbr_irradiance;
+      uniform samplerCube oe_pbr_irradiance_map;
+      uniform samplerCube oe_pbr_radiance_map;
       uniform mat4 osg_ViewMatrixInverse;
+      uniform mat4 osg_ViewMatrix;
       uniform sampler2D oe_pbr_brdf_lut;
+      in mat3 oe_pbr_env_matrix;
 #endif
 
 
@@ -189,27 +192,26 @@ void atmos_fragment_main_pbr(inout vec4 color)
     }
     
 #ifdef PBR_IRRADIANCE_MAP
-	vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
-	vec3 ibl_kD = 1.0 - ibl_kS;
-	ibl_kD *= 1.0 - oe_pbr.metal;
-	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
-	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
-	vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance, rot_n, 6)).rgb;
-	vec3 ibl_diffuse = ibl_irradiance * albedo;
+    vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
+    vec3 ibl_kD = 1.0 - ibl_kS;
+    ibl_kD *= 1.0 - oe_pbr.metal;
+    vec3 env_normal = normalize(oe_pbr_env_matrix * N);
+   //vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance_map, rot_n, 6)).rgb;
+    vec3 ibl_irradiance = texture(oe_pbr_irradiance_map, env_normal).rgb;
+    vec3 ibl_diffuse = ibl_irradiance * albedo;
 
-     vec3 R = reflect(-V, N);
-     R = normalize(mat3(osg_ViewMatrixInverse)  * R);
-     R = vec3(-R.x,R.z,R.y);
-     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
+    vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
             
-    const float MAX_REFLECTION_LOD = 6.0;
+    const float MAX_REFLECTION_LOD = 7.0;
     //float lod = max(oe_pbr.roughness * MAX_REFLECTION_LOD, textureQueryLod(oe_pbr_irradiance, R).x);
-    float lod = MAX_REFLECTION_LOD*pow(oe_pbr.roughness, 1.0 / 2.2);
+    float lod = MAX_REFLECTION_LOD*oe_pbr.roughness;//pow(oe_pbr.roughness, 1.0 / 2.2);
     //const float ROUGHNESS_1_MIP_RESOLUTION = 1.5;
     //float deltaLod = MAX_REFLECTION_LOD - ROUGHNESS_1_MIP_RESOLUTION;
     //float miplod = deltaLod * (sqrt(1.0 + 124.0 * oe_pbr.roughness)-1.0) / 4.0;
     //vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, miplod).rgb;
-    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, lod).rgb;
+    vec3 R = reflect(-V, N);
+    vec3 env_reflection = normalize(oe_pbr_env_matrix * R);
+    vec3 prefilteredColor = textureLod(oe_pbr_radiance_map, env_reflection, lod).rgb;
     vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
     vec3 ambient = ((color.a*ibl_kD * ibl_diffuse) + ibl_specular) * osg_LightSource[0].ambient.rgb * oe_pbr.ao;
     //vec3 ambient = ibl_specular * osg_LightSource[0].ambient.rgb * oe_pbr.ao;

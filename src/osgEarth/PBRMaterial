@@ -31,32 +31,32 @@ namespace osgEarth
 			}
 
 
-			if (filenameInDir.find("c00") != std::string::npos || filenameInDir.find("right") != std::string::npos)
+			if (filenameInDir.find("posx") != std::string::npos || filenameInDir.find("c00") != std::string::npos || filenameInDir.find("right") != std::string::npos)
 			{
 				imageMap["posx"] = absolutePath + "\\" + contents[i];
 			}
 
-			if (filenameInDir.find("c01") != std::string::npos || filenameInDir.find("left") != std::string::npos)
+			if (filenameInDir.find("negx") != std::string::npos || filenameInDir.find("c01") != std::string::npos || filenameInDir.find("left") != std::string::npos)
 			{
 				imageMap["negx"] = absolutePath + "\\" + contents[i];
 			}
 
-			if (filenameInDir.find("c02") != std::string::npos || filenameInDir.find("top") != std::string::npos)
+			if (filenameInDir.find("posy") != std::string::npos || filenameInDir.find("c02") != std::string::npos || filenameInDir.find("top") != std::string::npos)
 			{
 				imageMap["posy"] = absolutePath + "\\" + contents[i];
 			}
 
-			if (filenameInDir.find("c03") != std::string::npos || filenameInDir.find("bottom") != std::string::npos)
+			if (filenameInDir.find("negy") != std::string::npos || filenameInDir.find("c03") != std::string::npos || filenameInDir.find("bottom") != std::string::npos)
 			{
 				imageMap["negy"] = absolutePath + "\\" + contents[i];
 			}
 
-			if (filenameInDir.find("c04") != std::string::npos || filenameInDir.find("front") != std::string::npos)
+			if (filenameInDir.find("posz") != std::string::npos || filenameInDir.find("c04") != std::string::npos || filenameInDir.find("front") != std::string::npos)
 			{
 				imageMap["posz"] = absolutePath + "\\" + contents[i];
 			}
 
-			if (filenameInDir.find("c05") != std::string::npos || filenameInDir.find("back") != std::string::npos)
+			if (filenameInDir.find("negz") != std::string::npos || filenameInDir.find("c05") != std::string::npos || filenameInDir.find("back") != std::string::npos)
 			{
 				imageMap["negz"] = absolutePath + "\\" + contents[i];
 			}
@@ -83,7 +83,9 @@ namespace osgEarth
 			imagePosZ->setInternalTextureFormat(GL_SRGB8);
 			imageNegZ->setInternalTextureFormat(GL_SRGB8);*/
 			
+			
 			cubemap = new osg::TextureCubeMap;
+			//cubemap->setInternalFormat(GL_RGBA32F_ARB);
 			cubemap->setImage(osg::TextureCubeMap::POSITIVE_X, imagePosX);
 			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_X, imageNegX);
 			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Y, imagePosY);
@@ -217,10 +219,18 @@ namespace osgEarth
 	 const char* PBR_VS = R"(
     #version 330 compatibility
     #pragma import_defines(PBR_NORMAL_MAP)
+	#pragma import_defines(PBR_IRRADIANCE_MAP)
+
 #ifdef PBR_NORMAL_MAP
     in vec4 oe_pbr_tangent;
     out mat3 oe_pbr_TBN;
 #endif
+
+#ifdef PBR_IRRADIANCE_MAP
+	out mat3 oe_pbr_env_matrix;
+	uniform mat4 osg_ViewMatrixInverse;
+#endif
+
     out vec4 oe_pbr_texcoord0;
     vec3 vp_Normal;
     void pbr_vs(inout vec4 vertex_model)
@@ -231,6 +241,19 @@ namespace osgEarth
         vec3 tangent = normalize(gl_NormalMatrix*oe_pbr_tangent.xyz);
         vec3 bitangent = normalize(cross(normal, tangent) * oe_pbr_tangent.w);
         oe_pbr_TBN = mat3(tangent, bitangent, normal);
+#endif
+
+#ifdef PBR_IRRADIANCE_MAP
+	//generate view space to cubemap space transform
+	 vec3 up_vec = normalize((osg_ViewMatrixInverse * vertex_model).xyz);
+     vec3 RZ = vec3(0,0,1); //north pole
+     vec3 RE = cross(RZ, up_vec);
+     vec3 RN = cross(up_vec, RE);
+     RZ = cross(RE, RN);
+	 //include mapping from world space to cubemap space, ie flip sign x, and swap y,z
+	 oe_pbr_env_matrix = inverse(mat3(-RE,RZ, RN))*mat3(osg_ViewMatrixInverse);
+	 //for reference, viewspace to world space transform
+     //oe_pbr_env_matrix = inverse(mat3(RE,RN, RZ))*mat3(osg_ViewMatrixInverse);;
 #endif
     }
 )";
@@ -301,12 +324,10 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		oe_pbr.metal = oe_pbr.metal * mr_map.b;
 		//oe_pbr.ao =  mix(1.0, mr_map.r, oe_pbr_ao_factor);
 #ifdef PBR_OCCLUSION_IN_METALROUGHNESS_MAP
-		oe_pbr.ao =  mix(mr_map.r, 1.0, oe_pbr_ao_factor);
+		oe_pbr.ao =  mix(1.0, mr_map.r, oe_pbr_ao_factor);
 #endif
 
 #endif
-		
-
         oe_pbr.brightness = oe_pbr_brightness;
 	    oe_pbr.contrast = oe_pbr_contrast;
 		color.rgb = oe_pbr_color_factor;
@@ -329,11 +350,12 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 		enum class TexUnits
 		{
 			COLOR = 0,
-			ROUGHNESS_METAL = 9,
-			NORMAL = 10,
-			IBL_IRRADIANCE = 11,
-			IBL_BRDF_LUT = 12,
-			EMISSIVE = 13
+			ROUGHNESS_METAL = 1,
+			NORMAL = 2,
+			IBL_IRRADIANCE = 3,
+			IBL_RADIANCE = 4,
+			IBL_BRDF_LUT = 5,
+			EMISSIVE = 6
 		};
 
 		osg::Texture2D* m_LutTexture = nullptr;
@@ -357,10 +379,14 @@ vec4 SRGBtoLINEAR2(vec4 srgbIn)
 
 			setIBLEnabled(true);
 			setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
-			//auto irradiance_texture = loadCubeMap("Environment0");
-			auto irradiance_texture = loadCubeMap("C:/Users/johan/Downloads/Basketball_Court/out/test");
+			auto irradiance_texture = loadCubeMap("Environment/OpenField/irradiance");
+			auto radiance_texture = loadCubeMap("Environment/OpenField/radiance");
+			
 			setTextureAttribute((int)TexUnits::IBL_IRRADIANCE, irradiance_texture, osg::StateAttribute::ON);
-			getOrCreateUniform("oe_pbr_irradiance", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
+			getOrCreateUniform("oe_pbr_irradiance_map", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
+
+			setTextureAttribute((int)TexUnits::IBL_RADIANCE, radiance_texture, osg::StateAttribute::ON);
+			getOrCreateUniform("oe_pbr_radiance_map", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_RADIANCE);
 
 			//osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
 			m_LutTexture = lut_tex;

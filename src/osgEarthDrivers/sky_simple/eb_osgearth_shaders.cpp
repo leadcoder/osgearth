@@ -63,7 +63,9 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 #pragma import_defines(PBR_IRRADIANCE_MAP)
 
 #ifdef PBR_IRRADIANCE_MAP
-      uniform samplerCube oe_pbr_irradiance;
+      uniform samplerCube oe_pbr_irradiance_map;
+      uniform samplerCube oe_pbr_radiance_map;
+      in mat3 oe_pbr_env_matrix;
       uniform mat4 osg_ViewMatrixInverse;
       uniform sampler2D oe_pbr_brdf_lut;
 #endif
@@ -77,6 +79,7 @@ struct OE_PBR {
     float brightness;
     float contrast;
 } oe_pbr;
+
 
 void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout vec3 ambience, inout vec3 COLOR, in vec3 sun_irradiance,in vec3 sky_irradiance)
 {
@@ -110,7 +113,7 @@ void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout 
     //vec3 Lo = (kD * albedo + specular*NdotL);
 
     // Original equation for reference
-    vec3 Lo = (kD * albedo / PI + specular) * sun_irradiance * NdotL;
+    vec3 Lo = (kD * albedo / PI + specular) * sun_irradiance * NdotL * oe_pbr.ao;
 
     COLOR = Lo;
 
@@ -118,25 +121,23 @@ void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout 
     vec3 ibl_kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, oe_pbr.roughness);
 	vec3 ibl_kD = 1.0 - ibl_kS;
 	ibl_kD *= 1.0 - oe_pbr.metal;
-	vec3 rot_n = normalize(mat3(osg_ViewMatrixInverse)  * N);
-	rot_n = vec3(-rot_n.x,rot_n.z,rot_n.y);
-    
-	vec3 ibl_irradiance = (textureLod(oe_pbr_irradiance, rot_n, 7)).rgb;
+	
+    vec3 env_normal = normalize(oe_pbr_env_matrix * N);
+ 	vec3 ibl_irradiance = texture(oe_pbr_irradiance_map, env_normal).rgb;
 	vec3 ibl_diffuse = ibl_irradiance * albedo;
 
-     vec3 R = reflect(-V, N);
-     R = normalize(mat3(osg_ViewMatrixInverse)  * R);
-     R = vec3(-R.x,R.z,R.y);
-     vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
-            
+    
+    vec3 R = reflect(-V, N);
+    vec3 env_reflection = normalize(oe_pbr_env_matrix * R);
     const float MAX_REFLECTION_LOD = 7.0;
     float lod = MAX_REFLECTION_LOD*oe_pbr.roughness;//pow(oe_pbr.roughness, 1.0 / 2.2);
-    vec3 prefilteredColor = textureLod(oe_pbr_irradiance, R, lod).rgb;
+    vec3 prefilteredColor = textureLod(oe_pbr_radiance_map, env_reflection, lod).rgb;
+    vec2 envBRDF = (textureLod(oe_pbr_brdf_lut, vec2(max(dot(N, V), 0.0), 1.0 - max(oe_pbr.roughness,0)),0.0)).rg;
     vec3 ibl_specular = prefilteredColor * (ibl_kS * envBRDF.x + envBRDF.y);
-    vec3 ambient = ((ibl_kD * ibl_diffuse) + ibl_specular)*(sky_irradiance + sun_irradiance)/PI *ambience*10;// * oe_pbr.ao;
-    COLOR = COLOR + ambient;//COLOR + ambient;
+    vec3 ambient = ((ibl_kD * ibl_diffuse) + ibl_specular)*(sky_irradiance + sun_irradiance)/PI *ambience * oe_pbr.ao;
+    //vec3 ambient = (ibl_specular) *ambience * 10;
+    COLOR = COLOR + ambient;
 #endif
-
 }
 #endif
 )";
@@ -213,6 +214,7 @@ in vec3 atmos_ambient;
 
 uniform float atmos_haze_cutoff;
 uniform float atmos_haze_strength;
+vec3 oe_pbr_emissive;
 
 void atmos_eb_ground_render_frag(inout vec4 COLOR)
 {
@@ -226,7 +228,9 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
     //vec3 ambient_floor = ambience * COLOR.rgb;
 #ifdef OE_USE_PBR
     atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, vp_Normal, ambience, COLOR.rgb, sun_irradiance,sky_irradiance);
+    
 #endif
+    
 
     float vert_unitz = clamp((length(atmos_center_to_vert)-bottom_radius)/(top_radius-bottom_radius), 0, 1);
     float atmos_haze = vert_unitz < atmos_haze_cutoff ? mix(atmos_haze_strength, 1, vert_unitz/atmos_haze_cutoff) : 1.0;
@@ -236,13 +240,15 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
     COLOR.rgb = COLOR.rgb * atmos_transmittance + atmos_scatter * atmos_haze;
     //COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter * atmos_haze;
 
+    
     // apply white point, exposure, and gamma correction:
 	COLOR.rgb = pow(vec3(1,1,1) - exp(-COLOR.rgb / white_point * oe_sky_exposure*1e-5), vec3(1.0 / 2.2));
-
+    
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
     COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
 #endif
+    COLOR.rgb += oe_pbr_emissive;
 
     // limit to ambient floor:
     //COLOR.rgb = max(COLOR.rgb, ambient_floor);

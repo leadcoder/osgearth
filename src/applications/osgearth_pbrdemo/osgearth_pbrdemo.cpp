@@ -288,6 +288,8 @@ int main(int argc, char** argv)
 		return usage(argv[0]);
 
 	const std::string  DATA_PATH = "D:/dev_zone/osgEarth/pbr_data/";
+	//const std::string  DATA_PATH = "F:/dev_zone/osgEarth/pbr/pbr_data/";
+
 	osgDB::Registry::instance()->getDataFilePathList().push_back(DATA_PATH);
 
 	osgEarth::initialize();
@@ -295,7 +297,8 @@ int main(int argc, char** argv)
 	osgViewer::Viewer viewer(arguments);
 	// Use SingleThreaded mode with imgui.
 	viewer.setThreadingModel(viewer.SingleThreaded);
-	viewer.setCameraManipulator(new EarthManipulator(arguments));
+	auto manip = new EarthManipulator(arguments);
+	viewer.setCameraManipulator(manip);
 
 	// Call this to enable ImGui rendering.
 	// If you use the MapNodeHelper, call this first.
@@ -317,7 +320,7 @@ int main(int argc, char** argv)
 		// find the map node that we loaded.
 		MapNode* mapNode = MapNode::findMapNode(node);
 		
-		int normal;
+		/*int normal;
 		int rm;
 		int ibl;
 		int brdf;
@@ -327,8 +330,31 @@ int main(int argc, char** argv)
 		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(rm);
 		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(ibl);
 		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(brdf);
-		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(emission);
+		mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(emission);*/
 
+
+		Viewpoint vp;
+		Config conf = mapNode->getConfig();
+		for (ConfigSet::const_iterator i = conf.children().begin(); i != conf.children().end(); ++i)
+		{
+			if (i->key() == "viewpoints")
+			{
+				const ConfigSet& children = i->children("viewpoint");
+				if (children.size() > 0)
+				{
+					for (ConfigSet::const_iterator i = children.begin(); i != children.end(); ++i)
+					{
+						vp = Viewpoint(*i);
+					}
+				}
+			}
+		}
+
+		auto gp = vp.focalPoint().value();
+		osg::Vec3d pos;
+		gp.toWorld(pos);
+		pos.normalize();
+		std::cout << pos;
 		
 		// Group to hold all our annotation elements.
 		osg::Group* model_group = new osg::Group();
@@ -339,11 +365,15 @@ int main(int argc, char** argv)
 		const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
 		std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
 		osgDB::Registry::instance()->loadLibrary(libname);
-		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "t72/t72.gltf.10.scale");
+		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
 
-	
+		GeoPoint model_pos = vp.focalPoint().isSet() ? vp.focalPoint().value() :  GeoPoint(geoSRS, 18.738, 57.736, 70);
+		manip->setViewpoint(vp);
+		
 		auto modelNode = new GeoTransform();
-		modelNode->setPosition(GeoPoint(geoSRS, 15.35552, 58.47792, 90));
+		
+		modelNode->setPosition(model_pos);
+		//modelNode->setPosition(GeoPoint(geoSRS, 15.35552, 58.47792, 90));
 		auto rot_node = new osg::PositionAttitudeTransform();
 		rot_node->setAttitude(osg::Quat(0, osg::Vec3d(0, 0, 1)));
 		rot_node->addChild(mesh);
