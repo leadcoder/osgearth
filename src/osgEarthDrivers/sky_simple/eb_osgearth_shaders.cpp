@@ -214,7 +214,9 @@ in vec3 atmos_ambient;
 
 uniform float atmos_haze_cutoff;
 uniform float atmos_haze_strength;
-vec3 oe_pbr_emissive;
+#ifdef OE_USE_PBR
+    vec3 oe_pbr_emissive;
+#endif
 
 void atmos_eb_ground_render_frag(inout vec4 COLOR)
 {
@@ -247,9 +249,8 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
     COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
-#endif
     COLOR.rgb += oe_pbr_emissive;
-
+#endif
     // limit to ambient floor:
     //COLOR.rgb = max(COLOR.rgb, ambient_floor);
 #endif
@@ -342,6 +343,9 @@ in vec3 vp_Normal;
 uniform float oe_sky_exposure;
 uniform float oe_sky_contrast;
 const vec3 white_point = vec3(1,1,1);
+#ifdef OE_USE_PBR
+    vec3 oe_pbr_emissive;
+#endif
 
 void atmos_eb_ground_render_frag(inout vec4 COLOR)
 {
@@ -358,7 +362,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
     
 
     // apply radiance and atmospheric effects:
-    COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter;
+    COLOR.rgb = COLOR.rgb * atmos_transmittance + atmos_scatter;
 
     // apply white point, exposure, and gamma correction:
 	COLOR.rgb = pow(vec3(1,1,1) - exp(-COLOR.rgb / white_point * oe_sky_exposure*1e-5), vec3(1.0 / 2.2));
@@ -366,10 +370,11 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
     COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
+    COLOR.rgb += oe_pbr_emissive;
 #endif
 
     // limit to ambient floor:
-    COLOR.rgb = max(COLOR.rgb, ambient_floor);
+    //COLOR.rgb = max(COLOR.rgb, ambient_floor);
 
 #endif // OE_LIGHTING
 }
