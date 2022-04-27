@@ -355,19 +355,29 @@ int main(int argc, char** argv)
 		gp.toWorld(pos);
 		pos.normalize();
 		std::cout << pos;
-		
+	
 		// Group to hold all our annotation elements.
 		osg::Group* model_group = new osg::Group();
 		auto pbr_material = new PbrUberMaterial(LUT_TEX);
-		model_group->setStateSet(pbr_material);
+		ShadowCaster* shadownode = osgEarth::findTopMostNodeOfType<ShadowCaster>(node);
+		if (shadownode)
+			shadownode->getShadowCastingGroup()->addChild(model_group);
+		
 		mapNode->addChild(model_group);
-
-		const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
+#if 1
+		model_group->setStateSet(pbr_material);
 		std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
 		osgDB::Registry::instance()->loadLibrary(libname);
 		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
+#else
+		osg::Node* mesh = osgDB::readNodeFile("model.obj.5.scale.osgearth_shadergen");
+#endif
+		const SpatialReference* geoSRS = mapNode->getMapSRS()->getGeographicSRS();
 
 		GeoPoint model_pos = vp.focalPoint().isSet() ? vp.focalPoint().value() :  GeoPoint(geoSRS, 18.738, 57.736, 70);
+		model_pos.transformZ(AltitudeMode::ALTMODE_RELATIVE, mapNode->getTerrain());
+		model_pos.z() = 0;
+		
 		manip->setViewpoint(vp);
 		
 		auto modelNode = new GeoTransform();
