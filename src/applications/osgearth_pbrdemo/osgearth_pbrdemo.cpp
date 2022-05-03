@@ -271,6 +271,32 @@ namespace osgEarth
 						parent->addChild(new_mesh);
 						_Model = new_mesh;
 					}
+
+					
+					auto parent = _Model->getParent(0);
+					auto pat = dynamic_cast<osg::PositionAttitudeTransform*>(parent);
+					if (pat)
+					{
+						osg::Vec3f pos = pat->getPosition();
+						if (ImGui::DragFloat3("Pos", &pos.x(), 0.1, -100000, 100000))
+						{
+							pat->setPosition(pos);
+						}
+						osg::Vec3f scale = pat->getScale();
+						if (ImGui::DragFloat("scale", &scale.x(), 0.01, 0.01, 10))
+						{
+							scale.y() = scale.x();
+							scale.z() = scale.x();
+							pat->setScale(scale);
+						}
+
+						static osg::Vec3f rot;
+						if (ImGui::DragFloat3("rot", &rot.x(), 0.01, -1000, 1000))
+						{
+							auto qrot = osg::Quat(rot.x(), osg::Vec3d(0, 0, 1)) * osg::Quat(rot.y(), osg::Vec3d(1, 0, 0)) * osg::Quat(rot.z(), osg::Vec3d(0, 1, 0));
+							pat->setAttitude(qrot);
+						}
+					}
 				}
 				ImGui::End();
 			}
@@ -286,9 +312,15 @@ int main(int argc, char** argv)
 	osg::ArgumentParser arguments(&argc, argv);
 	if (arguments.read("--help"))
 		return usage(argv[0]);
+	osg::DisplaySettings::instance()->setNumMultiSamples(4u);
 
-	const std::string  DATA_PATH = "D:/dev_zone/osgEarth/pbr_data/";
-	//const std::string  DATA_PATH = "F:/dev_zone/osgEarth/pbr/pbr_data/";
+	std::string  DATA_PATH;
+	arguments.read("--data-path", DATA_PATH);
+	if (DATA_PATH.empty())
+	{
+		std::cout << "no data path provided, ie --data-path <path-to-pbr-demo-data>\n";
+		return 0;
+	}
 
 	osgDB::Registry::instance()->getDataFilePathList().push_back(DATA_PATH);
 
@@ -361,7 +393,10 @@ int main(int argc, char** argv)
 		auto pbr_material = new PbrUberMaterial(LUT_TEX);
 		ShadowCaster* shadownode = osgEarth::findTopMostNodeOfType<ShadowCaster>(node);
 		if (shadownode)
+		{
+			shadownode->setRanges({ 0,40,80,200 });
 			shadownode->getShadowCastingGroup()->addChild(model_group);
+		}
 		
 		mapNode->addChild(model_group);
 #if 1
@@ -391,9 +426,9 @@ int main(int argc, char** argv)
 		model_group->addChild(modelNode);
 
 		auto pbr_gui = new GUI::PBRGUI(mesh, pbr_material);
-		pbr_gui->_models.push_back(DATA_PATH + "t72/t72.gltf.10.scale");
 		pbr_gui->_models.push_back(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
-		pbr_gui->_models.push_back(DATA_PATH + "beetlefusca/scene.gltf");
+		pbr_gui->_models.push_back(DATA_PATH + "t72/t72.gltf.1.scale");
+		pbr_gui->_models.push_back(DATA_PATH + "beetlefusca/scene.gltf.(0.01).scale");
 		pbr_gui->_models.push_back(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
 		
 		
@@ -410,6 +445,7 @@ int main(int argc, char** argv)
 			update_rot = !update_rot;
 			});
 
+		
 		while (!viewer.done())
 		{
 			viewer.frame();
