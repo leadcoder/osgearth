@@ -296,6 +296,22 @@ namespace osgEarth
 							auto qrot = osg::Quat(rot.x(), osg::Vec3d(0, 0, 1)) * osg::Quat(rot.y(), osg::Vec3d(1, 0, 0)) * osg::Quat(rot.z(), osg::Vec3d(0, 1, 0));
 							pat->setAttitude(qrot);
 						}
+
+						auto* cb = dynamic_cast<osg::AnimationPathCallback*>(pat->getUpdateCallback());
+						bool auto_rot = cb != nullptr;
+						static float rot_speed = 12;
+						if (ImGui::Checkbox("auto rot", &auto_rot))
+						{
+							if (auto_rot)
+								pat->setUpdateCallback(new osg::AnimationPathCallback(pat->getPosition(), osg::Vec3(0.0f, 0.0f, 1.0f), osg::inDegrees(rot_speed)));
+							else
+								pat->setUpdateCallback(nullptr);
+						}
+						if (ImGui::SliderFloat("rot speed", &rot_speed,0,45))
+						{
+							if(cb)
+								pat->setUpdateCallback(new osg::AnimationPathCallback(pat->getPosition(), osg::Vec3(0.0f, 0.0f, 1.0f), osg::inDegrees(rot_speed)));
+						}
 					}
 				}
 				ImGui::End();
@@ -440,12 +456,10 @@ int main(int argc, char** argv)
 
 		EventRouter* router = new EventRouter();
 		viewer.addEventHandler(router);
-		bool update_rot = true;
+		bool update_rot = false;
 		router->onKeyPress(router->KEY_D, [&update_rot]() {
 			update_rot = !update_rot;
 			});
-
-		
 		while (!viewer.done())
 		{
 			viewer.frame();
