@@ -442,10 +442,10 @@ int main(int argc, char** argv)
 		model_group->addChild(modelNode);
 
 		auto pbr_gui = new GUI::PBRGUI(mesh, pbr_material);
-		pbr_gui->_models.push_back(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.10.scale");
-		pbr_gui->_models.push_back(DATA_PATH + "t72/t72.gltf.1.scale");
-		pbr_gui->_models.push_back(DATA_PATH + "beetlefusca/scene.gltf.(0.01).scale");
-		pbr_gui->_models.push_back(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
+		pbr_gui->_models.push_back(DATA_PATH + "DamagedHelmet/DamagedHelmet.gltf.pbr.10.scale");
+		pbr_gui->_models.push_back(DATA_PATH + "t72/t72.gltf.pbr.1.scale");
+		pbr_gui->_models.push_back(DATA_PATH + "beetlefusca/scene.gltf.pbr.(0.01).scale");
+		pbr_gui->_models.push_back(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.pbr.5.scale");
 		
 		
 
