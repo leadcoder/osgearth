@@ -1,0 +1,378 @@
+#include <osgEarthPBR/PBRMaterial.h>
+
+namespace osgEarthPBR
+{
+#if 1
+	osg::ref_ptr<osg::TextureCubeMap> loadCubeMap(const std::string& filePath)
+	{
+		osg::ref_ptr<osg::TextureCubeMap> cubemap;
+
+		std::string absolutePath = osgDB::findDataFile(filePath);
+		std::map<std::string, std::string> imageMap;
+
+		osgDB::DirectoryContents contents = osgDB::getDirectoryContents(absolutePath);
+		for (unsigned int i = 0; i < contents.size(); ++i)
+		{
+			std::string filenameInDir = osgDB::convertToLowerCase(contents[i]);
+
+			if (filenameInDir == "." ||
+				filenameInDir == "..")
+			{
+				continue;
+			}
+
+
+			if (filenameInDir.find("posx") != std::string::npos || filenameInDir.find("c00") != std::string::npos || filenameInDir.find("right") != std::string::npos)
+			{
+				imageMap["posx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negx") != std::string::npos || filenameInDir.find("c01") != std::string::npos || filenameInDir.find("left") != std::string::npos)
+			{
+				imageMap["negx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("posy") != std::string::npos || filenameInDir.find("c02") != std::string::npos || filenameInDir.find("top") != std::string::npos)
+			{
+				imageMap["posy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negy") != std::string::npos || filenameInDir.find("c03") != std::string::npos || filenameInDir.find("bottom") != std::string::npos)
+			{
+				imageMap["negy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("posz") != std::string::npos || filenameInDir.find("c04") != std::string::npos || filenameInDir.find("front") != std::string::npos)
+			{
+				imageMap["posz"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negz") != std::string::npos || filenameInDir.find("c05") != std::string::npos || filenameInDir.find("back") != std::string::npos)
+			{
+				imageMap["negz"] = absolutePath + "\\" + contents[i];
+			}
+		}
+
+		if (imageMap.size() < 6)
+			return cubemap;
+
+		osg::ref_ptr<osg::Image> imagePosX = osgDB::readImageFile(imageMap["posx"]);
+		osg::ref_ptr<osg::Image> imageNegX = osgDB::readImageFile(imageMap["negx"]);
+		osg::ref_ptr<osg::Image> imagePosY = osgDB::readImageFile(imageMap["posy"]);
+		osg::ref_ptr<osg::Image> imageNegY = osgDB::readImageFile(imageMap["negy"]);
+		osg::ref_ptr<osg::Image> imagePosZ = osgDB::readImageFile(imageMap["posz"]);
+		osg::ref_ptr<osg::Image> imageNegZ = osgDB::readImageFile(imageMap["negz"]);
+
+
+		if (imagePosX.valid() && imageNegX.valid() && imagePosY.valid() && imageNegY.valid() && imagePosZ.valid() && imageNegZ.valid())
+		{
+
+			/*imagePosX->setInternalTextureFormat(GL_SRGB8);
+			imageNegX->setInternalTextureFormat(GL_SRGB8);
+			imagePosY->setInternalTextureFormat(GL_SRGB8);
+			imageNegY->setInternalTextureFormat(GL_SRGB8);
+			imagePosZ->setInternalTextureFormat(GL_SRGB8);
+			imageNegZ->setInternalTextureFormat(GL_SRGB8);*/
+
+
+			cubemap = new osg::TextureCubeMap;
+			//cubemap->setInternalFormat(GL_RGBA32F_ARB);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_X, imagePosX);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_X, imageNegX);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Y, imagePosY);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Y, imageNegY);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Z, imagePosZ);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Z, imageNegZ);
+
+			cubemap->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+
+
+			cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+			cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+
+			//cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
+			//cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
+		}
+
+		return cubemap.get();
+	}
+#else
+	osg::ref_ptr<osg::TextureCubeMap> loadCubeMap(const std::string& filePath)
+	{
+		osg::ref_ptr<osg::TextureCubeMap> cubemap;
+
+		std::string absolutePath = osgDB::findDataFile(filePath);
+		std::map<std::string, std::string> imageMap;
+
+		osgDB::DirectoryContents contents = osgDB::getDirectoryContents(absolutePath);
+		for (unsigned int i = 0; i < contents.size(); ++i)
+		{
+			std::string filenameInDir = osgDB::convertToLowerCase(contents[i]);
+
+			if (filenameInDir == "." ||
+				filenameInDir == "..")
+			{
+				continue;
+			}
+
+
+			if (filenameInDir.find("posx") != std::string::npos || filenameInDir.find("right") != std::string::npos)
+			{
+				imageMap["posx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negx") != std::string::npos || filenameInDir.find("left") != std::string::npos)
+			{
+				imageMap["negx"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("posy") != std::string::npos || filenameInDir.find("top") != std::string::npos)
+			{
+				imageMap["posy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negy") != std::string::npos || filenameInDir.find("bottom") != std::string::npos)
+			{
+				imageMap["negy"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("posz") != std::string::npos || filenameInDir.find("front") != std::string::npos)
+			{
+				imageMap["posz"] = absolutePath + "\\" + contents[i];
+			}
+
+			if (filenameInDir.find("negz") != std::string::npos || filenameInDir.find("back") != std::string::npos)
+			{
+				imageMap["negz"] = absolutePath + "\\" + contents[i];
+			}
+		}
+
+		if (imageMap.size() < 6)
+			return cubemap;
+
+		osg::ref_ptr<osg::Image> imagePosX = osgDB::readImageFile(imageMap["posx"]);
+		osg::ref_ptr<osg::Image> imageNegX = osgDB::readImageFile(imageMap["negx"]);
+		osg::ref_ptr<osg::Image> imagePosY = osgDB::readImageFile(imageMap["posy"]);
+		osg::ref_ptr<osg::Image> imageNegY = osgDB::readImageFile(imageMap["negy"]);
+		osg::ref_ptr<osg::Image> imagePosZ = osgDB::readImageFile(imageMap["posz"]);
+		osg::ref_ptr<osg::Image> imageNegZ = osgDB::readImageFile(imageMap["negz"]);
+
+
+		if (imagePosX.valid() && imageNegX.valid() && imagePosY.valid() && imageNegY.valid() && imagePosZ.valid() && imageNegZ.valid())
+		{
+			imagePosX->flipVertical();
+			imageNegX->flipVertical();
+			imagePosY->flipVertical();
+			imageNegY->flipVertical();
+			imagePosZ->flipVertical();
+			imageNegZ->flipVertical();
+
+			imagePosX->flipHorizontal();
+			imageNegX->flipHorizontal();
+			imagePosY->flipHorizontal();
+			imageNegY->flipHorizontal();
+			imagePosZ->flipHorizontal();
+			imageNegZ->flipHorizontal();
+
+			imagePosX->setInternalTextureFormat(GL_SRGB8);
+			imageNegX->setInternalTextureFormat(GL_SRGB8);
+			imagePosY->setInternalTextureFormat(GL_SRGB8);
+			imageNegY->setInternalTextureFormat(GL_SRGB8);
+			imagePosZ->setInternalTextureFormat(GL_SRGB8);
+			imageNegZ->setInternalTextureFormat(GL_SRGB8);
+
+			cubemap = new osg::TextureCubeMap;
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_X, imagePosX);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_X, imageNegX);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Y, imagePosY);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Y, imageNegY);
+			cubemap->setImage(osg::TextureCubeMap::POSITIVE_Z, imagePosZ);
+			cubemap->setImage(osg::TextureCubeMap::NEGATIVE_Z, imageNegZ);
+
+			cubemap->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+			cubemap->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+
+
+			cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+			cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+
+			//cubemap->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
+			//cubemap->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
+		}
+
+		return cubemap.get();
+	}
+#endif
+
+	const char* MODEL_PBR_VS = R"(
+    #version 330 compatibility
+    #pragma import_defines(PBR_NORMAL_MAP)
+	#pragma import_defines(PBR_IRRADIANCE_MAP)
+
+#ifdef PBR_NORMAL_MAP
+    in vec4 oe_pbr_tangent;
+    out mat3 oe_pbr_TBN;
+#endif
+
+#ifdef PBR_IRRADIANCE_MAP
+	out mat3 oe_pbr_env_matrix;
+	uniform mat4 osg_ViewMatrixInverse;
+#endif
+
+    out vec4 oe_pbr_texcoord0;
+    vec3 vp_Normal;
+    void pbr_vs(inout vec4 vertex_model)
+    {
+        oe_pbr_texcoord0 = gl_MultiTexCoord0;
+#ifdef PBR_NORMAL_MAP
+        vec3 normal = normalize(vp_Normal);
+        vec3 tangent = normalize(gl_NormalMatrix*oe_pbr_tangent.xyz);
+        vec3 bitangent = normalize(cross(normal, tangent) * oe_pbr_tangent.w);
+        oe_pbr_TBN = mat3(tangent, bitangent, normal);
+#endif
+
+#ifdef PBR_IRRADIANCE_MAP
+	//generate view space to cubemap space transform
+	 vec3 up_vec = normalize((osg_ViewMatrixInverse * vertex_model).xyz);
+     vec3 RZ = vec3(0,0,1); //north pole
+     vec3 RE = cross(RZ, up_vec);
+     vec3 RN = cross(up_vec, RE);
+     RZ = cross(RE, RN);
+	 //include mapping from world space to cubemap space, ie flip sign x, and swap y,z
+	 oe_pbr_env_matrix = inverse(mat3(-RE,RZ, RN))*mat3(osg_ViewMatrixInverse);
+	 //for reference, viewspace to world space transform
+     //oe_pbr_env_matrix = inverse(mat3(RE,RN, RZ))*mat3(osg_ViewMatrixInverse);;
+#endif
+    }
+)";
+
+	const char* MODEL_PBR_FS = R"(
+    #version 430
+    #pragma import_defines(PBR_METALROUGHNESS_MAP)
+    #pragma import_defines(PBR_NORMAL_MAP)
+    #pragma import_defines(PBR_COLOR_MAP)
+	#pragma import_defines(PBR_EMISSIVE_MAP)
+	#pragma import_defines(PBR_OCCLUSION_IN_METALROUGHNESS_MAP)
+
+    // fragment stage global PBR parameters.
+    struct OE_PBR {
+        float roughness;
+        float ao;
+        float metal;
+        float brightness;
+        float contrast;
+    } oe_pbr;
+	vec3 oe_pbr_emissive;
+
+    uniform float oe_pbr_brightness = 1.0;
+    uniform float oe_pbr_contrast = 1.0;
+    uniform float oe_pbr_roughness_factor = 1.0;
+    uniform float oe_pbr_metal_factor = 1.0;
+	uniform float oe_pbr_ao_factor = 1.0;
+	uniform vec3 oe_pbr_emissive_factor = vec3(1.0);
+	uniform vec3 oe_pbr_color_factor = vec3(1.0);
+	
+    vec3 vp_Normal;
+    in vec4 oe_pbr_texcoord0;
+
+#ifdef PBR_COLOR_MAP
+    uniform sampler2D oe_pbr_color_sampler;
+#endif
+
+#ifdef PBR_NORMAL_MAP
+    in mat3 oe_pbr_TBN;
+    uniform sampler2D oe_pbr_normal_sampler;
+#endif
+
+#ifdef PBR_METALROUGHNESS_MAP
+    uniform sampler2D oe_pbr_metal_roughness_sampler;
+#endif
+
+#ifdef PBR_EMISSIVE_MAP
+      uniform sampler2D oe_pbr_emissive_sampler;
+#endif
+
+vec4 SRGBtoLINEAR2(vec4 srgbIn)
+{
+    vec3 linOut = pow(srgbIn.xyz, vec3(2.2));
+    return vec4(linOut,srgbIn.w);
+}
+
+    void pbr_fs(inout vec4 color)
+    {
+#ifdef PBR_NORMAL_MAP
+        vec3 n = texture(oe_pbr_normal_sampler, oe_pbr_texcoord0.xy).xyz * 2 -1;
+        vp_Normal = normalize(oe_pbr_TBN * n);
+#endif
+        oe_pbr.roughness = oe_pbr_roughness_factor;
+		oe_pbr.metal = oe_pbr_metal_factor;
+#ifdef PBR_METALROUGHNESS_MAP
+        vec4 mr_map = texture(oe_pbr_metal_roughness_sampler, oe_pbr_texcoord0.xy);
+        oe_pbr.roughness = oe_pbr.roughness *  mr_map.g; //pow(mr_map.g, 1.0 / 2.2);
+		oe_pbr.metal = oe_pbr.metal * mr_map.b;
+		//oe_pbr.ao =  mix(1.0, mr_map.r, oe_pbr_ao_factor);
+#ifdef PBR_OCCLUSION_IN_METALROUGHNESS_MAP
+		oe_pbr.ao =  mix(1.0, mr_map.r, oe_pbr_ao_factor);
+#endif
+
+#endif
+        oe_pbr.brightness = oe_pbr_brightness;
+	    oe_pbr.contrast = oe_pbr_contrast;
+		color.rgb = oe_pbr_color_factor;
+#ifdef PBR_COLOR_MAP
+		vec4 albedo = texture(oe_pbr_color_sampler, oe_pbr_texcoord0.xy);
+        color = color * albedo;
+		color.a = albedo.a;
+#endif
+	oe_pbr_emissive = oe_pbr_emissive_factor;
+#ifdef PBR_EMISSIVE_MAP
+	oe_pbr_emissive *= SRGBtoLINEAR2(texture(oe_pbr_emissive_sampler, oe_pbr_texcoord0.xy)).rgb;
+#endif
+
+    }
+)";
+
+	PbrUberMaterial::PbrUberMaterial(osg::Texture2D* lut_tex)
+	{
+		auto* vp = osgEarth::VirtualProgram::getOrCreate(this);
+		vp->setInheritShaders(true);
+		vp->setFunction("pbr_vs", MODEL_PBR_VS, osgEarth::ShaderComp::LOCATION_VERTEX_VIEW, 1.1f);
+		vp->setFunction("pbr_fs", MODEL_PBR_FS, osgEarth::ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f);
+		vp->addBindAttribLocation("oe_pbr_tangent", (int)VertexAttrib::TANGENT);
+		getOrCreateUniform("oe_pbr_color_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::COLOR);
+		getOrCreateUniform("oe_pbr_metal_roughness_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::ROUGHNESS_METAL);
+		getOrCreateUniform("oe_pbr_normal_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::NORMAL);
+		getOrCreateUniform("oe_pbr_emissive_sampler", osg::Uniform::SAMPLER_2D)->set((int)TexUnits::EMISSIVE);
+
+		setIBLEnabled(true);
+		setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
+		auto irradiance_texture = loadCubeMap("Environment/OpenField/irradiance");
+		auto radiance_texture = loadCubeMap("Environment/OpenField/radiance");
+
+		setTextureAttribute((int)TexUnits::IBL_IRRADIANCE, irradiance_texture, osg::StateAttribute::ON);
+		getOrCreateUniform("oe_pbr_irradiance_map", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_IRRADIANCE);
+
+		setTextureAttribute((int)TexUnits::IBL_RADIANCE, radiance_texture, osg::StateAttribute::ON);
+		getOrCreateUniform("oe_pbr_radiance_map", osg::Uniform::SAMPLER_CUBE)->set((int)TexUnits::IBL_RADIANCE);
+
+		//osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("ibl_brdf_lut.png");
+		m_LutTexture = lut_tex;
+		if (m_LutTexture == nullptr)
+		{
+			osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile("brdfLUT.dds");
+			m_LutTexture = new osg::Texture2D;
+			m_LutTexture->setImage(image);
+			m_LutTexture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
+			m_LutTexture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
+			m_LutTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+			m_LutTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+		}
+		//texture->setInternalFormatMode(GL_SRGB8);
+		///texture->setMaxAnisotropy(16.0f);
+		setTextureAttribute((int)TexUnits::IBL_BRDF_LUT, m_LutTexture, osg::StateAttribute::ON);
+		addUniform(new osg::Uniform("oe_pbr_brdf_lut", (int)TexUnits::IBL_BRDF_LUT));
+	}
+}

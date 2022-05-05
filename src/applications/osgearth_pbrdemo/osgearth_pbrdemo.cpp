@@ -22,7 +22,7 @@
 
 
 #include <osgEarth/ImGui/ImGui>
-#include <osgEarth/PBRMaterial>
+#include <osgEarthPBR/PBRMaterial.h>
 #include <osgEarth/EarthManipulator>
 #include <osgEarth/ExampleResources>
 #include <osgViewer/Viewer>
@@ -82,13 +82,13 @@ namespace osgEarth
 		class PBRGUI : public BaseGUI
 		{
 		private:
-			PbrUberMaterial* _UberMaterial;
+			osgEarthPBR::PbrUberMaterial* _UberMaterial;
 			osg::Node* _Model;
 
 			
 		public:
 			std::vector<std::string> _models;
-			PBRGUI(osg::Node* model, PbrUberMaterial* mat) : BaseGUI("Pbr"),
+			PBRGUI(osg::Node* model, osgEarthPBR::PbrUberMaterial* mat) : BaseGUI("Pbr"),
 				_UberMaterial(mat),
 				_Model(model)
 			{
@@ -123,7 +123,7 @@ namespace osgEarth
 
 				void apply(osg::Node& node)
 				{
-					auto material = dynamic_cast<PbrMaterial*>(node.getStateSet());
+					auto material = dynamic_cast<osgEarthPBR::PbrMaterial*>(node.getStateSet());
 					if (material)
 					{
 						// Non groups act as leaf nodes
@@ -406,7 +406,7 @@ int main(int argc, char** argv)
 	
 		// Group to hold all our annotation elements.
 		osg::Group* model_group = new osg::Group();
-		auto pbr_material = new PbrUberMaterial(LUT_TEX);
+		auto pbr_material = new osgEarthPBR::PbrUberMaterial(LUT_TEX);
 		ShadowCaster* shadownode = osgEarth::findTopMostNodeOfType<ShadowCaster>(node);
 		if (shadownode)
 		{
@@ -419,7 +419,7 @@ int main(int argc, char** argv)
 		model_group->setStateSet(pbr_material);
 		std::string libname = osgDB::Registry::instance()->createLibraryNameForExtension("gltf");
 		osgDB::Registry::instance()->loadLibrary(libname);
-		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.5.scale");
+		osg::Node* mesh = osgDB::readNodeFile(DATA_PATH + "MetalRoughSpheres/glTF/MetalRoughSpheres.gltf.pbr.5.scale");
 #else
 		osg::Node* mesh = osgDB::readNodeFile("model.obj.5.scale.osgearth_shadergen");
 #endif

@@ -29,3 +29,5 @@ endif()
 if(OSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT)
     add_subdirectory(osgEarthSplat)
 endif()
+
+add_subdirectory(osgEarthPBR)
