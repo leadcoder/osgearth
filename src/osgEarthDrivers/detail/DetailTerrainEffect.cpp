@@ -69,7 +69,7 @@ DetailTerrainEffect::onInstall(TerrainEngineNode* engine)
         if ( _texImageUnit >= 0 )
         {   
             // Create the uniform for the sampler.
-            osg::StateSet* stateset = engine->getOrCreateStateSet();
+            osg::StateSet* stateset = engine->getSurfaceStateSet();
             stateset->setTextureAttribute( _texImageUnit, _tex.get() );
             stateset->addUniform( new osg::Uniform(SAMPLER_NAME, _texImageUnit) );
             stateset->addUniform( new osg::Uniform("oe_detail_lod", (float)_options.lod().get()));
@@ -83,8 +83,8 @@ DetailTerrainEffect::onInstall(TerrainEngineNode* engine)
 
             Shaders package;            
 
-            package.load( vp, package.VertexView );
-            package.load( vp, package.Fragment );           
+            package.load( vp, package.VertexView, engine->getMap()->getReadOptions() );
+            package.load( vp, package.Fragment, engine->getMap()->getReadOptions());
             
             OE_INFO << LC << "Detail texture installed!\n";
         }

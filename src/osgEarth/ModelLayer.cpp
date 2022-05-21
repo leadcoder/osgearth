@@ -297,11 +297,15 @@ ModelLayer::openImplementation()
             geo->setPosition(options().location().get());
             if (pat)
                 geo->addChild(pat);
-
-            modelNodeParent = geo;
+            else
+                modelNodeParent = geo;
         }
 
-        result = modelNodeParent.get();
+        if(geo)
+            result = geo;
+        else
+            result = modelNodeParent;
+
         
         if ( options().minVisibleRange().isSet() || options().maxVisibleRange().isSet() )
         {                

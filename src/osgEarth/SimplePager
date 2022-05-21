@@ -39,8 +39,6 @@ namespace osgEarth { namespace Util
     public:
         SimplePager(const osgEarth::Map* map, const osgEarth::Profile* dataProfile);
 
-        //! Initializes the graph. If you override this, be sure to call
-        //! buildRootNode and add that as a child of whatever you create.
         virtual void build();
 
         //! Whether this pager uses additive lods.

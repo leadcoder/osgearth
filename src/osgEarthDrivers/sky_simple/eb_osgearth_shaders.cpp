@@ -172,6 +172,9 @@ in vec3 atmos_center_to_vert;
 in vec3 atmos_vert_to_light;
 in vec3 atmos_ambient;
 
+uniform float atmos_haze_cutoff;
+uniform float atmos_haze_strength;
+
 void atmos_eb_ground_render_frag(inout vec4 COLOR)
 {    
 #ifdef OE_LIGHTING
@@ -182,15 +185,18 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 	vec3 atmos_transmittance;
 	vec3 atmos_scatter = GetSkyRadianceToPoint(atmos_center_to_camera, atmos_center_to_vert, 4.0, atmos_light_dir, atmos_transmittance);
     vec3 ambience = atmos_ambient;
-
+    vec3 ambient_floor = ambience * COLOR.rgb;
 #ifdef OE_USE_PBR
     atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, N, ambience, COLOR.rgb);
 #endif
 
-    vec3 ambient_floor = COLOR.rgb*ambience;
+
+    float vert_unitz = clamp((length(atmos_center_to_vert)-bottom_radius)/(top_radius-bottom_radius), 0, 1);
+    float atmos_haze = vert_unitz < atmos_haze_cutoff ? mix(atmos_haze_strength, 1, vert_unitz/atmos_haze_cutoff) : 1.0;
+
 
     // apply radiance and atmospheric effects:
-    COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter;
+    COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter * atmos_haze;
 
     // apply white point, exposure, and gamma correction:
 	COLOR.rgb = pow(vec3(1,1,1) - exp(-COLOR.rgb / white_point * oe_sky_exposure*1e-5), vec3(1.0 / 2.2));
@@ -289,7 +295,10 @@ in vec3 atmos_vert_to_light;
 in vec3 atmos_ambient;
 in vec3 vp_Normal;
 
+
+
 uniform float oe_sky_exposure;
+uniform float oe_sky_contrast;
 const vec3 white_point = vec3(1,1,1);
 
 void atmos_eb_ground_render_frag(inout vec4 COLOR)
@@ -300,12 +309,12 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 	vec3 sun_irradiance = GetSunAndSkyIrradiance(atmos_center_to_vert, N, atmos_light_dir, sky_irradiance);
     vec3 radiance = (1.0 / PI) * (sun_irradiance + sky_irradiance);
     vec3 ambience = atmos_ambient;
-
+    vec3 ambient_floor = COLOR.rgb*ambience;
 #ifdef OE_USE_PBR
     atmos_pbr_spec(atmos_view_dir, atmos_vert_to_light, N, ambience, COLOR.rgb);
 #endif
 
-    vec3 ambient_floor = COLOR.rgb*ambience;
+    
 
     // apply radiance and atmospheric effects:
     COLOR.rgb = COLOR.rgb * radiance * atmos_transmittance + atmos_scatter;
@@ -315,7 +324,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
 #endif
 
     // limit to ambient floor:

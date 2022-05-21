@@ -56,7 +56,8 @@ GrassLayer::init()
     options().maxAlpha().setDefault(0.75f);
 
     // custom LOD for grass
-    options().lod() = 19u;
+    //options().lod() = 19u;
+    options().lod().setDefault(19u);
 
     // no shadow casting
     options().castShadows().setDefault(false);
@@ -66,21 +67,21 @@ GrassLayer::init()
 }
 
 void
-GrassLayer::loadRenderingShaders(VirtualProgram* vp, const osgDB::Options* options) const
+GrassLayer::loadShaders(VirtualProgram* vp, const osgDB::Options* options) const
 {
     GroundCoverShaders s;
     s.load(vp, s.Grass, options);
 }
 
 osg::Geometry*
-GrassLayer::createParametricGeometry() const    
+GrassLayer::createGeometry() const
 {
     const unsigned vertsPerInstance = 16;
     const unsigned indiciesPerInstance = 54;
 
     osg::Geometry* out_geom = new osg::Geometry();
     out_geom->setUseVertexBufferObjects(true);
-    out_geom->setUseDisplayList(false);
+    //out_geom->setUseDisplayList(false);
 
     static const GLushort indices[54] = {
         0,1,4, 4,1,5, 1,2,5, 5,2,6, 2,3,6, 6,3,7,
@@ -90,11 +91,11 @@ GrassLayer::createParametricGeometry() const
 
     out_geom->addPrimitiveSet(new osg::DrawElementsUShort(GL_TRIANGLES, indiciesPerInstance, &indices[0]));
 
-    out_geom->setVertexArray(new osg::Vec3Array(osg::Array::BIND_PER_VERTEX, 16));
+    /*/out_geom->setVertexArray(new osg::Vec3Array(osg::Array::BIND_PER_VERTEX, 16));
 
     osg::Vec3Array* normals = new osg::Vec3Array(osg::Array::BIND_OVERALL);
     normals->push_back(osg::Vec3(0,1,0));
-    out_geom->setNormalArray(normals);
+    out_geom->setNormalArray(normals);*/
 
     return out_geom;
 }

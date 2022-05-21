@@ -45,6 +45,7 @@ namespace osgEarth { namespace Splat
             META_LayerOptions(osgEarth, Options, PatchLayer::Options);
             OE_OPTION_LAYER(ImageLayer, maskLayer);
             OE_OPTION_LAYER(ImageLayer, colorLayer);
+            OE_OPTION_LAYER(ImageLayer, heightLayer);
             OE_OPTION(float, colorMinSaturation);
             OE_OPTION(unsigned, lod);
             OE_OPTION(bool, castShadows);
@@ -75,6 +76,11 @@ namespace osgEarth { namespace Splat
         //! Color modulation layer
         void setColorLayer(ImageLayer* layer);
         ImageLayer* getColorLayer() const;
+
+        //! Height layer
+        void setHeightLayer(ImageLayer* layer);
+        ImageLayer* getHeightLayer() const;
+
 
         //! LOD at which to draw ground cover
         void setLOD(unsigned value);

@@ -1,3 +1,6 @@
+#version 430 compatibility
+$GLSL_DEFAULT_PRECISION_FLOAT
+
 #pragma vp_name       GroundCover vertex shader
 #pragma vp_entryPoint oe_GroundCover_VS
 #pragma vp_location   vertex_view
@@ -9,6 +12,14 @@
 #pragma import_defines(OE_GROUNDCOVER_MASK_MATRIX)
 #pragma import_defines(OE_GROUNDCOVER_WIND_SCALE)
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
+
+#pragma import_defines(OE_GROUNDCOVER_HEIGHT_SAMPLER)
+#pragma import_defines(OE_GROUNDCOVER_HEIGHT_MATRIX)
+#ifdef OE_GROUNDCOVER_HEIGHT_SAMPLER
+ // in vec4 oe_layer_tilec;
+  uniform sampler2D OE_GROUNDCOVER_HEIGHT_SAMPLER;
+  uniform mat4 OE_GROUNDCOVER_HEIGHT_MATRIX;
+#endif
 
 // Instance data from compute shader
 struct RenderData
@@ -119,9 +130,19 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
     // push the falloff closer to the max distance.
     float falloff = 1.0 - (nRange*nRange*nRange);
-    float width = render[gl_InstanceID].width * falloff;
-    float height = render[gl_InstanceID].width * falloff;
+    
 
+#ifdef OE_GROUNDCOVER_HEIGHT_SAMPLER
+    float wh_ratio = render[gl_InstanceID].width / render[gl_InstanceID].height;
+    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
+    float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r *falloff;
+    if(2.0 * height < render[gl_InstanceID].height)
+        return;
+    float width = wh_ratio * height;
+#else
+    float height = render[gl_InstanceID].height * falloff;
+    float width = render[gl_InstanceID].width * falloff;
+#endif
     int which = gl_VertexID & 7; // mod8 - there are 8 verts per instance
 
 #ifdef OE_IS_SHADOW_CAMERA
@@ -260,6 +281,15 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
 #pragma import_defines(OE_WIND_TEX)
+#pragma import_defines(OE_GROUNDCOVER_COLOR_SAMPLER)
+#pragma import_defines(OE_GROUNDCOVER_COLOR_MATRIX)
+
+#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
+  in vec4 oe_layer_tilec;
+  uniform sampler2D OE_GROUNDCOVER_COLOR_SAMPLER ;
+  uniform mat4 OE_GROUNDCOVER_COLOR_MATRIX ;
+  uniform float oe_billboard_color_modulation;
+#endif
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
 uniform float oe_GroundCover_maxAlpha;
@@ -271,7 +301,9 @@ flat in float oe_GroundCover_atlasIndex;
 #ifdef OE_WIND_TEX
 uniform float osg_FrameTime;
 uniform sampler2D oe_GroundCover_noiseTex;
+#ifndef OE_GROUNDCOVER_COLOR_SAMPLER
 in vec4 oe_layer_tilec;
+#endif
 in vec4 oe_gc_windData;
 #endif
 
@@ -305,6 +337,14 @@ void oe_GroundCover_FS(inout vec4 color)
 
     // modulate the texture
     color *= texture(oe_GroundCover_billboardTex, vec3(tc, oe_GroundCover_atlasIndex));
+
+#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
+    float modulation = 0.7;//oe_billboard_color_modulation;
+    float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
+    vec4 mod_color = texture(OE_GROUNDCOVER_COLOR_SAMPLER, (OE_GROUNDCOVER_COLOR_MATRIX*oe_layer_tilec).st);
+    color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*2.0, modulation);
+#endif
+
 
 #ifdef OE_IS_SHADOW_CAMERA
     if (color.a < oe_GroundCover_maxAlpha)
