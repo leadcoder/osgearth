@@ -90,5 +90,8 @@ namespace osgEarth { namespace Util
 
         PBR = "PBR.glsl";
         _sources[PBR] = @PBR.glsl@;
+		
+ 		Fog = "Fog.glsl";
+		_sources[Fog] = @Fog.glsl@;
     }
 } }

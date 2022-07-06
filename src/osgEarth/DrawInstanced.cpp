@@ -324,12 +324,15 @@ void InstanceGeometry::setMatrices(const std::vector< osg::Matrixf >& matrices)
     asGeometry()->accept(collector);
 
     _meshDrawElements = new osg::DrawElementsUInt(GL_TRIANGLES);
-    for (unsigned int i = 0; i < _matrices.size(); i++)
+    if (verts)
     {
-        unsigned int offset = i * verts->size();
-        for (auto i : collector.indices)
+        for (unsigned int i = 0; i < _matrices.size(); i++)
         {
-            _meshDrawElements->push_back(offset + i);
+            unsigned int offset = i * verts->size();
+            for (auto i : collector.indices)
+            {
+                _meshDrawElements->push_back(offset + i);
+            }
         }
     }
     tempGeom->addPrimitiveSet(_meshDrawElements.get());

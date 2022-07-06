@@ -41,8 +41,28 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 #pragma vp_order      1.1
 
 in float oe_fogFactor;
+uniform int oe_fog_algo;
 
 void oe_fog_frag(inout vec4 color)
 {        
-    color.rgb = mix( gl_Fog.color.rgb, color.rgb, oe_fogFactor);
+	float z = gl_FragCoord.z / gl_FragCoord.w;
+
+	float fogFactor = 0;
+	// linear fog
+	if (oe_fog_algo == 0)
+	{
+	  fogFactor = clamp((gl_Fog.end - z) / (gl_Fog.end - gl_Fog.start), 0.0, 1.0);
+	}
+	// exp fog
+	else if (oe_fog_algo == 1)
+	{	
+	  fogFactor = clamp(exp( -gl_Fog.density * z ), 0.0, 1.0);
+	}	
+	else
+	// exp2 fog
+	{
+        const float LOG2 = 1.442695;
+        fogFactor = clamp(exp2( -gl_Fog.density * gl_Fog.density * z * z * LOG2 ), 0.0, 1.0);
+	}	
+    color.rgb = mix( gl_Fog.color.rgb, color.rgb, fogFactor);
 }

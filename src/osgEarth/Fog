@@ -22,7 +22,7 @@
 #ifndef OSGEARTHUTIL_FOG_H
 #define OSGEARTHUTIL_FOG_H
 
-#include <osgEarthUtil/Common>
+#include <osgEarth/Common>
 #include <osgEarth/TerrainEffect>
 #include <osg/Uniform>
 #include <osg/Node>
@@ -37,7 +37,7 @@ namespace osgEarth { namespace Util
     * ex:
     * fog->setUpdateCallback(new osgEarth::Util::FogCallback());
     */
-    class OSGEARTHUTIL_EXPORT FogCallback : public osg::StateAttributeCallback
+    class OSGEARTH_EXPORT FogCallback : public osg::StateAttributeCallback
     {
     public:
         virtual void operator() (osg::StateAttribute* attr, osg::NodeVisitor* nv);        
@@ -46,7 +46,7 @@ namespace osgEarth { namespace Util
      /**
      * Utility class for injecting fog capabilities into a VirtualProgram
      */
-    class OSGEARTHUTIL_EXPORT FogEffect : public osg::Referenced
+    class OSGEARTH_EXPORT FogEffect : public osg::Referenced
     {
     public:
         /**

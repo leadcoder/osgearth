@@ -48,6 +48,7 @@ main(int argc, char** argv)
     if (arguments.read("--help"))
         return usage(argv[0]);
 
+    osg::DisplaySettings::instance()->setNumMultiSamples(4);
     osgViewer::Viewer viewer(arguments);
     viewer.setThreadingModel(viewer.SingleThreaded);
     viewer.setCameraManipulator(new EarthManipulator(arguments));

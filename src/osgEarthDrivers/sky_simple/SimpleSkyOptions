@@ -36,6 +36,9 @@ namespace osgEarth { namespace SimpleSky
           SkyOptions(options),
           _atmosphericLighting (true),
           _exposure            (10.0f),
+          _contrast            (2.0f),
+          _hazeStrength        (1.0f),
+          _hazeCutoff          (0.0f),
           _daytimeAmbientBoost (5.0f),
           _allowWireframe      (false),
           _starSize            (14.0f),
@@ -62,6 +65,17 @@ namespace osgEarth { namespace SimpleSky
         /** Exposure factor for simulated HDR ground lighting. Default is in CTOR */
         optional<float>& exposure() { return _exposure; }
         const optional<float>& exposure() const { return _exposure; }
+
+        optional<float>& contrast() { return _contrast; }
+        const optional<float>& contrast() const { return _contrast; }
+
+        optional<float>& hazeStrength() { return _hazeStrength; }
+        const optional<float>& hazeStrength() const { return _hazeStrength; }
+
+        optional<float>& hazeCutoff() { return _hazeCutoff; }
+        const optional<float>& hazeCutoff() const { return _hazeCutoff; }
+
+        
 
         /** Factor for boosting the ambient lighting of the sun during the daytime. Without
           * this, geometry like buildings or steep hillsides can be lit only based on their
@@ -118,6 +132,9 @@ namespace osgEarth { namespace SimpleSky
             Config conf = SkyOptions::getConfig();
             conf.set("atmospheric_lighting", _atmosphericLighting);
             conf.set("exposure", _exposure);
+            conf.set("contrast", _contrast);
+            conf.set("haze_strength", _hazeStrength);
+            conf.set("haze_cutoff", _hazeCutoff);
             conf.set("daytime_ambient_boost", _daytimeAmbientBoost);
             conf.set("star_file", _starFile);
             conf.set("star_size", _starSize);
@@ -143,6 +160,9 @@ namespace osgEarth { namespace SimpleSky
         void fromConfig( const Config& conf ) {
             conf.get("atmospheric_lighting", _atmosphericLighting);
             conf.get("exposure", _exposure);
+            conf.get("contrast", _contrast);
+            conf.get("haze_strength", _hazeStrength);
+            conf.get("haze_cutoff", _hazeCutoff);
             conf.get("daytime_ambient_boost", _daytimeAmbientBoost);
             conf.get("star_file", _starFile);
             conf.get("star_size", _starSize);
@@ -159,6 +179,9 @@ namespace osgEarth { namespace SimpleSky
 
         optional<bool>        _atmosphericLighting;
         optional<float>       _exposure;
+        optional<float>       _contrast;
+        optional<float>       _hazeStrength;
+        optional<float>       _hazeCutoff;
         optional<float>       _daytimeAmbientBoost;
         optional<std::string> _starFile;
         optional<float>       _starSize;

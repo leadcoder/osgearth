@@ -122,6 +122,21 @@ osg::ref_ptr<osg::Node> SimplePager::buildRootNode()
     return root;
 }
 
+bool isKeyProfileGeocentric(const TileKey& key)
+{
+    bool is_key_geocentric = true;
+    if (key.getProfile() && key.getProfile()->getSRS())
+    {
+        is_key_geocentric = !key.getProfile()->getSRS()->isProjected();
+    }
+    else
+    {
+        OE_WARN << LC << "SimplePager : Failed to resolve projection type from key, assume geocentric profile";
+    }
+        
+    return is_key_geocentric;
+}
+
 osg::ref_ptr<osg::Node> SimplePager::createNode(const TileKey& key, ProgressCallback* progress)
 {
     osg::BoundingSphered bounds = getBounds( key );
@@ -141,7 +156,8 @@ SimplePager::createPagedNode(const TileKey& key, ProgressCallback* progress)
 {
     osg::BoundingSphered tileBounds = getBounds(key);
     double tileRadius = tileBounds.radius();
-
+ //workaround to get map type, (Map not accessible within this class)
+    const bool geocentric = isKeyProfileGeocentric(key);
     // restrict subdivision to max level:
     bool hasChildren = key.getLOD() < _maxLevel;
 
@@ -170,8 +186,8 @@ SimplePager::createPagedNode(const TileKey& key, ProgressCallback* progress)
     pagedNode->setCenter(tileBounds.center());
     pagedNode->setRadius(tileRadius);
 
-    // Assume geocentric for now.
-    if (true)
+    
+    if (geocentric)
     {
         const GeoExtent& ccExtent = key.getExtent();
         if (ccExtent.isValid())
@@ -208,7 +224,7 @@ SimplePager::createPagedNode(const TileKey& key, ProgressCallback* progress)
 
         // Now setup a filename on the PagedLOD that will load all of the children of this node.
         pagedNode->setPriorityScale(_priorityScale);
-        //pager->setPriorityOffset(_priorityOffset);
+        
 
         osg::observer_ptr<SimplePager> pager_weakptr(this);
         pagedNode->setLoadFunction(

@@ -77,6 +77,7 @@ set(TARGET_GLSL
     RTTPicker.glsl
     WindLayer.CS.glsl
     PBR.glsl
+	Fog.glsl
 )
 
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
@@ -143,6 +144,7 @@ SET(LIB_PUBLIC_HEADERS
     Extension
     FadeEffect
     FileUtils
+    Fog
     FrameClock
     GDAL
     GDALDEM
@@ -572,6 +574,7 @@ set(TARGET_SRC
     Extension.cpp
     FadeEffect.cpp
     FileUtils.cpp
+    Fog.cpp
     FrameClock.cpp
     GDAL.cpp
     GDALDEM.cpp
