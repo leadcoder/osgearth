@@ -592,7 +592,7 @@ GroundCoverLayer::buildStateSets()
 
     // disable backface culling to support shadow/depth cameras,
     // for which the geometry shader renders cross hatches instead of billboards.
-    stateset->setMode(GL_CULL_FACE, osg::StateAttribute::PROTECTED);
+    stateset->setMode(GL_CULL_FACE, 0x0 | osg::StateAttribute::PROTECTED);
 
     stateset->addUniform(new osg::Uniform("oe_GroundCover_maxAlpha", getMaxAlpha()));
 
