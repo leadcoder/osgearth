@@ -42,6 +42,7 @@
 #include <osgUtil/CullVisitor>
 #include <osgUtil/LineSegmentIntersector>
 #include <osgShadow/ConvexPolyhedron>
+#include <osgEarth/Notify>
 
 #include <stdlib.h> // getenv
 
@@ -978,7 +979,7 @@ CascadeDrapingDecorator::CameraLocal::traverse(osgUtil::CullVisitor* cv, Cascade
         // so we can increase the resolution of the near cascade if necessary.
         optional<double> firstYMax(rttBox.yMax());
 
-#ifdef USE_TERRAIN_INTERSECTIONS
+#ifdef USE_TERRAIN_INTERSECTION
         if (rttBox.yMin() >= 0.0)
         {
             osg::Vec3d camFar = osg::Vec3d(0,0,1) * iCamMVP;

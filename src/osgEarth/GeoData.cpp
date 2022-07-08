@@ -1006,7 +1006,7 @@ GeoExtent::bounds() const
 {
     double west, east, south, north;
     getBounds(west, south, east, north);
-    return Bounds( west, south, east, north );
+    return Bounds( west, south, 0, east, north, 0 );
 }
 
 bool
@@ -1074,7 +1074,7 @@ GeoExtent::contains(const Bounds& rhs) const
 {
     return
         isValid() &&
-        rhs.isValid() &&
+        rhs.valid() &&
         contains( rhs.xMin(), rhs.yMin() ) &&
         contains( rhs.xMax(), rhs.yMax() ) &&
         contains( rhs.center() );
@@ -2171,6 +2171,36 @@ osg::Object*
 GeoImage::getTrackingToken() const
 {
     return _token.get();
+}
+
+bool
+GeoImage::read(
+    GeoImage::pixel_type& output,
+    const GeoPoint& p,
+    const RasterInterpolation& interp) const
+{
+    if (!p.isValid() || !valid())
+    {
+        return false;
+    }
+
+    // transform if necessary
+    if (!p.getSRS()->isHorizEquivalentTo(getSRS()))
+    {
+        return read(output, p.transform(getSRS()), interp);
+    }
+
+    double u = (p.x() - _extent.xMin()) / _extent.width();
+    double v = (p.y() - _extent.yMin()) / _extent.height();
+
+    // out of bounds?
+    if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0)
+    {
+        return false;
+    }
+
+    _read(output, u, v);
+    return true;
 }
 
 /***************************************************************************/

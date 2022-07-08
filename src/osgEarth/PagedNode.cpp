@@ -104,11 +104,8 @@ PagedNode2::traverse(osg::NodeVisitor& nv)
 
     else if (nv.getTraversalMode() == nv.TRAVERSE_ACTIVE_CHILDREN)
     {
-        if (nv.getVisitorType() == nv.INTERSECTION_VISITOR)
-        {
-            traverseChildren(nv);
-        }
-        else
+        // Automatically load during a cull
+        if (nv.getVisitorType() == nv.CULL_VISITOR)
         {
             bool inRange = false;
             float priority = 0.0f;
@@ -154,6 +151,11 @@ PagedNode2::traverse(osg::NodeVisitor& nv)
                         child->accept(nv);
                 }
             }
+        }
+        else
+        {
+            // Only traverse the highest res children otherwise
+            traverseChildren(nv);
         }
     }
 }
@@ -460,7 +462,6 @@ PagingManager::update()
     ScopedMutexLock lock(_trackerMutex);
 
     _tracker.flush(
-        0.0f,
         _mergesPerFrame,
         [this](osg::ref_ptr<PagedNode2>& node) -> bool
         {

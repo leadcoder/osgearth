@@ -164,6 +164,40 @@ GLUtils::useNVGL(bool value)
     }
 }
 
+namespace
+{
+    struct Mapping {
+        Mapping() : _ptr(nullptr) { }
+        const osg::State* _ptr;
+    };
+    static Mapping s_mappings[1024];
+}
+
+unsigned
+GLUtils::getUniqueStateID(const osg::State& state)
+{
+    // in theory this should never need a mutex..
+    for (int i = 0; i < 1024; ++i)
+    {
+        if (s_mappings[i]._ptr == &state)
+        {
+            return i;
+        }
+        else if (s_mappings[i]._ptr == nullptr)
+        {
+            s_mappings[i]._ptr = &state;
+            return i;
+        }
+    }
+    return 0;
+}
+
+unsigned 
+GLUtils::getSharedContextID(const osg::State& state)
+{
+    return state.getContextID();
+}
+
 void
 GLUtils::enableGLDebugging()
 {
@@ -463,7 +497,9 @@ GL3RealizeOperation::operator()(osg::Object* object)
 GLObjectPool*
 GLObjectPool::get(osg::State& state)
 {
-    return osg::get<GLObjectPool>(state.getContextID());
+    GLObjectPool* pool = osg::get<GLObjectPool>(state.getContextID());
+    pool->track(state.getGraphicsContext());
+    return pool;
 }
 
 GLObjectPool::GLObjectPool(unsigned cxid) :
@@ -474,23 +510,108 @@ GLObjectPool::GLObjectPool(unsigned cxid) :
     _avarice(10.f)
 {
     //nop
+    _gcs.resize(256);
+}
+
+namespace
+{
+    struct GCServicingOperation : public osg::GraphicsOperation
+    {
+        osg::observer_ptr<GLObjectPool> _pool;
+
+        GCServicingOperation(GLObjectPool* pool) :
+            osg::GraphicsOperation("GLObjectPool", true),
+            _pool(pool) { }
+
+        void operator()(osg::GraphicsContext* gc) override
+        {
+            if (_pool.valid())
+                _pool->releaseOrphans(gc);
+            else
+                setKeep(false);
+        }
+    };
 }
 
 void
-GLObjectPool::watch(GLObject::Ptr object)
+GLObjectPool::track(osg::GraphicsContext* gc)
+{
+    unsigned i;
+    for (i = 0; i < _gcs.size() && _gcs[i]._gc != nullptr; ++i)
+    {
+        if (_gcs[i]._gc == gc)
+            return;
+    }
+
+    _gcs[i]._gc = gc;
+    _gcs[i]._operation = new GCServicingOperation(this);
+    gc->add(_gcs[i]._operation.get());
+
+    //auto iter = _non_shared_objects.find(gc);
+    //if (iter == _non_shared_objects.end())
+    //{
+    //    _non_shared_objects.emplace(gc, Collection());
+
+    //    // add this object to the GC's operations thread so it
+    //    // can service it once per frame:
+    //    if (_gc_operation == nullptr)
+    //    {
+    //        _gc_operation = new FlushOperation(this);
+    //    }
+    //    gc->add(_gc_operation.get());
+    //}
+}
+
+//void
+//GLObjectPool::flush(osg::GraphicsContext* gc)
+//{
+//    // This function is invoked by the FlushOperation once per
+//    // frame with the active GC.
+//    // Here we will look for per-state objects (like VAOs and FBOs)
+//    // that may only be deleted in the same GC that created them.
+//    unsigned num = flush(_non_shared_objects[gc]);
+//    if (num > 0)
+//    {
+//        OE_DEBUG << LC << "GC " << (std::uintptr_t)gc << " flushed " << num << " shared objects" << std::endl;
+//    }
+//}
+
+void
+GLObjectPool::watch(GLObject::Ptr object) //, osg::State& state)
 {
     ScopedMutexLock lock(_mutex);
+
     _objects.insert(object);
+
+    //if (object->shareable())
+    //{
+    //    // either this is a shareable object, or we are inserting into
+    //    // a non-shared pool and that is why state is nullptr.
+    //    _objects.insert(object);
+    //}
+    //else
+    //{
+    //    _non_shared_objects[state.getGraphicsContext()].insert(object);
+    //}
 }
 
 void
-GLObjectPool::releaseAll()
+GLObjectPool::releaseGLObjects(osg::State* state)
 {
-    ScopedMutexLock lock(_mutex);
-    for (auto& object : _objects)
-        object->release();
-    _objects.clear();
+    if (state)
+    {
+        GLObjectPool::get(*state)->releaseAll(state->getGraphicsContext());
+    }
 }
+
+//void
+//GLObjectPool::releaseAll()
+//{
+//    ScopedMutexLock lock(_mutex);
+//    for (auto& object : _objects)
+//        object->release();
+//    _objects.clear();
+//}
 
 GLsizeiptr
 GLObjectPool::totalBytes() const
@@ -507,6 +628,60 @@ GLObjectPool::objects() const
 void
 GLObjectPool::flushDeletedGLObjects(double now, double& avail)
 {
+    //flush(_objects);
+}
+
+void
+GLObjectPool::flushAllDeletedGLObjects()
+{
+    deleteAllGLObjects();
+}
+
+void
+GLObjectPool::deleteAllGLObjects()
+{
+    //ScopedMutexLock lock(_mutex);
+    //for (auto& object : _objects)
+    //    object->release();
+    //_objects.clear();
+    //_totalBytes = 0;
+}
+
+void
+GLObjectPool::discardAllGLObjects()
+{
+    //ScopedMutexLock lock(_mutex);
+    //_objects.clear();
+    //_totalBytes = 0;
+}
+
+void
+GLObjectPool::releaseAll(const osg::GraphicsContext* gc)
+{
+    ScopedMutexLock lock(_mutex);
+
+    GLsizeiptr bytes = 0;
+    std::unordered_set<GLObject::Ptr> keep;
+
+    for (auto& object : _objects)
+    {
+        if (object->gc() == gc)
+        {
+            object->release();
+        }
+        else
+        {
+            keep.insert(object);
+            bytes += object->size();
+        }
+    }
+    _objects.swap(keep);
+    _totalBytes = bytes;
+}
+
+void
+GLObjectPool::releaseOrphans(const osg::GraphicsContext* gc)
+{
     ScopedMutexLock lock(_mutex);
 
     GLsizeiptr bytes = 0;
@@ -516,7 +691,7 @@ GLObjectPool::flushDeletedGLObjects(double now, double& avail)
 
     for (auto& object : _objects)
     {
-        if (object.use_count() == 1 && numReleased < maxNumToRelease)
+        if (object->gc() == gc && object.use_count() == 1 && numReleased < maxNumToRelease)
         {
             object->release();
             ++numReleased;
@@ -531,37 +706,44 @@ GLObjectPool::flushDeletedGLObjects(double now, double& avail)
     _totalBytes = bytes;
 }
 
-void
-GLObjectPool::flushAllDeletedGLObjects()
-{
-    deleteAllGLObjects();
-}
-
-void
-GLObjectPool::deleteAllGLObjects()
+#if 0
+unsigned
+GLObjectPool::flush(GLObjectPool::Collection& objects)
 {
     ScopedMutexLock lock(_mutex);
-    for (auto& object : _objects)
-        object->release();
-    _objects.clear();
-    _totalBytes = 0;
+
+    GLsizeiptr bytes_released = 0;
+    std::unordered_set<GLObject::Ptr> keep;
+    unsigned maxNumToRelease = std::max(1u, (unsigned)pow(4.0f, _avarice));
+    unsigned numReleased = 0u;
+
+    for (auto& object : objects)
+    {
+        if (object.use_count() == 1 && numReleased < maxNumToRelease)
+        {
+            bytes_released += object->size();
+            object->release();
+            ++numReleased;
+        }
+        else
+        {
+            keep.insert(object);
+        }
+    }
+    objects.swap(keep);
+    _totalBytes = _totalBytes - bytes_released;
+
+    return numReleased;
 }
-
-void
-GLObjectPool::discardAllGLObjects()
-{
-    ScopedMutexLock lock(_mutex);
-    _objects.clear();
-    _totalBytes = 0;
-}
-
-
+#endif
 
 GLObject::GLObject(GLenum ns, osg::State& state) :
     _name(0),
     _ns(ns),
     _recyclable(false),
-    _ext(state.get<osg::GLExtensions>())
+    _shareable(false),
+    _ext(osg::GLExtensions::Get(state.getContextID(), true)),
+    _gc(state.getGraphicsContext())
 {
     gl.init();
 }
@@ -581,7 +763,7 @@ GLQuery::GLQuery(GLenum target, osg::State& state) :
     _target(target),
     _active(false)
 {
-    ext()->glGenQueries(1, &_name);    
+    ext()->glGenQueries(1, &_name);
 }
 
 GLQuery::Ptr
@@ -675,10 +857,15 @@ GLBuffer::GLBuffer(GLenum target, osg::State& state) :
     _target(target),
     _size(0),
     _immutable(false),
-    _address(0),
-    _isResident(false)
+    _address(0)
 {
     ext()->glGenBuffers(1, &_name);
+    if (name() == 0)
+    {
+        GLenum e = glGetError();
+        OE_INFO << "OpenGL error " << e << std::endl;
+        OE_HARD_ASSERT(name() != 0);
+    }
 }
 
 GLBuffer::Ptr
@@ -721,7 +908,7 @@ void
 GLBuffer::bind() const
 {
     //OE_DEVEL << LC << "GLBuffer::bind, name=" << name() << std::endl;
-    OE_SOFT_ASSERT_AND_RETURN(_name != 0, void(), "bind() called on invalid/deleted name: " + label() << );
+    OE_SOFT_ASSERT_AND_RETURN(_name != 0, void(), "bind() called on invalid/deleted name: " + _name << );
     ext()->glBindBuffer(_target, _name);
 }
 
@@ -874,11 +1061,13 @@ GLBuffer::release()
     {
         OE_DEVEL << LC << "GLBuffer::release, name=" << name() << std::endl;
 
-        makeNonResident();
+        //makeNonResident();
         //OE_DEVEL << "Releasing buffer " << _name << "(" << _label << ")" << std::endl;
         ext()->glDeleteBuffers(1, &_name);
         _name = 0;
         _size = 0;
+        for (auto& i : _isResident)
+            i.second = false;
     }
 }
 
@@ -895,27 +1084,31 @@ GLBuffer::address()
 }
 
 void
-GLBuffer::makeResident()
+GLBuffer::makeResident(osg::State& state)
 {
-    if (address() != 0 && !_isResident)
+    Resident& resident = _isResident[state.getGraphicsContext()];
+
+    if (address() != 0 && resident == false)
     {
         OE_HARD_ASSERT(gl.MakeNamedBufferResidentNV);
         //Currently only GL_READ_ONLY is supported according to the spec
         gl.MakeNamedBufferResidentNV(name(), GL_READ_ONLY_ARB);
-        _isResident = true;
+        resident = true;
     }
 }
 
 void
-GLBuffer::makeNonResident()
+GLBuffer::makeNonResident(osg::State& state)
 {
-    if (_address != 0 && _isResident)
+    Resident& resident = _isResident[state.getGraphicsContext()];
+
+    if (address() != 0 && resident == true)
     {
         OE_HARD_ASSERT(gl.MakeNamedBufferNonResidentNV);
         gl.MakeNamedBufferNonResidentNV(name());
-        _isResident = false;
         // address can be invalidated, so zero it out
         _address = 0;
+        resident = false;
     }
 }
 
@@ -987,7 +1180,6 @@ GLTexture::GLTexture(GLenum target, osg::State& state) :
     GLObject(GL_TEXTURE, state),
     _target(target),
     _handle(0),
-    _isResident(false),
     _profile(target),
     _size(0)
 {
@@ -997,10 +1189,10 @@ GLTexture::GLTexture(GLenum target, osg::State& state) :
 GLTexture::Ptr
 GLTexture::create(GLenum target, osg::State& state)
 {
-    Ptr obj(new GLTexture(target, state));
-    GLObjectPool::get(state)->watch(obj);
-    OE_DEVEL << LC << "GLTexture::create, name=" << obj->name() << std::endl;
-    return obj;
+    Ptr object(new GLTexture(target, state));
+    GLObjectPool::get(state)->watch(object);
+    OE_DEVEL << LC << "GLTexture::create, name=" << object->name() << std::endl;
+    return object;
 }
 
 GLTexture::Ptr
@@ -1037,10 +1229,6 @@ GLTexture::bind(osg::State& state)
 
     glBindTexture(_target, _name);
 
-    // must be called with a compatible state
-    // (same context under which the texture was created)
-    OE_SOFT_ASSERT(state.getContextID() == _ext->contextID);
-
     // Inform OSG of the state change
     state.haveAppliedTextureAttribute(
         state.getActiveTextureUnit(), osg::StateAttribute::TEXTURE);
@@ -1062,10 +1250,12 @@ GLTexture::handle(osg::State& state)
 }
 
 void
-GLTexture::makeResident(bool toggle)
+GLTexture::makeResident(const osg::State& state, bool toggle)
 {
+    Resident& resident = _isResident[state.getGraphicsContext()];
+
     //TODO: does this stall??
-    if (_isResident != toggle)
+    if (resident != toggle)
     {
         OE_SOFT_ASSERT_AND_RETURN(_handle != 0, void(), "makeResident() called on invalid handle: " + label() << );
 
@@ -1076,8 +1266,15 @@ GLTexture::makeResident(bool toggle)
 
         OE_DEVEL << "'" << id() << "' name=" << name() <<" resident=" << (toggle ? "yes" : "no") << std::endl;
 
-        _isResident = toggle;
+        resident = toggle;
     }
+}
+
+bool
+GLTexture::isResident(const osg::State& state) const
+{
+    Resident& resident = _isResident[state.getGraphicsContext()];
+    return resident == true;
 }
 
 void
@@ -1086,7 +1283,9 @@ GLTexture::release()
     OE_DEVEL << LC << "GLTexture::release, name=" << name() << std::endl;
     if (_handle != 0)
     {
-        makeResident(false);
+        for (auto& i : _isResident)
+            i.second = false;
+
         _handle = 0;
     }
     if (_name != 0)
@@ -1296,44 +1495,10 @@ GLFBO::renderToTexture(
 #undef LC
 #define LC "[GLPipeline]"
 
-namespace
-{
-    // operation to set the thread's name.
-    struct SetGLPipelineName : public osg::Operation
-    {
-        SetGLPipelineName(const std::string& name) : osg::Operation(name, true), _name(name) { }
-        std::string _name;
-        void operator()(osg::Object*) override {
-            Threading::setThreadName(_name);
-            setKeep(false);
-        }
-    };
-}
-
-
-GLPipeline::SyncPipelineToFrame::SyncPipelineToFrame(GLPipeline::Ptr pipeline) :
-    osg::Operation("SyncPipelineToFrame", true),
-    _pipeline(pipeline)
-{
-    //nop
-}
-
-void
-GLPipeline::SyncPipelineToFrame::operator()(osg::Object*)
-{
-    GLPipeline::Ptr ptr(_pipeline);
-    if (ptr)
-        ptr->sync();
-
-    setKeep(!_pipeline.expired());
-}
-
-
-GLPipeline::Dispatcher::Dispatcher(
-    GLPipeline::Ptr pipeline) :
+GLPipeline::Dispatcher::Dispatcher(GLPipeline::Ptr pipeline) :
+    osg::GraphicsOperation("GLPipelineDispatcher", true),
     _pipeline_ref(pipeline),
-    _myGC(pipeline->_gc),
-    _advance_frame(false)
+    _myGC(pipeline->_gc)
 {
     //nop
 }
@@ -1343,189 +1508,71 @@ GLPipeline::Dispatcher::push(osg::Operation* op)
 {
     _queue_mutex.lock();
     _thisQ.push(op);
-    _event.set();
     _queue_mutex.unlock();
 }
 
 void
-GLPipeline::Dispatcher::run()
+GLPipeline::Dispatcher::operator()(osg::GraphicsContext* gc)
 {
     osg::ref_ptr<osg::FrameStamp> fs = new osg::FrameStamp();
 
-    // make the graphics context current.
-    if (_myGC.valid())
+    if (_pipeline_ref.expired())
     {
-        _myGC->makeCurrent();
-        _myGC->getState()->initializeExtensionProcs();
-        fs->setFrameNumber(0);
-        _myGC->getState()->setFrameStamp(fs.get());
+        setKeep(false);
+        return;
     }
 
-    while (!_pipeline_ref.expired())
+    osg::ref_ptr<osg::Operation> next;
+
+    // check for new job:
+    _queue_mutex.lock();
     {
-        osg::ref_ptr<osg::Operation> next;
-        do
+        if (!_thisQ.empty())
         {
-            // reset:
-            next = nullptr;
-
-            // The timeout is just so we can check on pipeline_ref expiration.
-            // Both the queue and the advance_frame respond to the event trigger.
-            while(
-                !_advance_frame &&
-                !_pipeline_ref.expired() &&
-                !_event.wait(1000));
-
-            // check for new job:
-            _queue_mutex.lock();
-            {
-                if (!_thisQ.empty())
-                {
-                    next = _thisQ.front();
-                    _thisQ.pop();
-                }
-
-                // reset the event if the queue is now empty.
-                if (_thisQ.empty())
-                {
-                    _event.reset();
-                }
-            }
-            _queue_mutex.unlock();
-
-            if (next.valid())
-            {
-                // run it
-                next->operator()(_myGC.get());
-
-                // if keep==true, that means the delegate wishes to run
-                // again for another invocation. In this case we defer it to
-                // the next "frame" as deliniated by the frame-sync. The whole
-                // point of a multi-invocation operation is to let the GPU have
-                // time to complete its async calls between invocations!
-                if (next->getKeep())
-                {
-                    _nextQ.push(next);
-                }
-            }
-
-        } while (next.valid() && !_advance_frame);
-
-        // swap in the next queue..
-        _queue_mutex.lock();
-        {
-            // reset our frame marker
-            _advance_frame = false;
-
-            // increment the frame counter.
-            fs->setFrameNumber(fs->getFrameNumber() + 1);
-
-            while (!_nextQ.empty())
-            {
-                _thisQ.push(_nextQ.front());
-                _nextQ.pop();
-            }
-
-            if (_thisQ.empty())
-                _event.reset();
-            else
-                _event.set();
+            next = _thisQ.front();
+            _thisQ.pop();
         }
-        _queue_mutex.unlock();
     }
+    _queue_mutex.unlock();
 
-    // release operations before the thread stops working
-    while (!_thisQ.empty()) _thisQ.pop();
-    while (!_nextQ.empty()) _nextQ.pop();
-
-    //_operationQueue->releaseAllOperations();
-    if (_myGC.valid())
+    if (next.valid())
     {
-        _myGC->releaseContext();
-    }
+        // run it
+        next->operator()(gc);
 
-    OE_INFO << LC << "dispatcher exiting" << std::endl;
+        // if keep==true, that means the delegate wishes to run
+        // again for another invocation. In this case we defer it to
+        // the next "frame" as deliniated by the frame-sync. The whole
+        // point of a multi-invocation operation is to let the GPU have
+        // time to complete its async calls between invocations!
+        if (next->getKeep())
+        {
+            _thisQ.push(next);
+        }
+    }
 }
 
 //static defs
 Mutex GLPipeline::_mutex("GLPipeline(OE)");
-std::unordered_map<std::string, GLPipeline::Ptr> GLPipeline::_lut;
+std::unordered_map<osg::State*, GLPipeline::Ptr> GLPipeline::_lut;
+
 
 GLPipeline::Ptr
-GLPipeline::get()
-{
-    return get("");
-}
-
-GLPipeline::Ptr
-GLPipeline::get(const std::string& name)
+GLPipeline::get(osg::State& state)
 {
     ScopedMutexLock lock(GLPipeline::_mutex);
-    GLPipeline::Ptr& p = _lut[name];
+    GLPipeline::Ptr& p = _lut[&state];
 
     if (p == nullptr)
     {
-        auto gcs = osg::GraphicsContext::getAllRegisteredGraphicsContexts();
-        for (auto& parent_gc : gcs)
-        {
-            // locate the first non-shared graphics context
-            // and use it as a frame sync.
-            if (parent_gc->getTraits()->sharedContext == nullptr &&
-                parent_gc->isRealized())
-            {
-                p = std::make_shared<GLPipeline>();
-
-                // For the default pipeline (empty name) just attach to
-                // the primary GC and use its operations queue. No frame
-                // sync is necessary since it already supports that.
-                if (name.empty())
-                {
-                    p->_gc = parent_gc;
-                }
-                else
-                {
-                    // Make a new GC with a custom dispatcher thread that
-                    // will "sync up" to the primary GC's frame loop.
-                    osg::ref_ptr<osg::GraphicsContext::Traits> traits =
-                        new osg::GraphicsContext::Traits(*parent_gc->getTraits());
-
-                    // set to pbuffer since we have to realize some kind of 
-                    // surface even though we will not use it
-                    traits->pbuffer = true;
-                    traits->width = 1;
-                    traits->height = 1;
-
-                    // custom dispatcher thread that will frame-sync to the actual 
-                    // visual GC. This is necessary to prevent multi-invocation jobs
-                    // from re-invoking immediately.
-                    p->_gc = osg::GraphicsContext::createGraphicsContext(traits.get());
-                    p->_gc->setName(name);
-                    p->_gc->createGraphicsThread();
-                    p->_gc->realize();
-
-                    p->_dispatcher = new Dispatcher(p);
-                    parent_gc->add(new SyncPipelineToFrame(p));
-
-                    p->_gc->setGraphicsThread(p->_dispatcher.get());
-                    p->_gc->getGraphicsThread()->start();
-                    p->_gc->add(new SetGLPipelineName(name));
-                }
-                break;
-            }
-        }
+        p = std::make_shared<GLPipeline>();
+        p->_gc = state.getGraphicsContext();
+        p->_dispatcher = new Dispatcher(p);
+        state.getGraphicsContext()->add(p->_dispatcher.get());
     }
 
     OE_HARD_ASSERT(p != nullptr, "Cannot find a GC :(");
     return p;
-}
-
-void
-GLPipeline::sync()
-{
-    _dispatcher->_queue_mutex.lock();
-    _dispatcher->_advance_frame = true;
-    _dispatcher->_event.set();
-    _dispatcher->_queue_mutex.unlock();
 }
 
 //........................................................................
@@ -1560,9 +1607,9 @@ ComputeImageSession::setImage(osg::Image* image)
 }
 
 void
-ComputeImageSession::execute()
+ComputeImageSession::execute(osg::State& state)
 {
-    auto job = GLPipeline::get()->dispatch<bool>(
+    auto job = GLPipeline::get(state)->dispatch<bool>(
         [this](osg::State& state, Promise<bool>& promise, int invocation)
         {
             if (invocation == 0)
@@ -1630,6 +1677,7 @@ ComputeImageSession::readback(osg::State* state)
 
 //........................................................................
 
+#include <iostream>
 namespace
 {
     using ICO = osgUtil::IncrementalCompileOperation;
@@ -1644,7 +1692,8 @@ namespace
             _node(node),
             _jobsActive(jobsActive) { }
 
-        virtual ~ICOCallback() {
+        virtual ~ICOCallback()
+        {
             _jobsActive--;
         }
 

@@ -20,6 +20,7 @@
 #define OSGEARTH_THREADING_UTILS_H 1
 
 #include <osgEarth/Common>
+#include <osgEarth/Notify>
 #include <atomic>
 #include <functional>
 #include <condition_variable>
@@ -862,6 +863,9 @@ namespace osgEarth { namespace Threading
         //! Set the concurrency of this job arena
         //! (Only applies to THREAD_POOL type arenas)
         void setConcurrency(unsigned value);
+
+        //! Get the target concurrency (thread count) 
+        unsigned getConcurrency() const;
 
         //! Discard all queued jobs
         void cancelAll();

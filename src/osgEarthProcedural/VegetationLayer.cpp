@@ -158,6 +158,10 @@ VegetationLayer::Options::fromConfig(const Config& conf)
             group_c.get("density", group.density());
             group_c.get("lod", group.lod());
             group_c.get("cast_shadows", group.castShadows());
+
+            if (group_c.value("lod") == "auto") {
+                group.lod() = 0;
+            }
         }
     }
 }
@@ -304,14 +308,16 @@ VegetationLayer::dirty()
 void
 VegetationLayer::setSSEScales(const osg::Vec4f& value)
 {
-    _pixelScalesU->set(value);
+    if (_pixelScalesU.valid())
+        _pixelScalesU->set(value);
 }
 
 osg::Vec4f
 VegetationLayer::getSSEScales() const
 {
     osg::Vec4f value;
-    _pixelScalesU->get(value);
+    if (_pixelScalesU.valid())
+        _pixelScalesU->get(value);
     return value;
 }
 
@@ -512,7 +518,8 @@ VegetationLayer::prepareForRendering(TerrainEngine* engine)
         for (int g = 0; g < options().groups().size(); ++g)
         {
             Options::Group& group = options().group((AssetGroup::Type)g);
-            if (!group.lod().isSet())
+            if (group.lod() == 0)
+            //if (!group.lod().isSet())
             {
                 unsigned bestLOD = 0;
                 for (unsigned lod = 1; lod <= 99; ++lod)

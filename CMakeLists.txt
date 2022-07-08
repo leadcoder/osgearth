@@ -27,11 +27,11 @@ PROJECT(OSGEARTH)
 
 # SDK version number (informational)
 SET(OSGEARTH_MAJOR_VERSION 3)
-SET(OSGEARTH_MINOR_VERSION 2)
+SET(OSGEARTH_MINOR_VERSION 3)
 SET(OSGEARTH_PATCH_VERSION 0)
 
 # Increment this each time the ABI changes
-SET(OSGEARTH_SOVERSION 134)
+SET(OSGEARTH_SOVERSION 138)
 
 # C++11 is required for osgEarth 3.x
 set_property(GLOBAL PROPERTY CXX_STANDARD 11)
@@ -157,7 +157,7 @@ find_package(GLEW)
 find_package(Protobuf)
 find_package(WEBP)
 find_package(Blend2D)
-find_package(blosc)
+find_package(Blosc)
 
 if(OSGEARTH_ENABLE_PROFILING)
     find_package(Tracy)

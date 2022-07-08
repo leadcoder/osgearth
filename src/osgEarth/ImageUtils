@@ -439,8 +439,8 @@ namespace osgEarth { namespace Util
                     _image->getMipmapData(m-1) + (s>>m)*_colBytes + (t>>m)*(_rowBytes>>m) + r*(_imageBytes>>m);
             }
 
-            //typedef void (*ReaderFunc)(const PixelReader* ia, osg::Vec4f& output, int s, int t, int r, int m);
-            typedef std::function<void(const PixelReader* ia, osg::Vec4f& output, int s, int t, int r, int m)> ReaderFunc;
+            typedef void (*ReaderFunc)(const PixelReader* ia, osg::Vec4f& output, int s, int t, int r, int m);
+            //typedef std::function<void(const PixelReader* ia, osg::Vec4f& output, int s, int t, int r, int m)> ReaderFunc;
             ReaderFunc _read;
             const osg::Image* _image;
             unsigned _colBytes;
@@ -530,7 +530,9 @@ namespace osgEarth { namespace Util
             inline double u() const { return _u; }
             inline double v() const { return _v; }
 
-            inline void forEachPixel(const std::function<void()>& func)
+            //inline void forEachPixel(const std::function<void()>& func)
+            template<typename Func>
+            inline void forEachPixel(const Func& func)
             {
                 for (_r = 0; _r < _image->r(); ++_r)
                 {
@@ -578,12 +580,16 @@ namespace osgEarth { namespace Util
             inline double x() const { return _x; }
             inline double y() const { return _y; }
 
-            inline void forEachPixel(const std::function<void()>& func)
+            //inline void forEachPixel(const std::function<void()>& func)
+            template<typename Func>
+            inline void forEachPixel(const Func& func)
             {
                 forEachPixelOnCenter(func);
             }
 
-            inline void forEachPixelOnCenter(const std::function<void()>& func)
+            //inline void forEachPixelOnCenter(const std::function<void()>& func)
+            template<typename Func>
+            inline void forEachPixelOnCenter(const Func& func)
             {
                 double _bu = 0.5 / (double)_image->s();
                 double _bv = 0.5 / (double)_image->t();
