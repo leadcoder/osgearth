@@ -102,24 +102,7 @@ BiomeManager::ref(const Biome* biome)
     if (item.first->second == 1) // ref count of 1 means it's new
     {
         ++_revision;
-        OE_INFO << LC << "Hello, " << biome->name().get() << std::endl;
-    }
-}
-
-void
-BiomeManager::ref(
-    const Biome* biome,
-    const TileKey& key,
-    const GeoImage& image)
-{
-    ScopedMutexLock lock(_refsAndRevision_mutex);
-
-    auto item = _refs.emplace(biome, 0);
-    ++item.first->second;
-    if (item.first->second == 1) // ref count of 1 means it's new
-    {
-        ++_revision;
-        OE_INFO << LC << "Hello, " << biome->name().get() << std::endl;
+        OE_INFO << LC << "Hello, " << biome->name().get() << " (" << biome->index() << ")" << std::endl;
     }
 }
 
@@ -132,17 +115,25 @@ BiomeManager::unref(const Biome* biome)
     
     // silent assertion
     if (iter == _refs.end() || iter->second == 0)
+    {
+        OE_SOFT_ASSERT(iter != _refs.end() && iter->second != 0);
         return;
+    }
 
     if (!_locked)
     {
         --iter->second;
         if (iter->second == 0)
         {
-            ++_revision;
-            OE_INFO << LC << "Goodbye, " << biome->name().get() << std::endl;
+            // Technically yes, this creates a new revision, but it
+            // would also result in re-loading assets that are already
+            // resident... think on this -gw
+            //++_revision;
+            OE_INFO << LC << "Goodbye, " << biome->name().get() << "(" << biome->index() << ")" << std::endl;
         }
     }
+
+    //OE_INFO << LC << "(" << iter->second << ")" << biome->name().get() << std::endl;
 }
 
 int
@@ -253,7 +244,7 @@ BiomeManager::recalculateResidentBiomes()
         for (auto& asset : to_delete)
         {
             _residentModelAssets.erase(asset);
-            OE_DEBUG << LC << "Unloaded asset " << asset->name().get() << std::endl;
+            OE_DEBUG << LC << "Unloaded asset " << asset->name() << std::endl;
         }
     }
 }
@@ -360,11 +351,15 @@ BiomeManager::materializeNewAssets(
     materialLoader.setTextureFactory(NORMAL_MAP_TEX_UNIT,
         [](osg::Image* image)
         {
+            osg::Texture2D* tex = nullptr;
+
             // compresses the incoming texture if necessary
             if (image->getPixelFormat() != GL_RG)
-                return new osg::Texture2D(convertNormalMapFromRGBToRG(image));
+                tex = new osg::Texture2D(convertNormalMapFromRGBToRG(image));
             else
-                return new osg::Texture2D(image);
+                tex = new osg::Texture2D(image);
+
+            return tex;
         }
     );
 
@@ -398,7 +393,7 @@ BiomeManager::materializeNewAssets(
                 // First reference to this instance? Populate it:
                 if (residentAsset == nullptr)
                 {
-                    OE_INFO << LC << "  Loading asset " << assetDef->name().get() << std::endl;
+                    OE_INFO << LC << "  Loading asset " << assetDef->name() << std::endl;
 
                     residentAsset = ResidentModelAsset::create();
 
@@ -431,6 +426,7 @@ BiomeManager::materializeNewAssets(
                                 }
 
                                 // find materials:
+                                materialLoader.setReferrer(uri.full());
                                 residentAsset->model()->accept(materialLoader);
 
                                 // add flexors:
@@ -779,7 +775,6 @@ BiomeManager::addFlexors(osg::ref_ptr<osg::Node>& node, float stiffness)
     node->accept(cb);
     auto& bbox = cb.getBoundingBox();
 
-#if 1
     auto addFlexors = [bbox, stiffness](osg::Geometry& geom, const osg::Matrix& l2w)
     {
         osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(geom.getVertexArray());
@@ -811,65 +806,4 @@ BiomeManager::addFlexors(osg::ref_ptr<osg::Node>& node, float stiffness)
 
     MyVisitor<osg::Geometry> visitor;
     visitor.visit(node, addFlexors);
-
-#else
-
-    // this doesn't work because all the vert's are not shared.
-    // if two adjacent triangles have co-placed verts, they will
-    // be deformed differently using this algorithm, resulting
-    // in cracks and gaps.
-    auto addFlexors = [bbox](
-        osg::Geometry& geom, 
-        unsigned i0, unsigned i1, unsigned i2,
-        const osg::Matrix& l2w)
-    {
-        osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(geom.getVertexArray());
-        osg::Vec3Array* flexors = dynamic_cast<osg::Vec3Array*>(geom.getTexCoordArray(3));
-        if (flexors == nullptr) {
-            flexors = new osg::Vec3Array();
-            flexors->reserve(verts->size());
-            geom.setTexCoordArray(3, flexors);
-        }
-
-        osg::Vec3f flex, far;
-        auto v0 = (*verts)[i0], v1 = (*verts)[i1], v2 = (*verts)[i2];
-        float v0v1 = (v0 - v1).length();
-        float v1v2 = (v1 - v2).length();
-        float v2v0 = (v2 - v0).length();
-        if (v0v1 > v1v2 && v0v1 > v2v0) {
-            if ((v0 - bbox.center()).length2() > (v1 - bbox.center()).length2())
-                flex = v0 - v1, far = v0;
-            else
-                flex = v1 - v0, far = v1;
-        }
-        else if (v1v2 > v0v1 && v1v2 > v2v0) {
-            if ((v1 - bbox.center()).length2() > (v2 - bbox.center()).length2())
-                flex = v1 - v2, far = v1;
-            else
-                flex = v2 - v1, far = v2;
-        }
-        else {
-            if ((v2 - bbox.center()).length2() > (v0 - bbox.center()).length2())
-                flex = v2 - v0, far = v2;
-            else
-                flex = v0 - v2, far = v0;
-        }
-
-        //.//now compute the length...
-
-        osg::Vec3f base(bbox.center().x(), bbox.center().y(), bbox.zMin());
-        float xy_radius = std::max(bbox.xMax() - bbox.xMin(), bbox.yMax() - bbox.yMin());
-        float height_ratio = harden((far.z() - bbox.zMin()) / (bbox.zMax() - bbox.zMin()));
-        auto lateral_vec = (far - osg::Vec3f(0, 0, far.z()));
-        float lateral_ratio = harden(lateral_vec.length() / xy_radius);
-        flex = normalize(flex) * (lateral_ratio * 3.0f) * (height_ratio * 1.5f);
-
-        (*flexors)[i0] = flex;
-        (*flexors)[i1] = flex;
-        (*flexors)[i2] = flex;
-    };
-
-    TriangleVisitor visitor;
-    visitor.visit(node, addFlexors);
-#endif
 }

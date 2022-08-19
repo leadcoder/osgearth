@@ -53,11 +53,49 @@ AssetGroup::name(AssetGroup::Type group)
         std::string("undefined");
 }
 
+std::vector<std::string>
+AssetTraits::getPermutations(const std::vector<std::string>& input)
+{
+    std::vector<std::string> sorted = input;
+    std::sort(sorted.begin(), sorted.end());
+
+    std::vector<std::string> result;
+
+    std::ostringstream buf;
+
+    for (int first = 0; first < sorted.size(); ++first)
+    {
+        for(int last = first; last < sorted.size(); ++last)
+        {
+            buf.str("");
+            for (int i = first; i <= last; ++i)
+            {
+                if (i > first) buf << ",";
+                buf << sorted[i];
+            }
+            result.push_back(buf.str());
+        }
+    }
+
+    return std::move(result);
+}
+
+std::string
+AssetTraits::toString(const std::vector<std::string>& traits)
+{
+    std::ostringstream buf;
+    for (int i = 0; i < traits.size(); ++i)
+    {
+        if (i > 0) buf << ',';
+        buf << traits[i];
+    }
+    return buf.str();
+}
 
 ModelAsset::ModelAsset(const Config& conf)
 {
     scale().setDefault(1.0f);
-    stiffness().setDefault(0.0f);
+    stiffness().setDefault(0.5f);
 
     conf.get("url", modelURI());
     conf.get("name", name());
@@ -93,7 +131,7 @@ ModelAsset::getConfig() const
 
 //...................................................................
 
-LifeMapTextureAsset::LifeMapTextureAsset(const Config& conf)
+MaterialAsset::MaterialAsset(const Config& conf)
 {
     conf.get("name", name());
     conf.get("url", uri());
@@ -101,9 +139,9 @@ LifeMapTextureAsset::LifeMapTextureAsset(const Config& conf)
 }
 
 Config
-LifeMapTextureAsset::getConfig() const
+MaterialAsset::getConfig() const
 {
-    Config conf("texture");
+    Config conf("asset");
     conf.set("name", name());
     conf.set("url", uri());
     conf.set("size", size());
@@ -114,20 +152,7 @@ LifeMapTextureAsset::getConfig() const
 
 AssetCatalog::AssetCatalog(const Config& conf)
 {
-    _lifemapMatrixWidth = as<unsigned>(conf.child("lifemaptextures").value("width"), 1);
-    _lifemapMatrixHeight = as<unsigned>(conf.child("lifemaptextures").value("height"), 1);
-
-    ConfigSet texturesConf = conf.child("lifemaptextures").children("texture");
-    for (const auto& c : texturesConf)
-    {
-        _textures.emplace_back(c);
-    }
-    ConfigSet specialConf = conf.child("specialtextures").children("texture");
-    for (const auto& c : specialConf)
-    {
-        _specialTextures.emplace_back(c);
-    }
-
+    // load all model asset defs
     ConfigSet modelassetgroups = conf.child("models").children("group");
     if (modelassetgroups.empty()) modelassetgroups = conf.child("modelassets").children("group");
     for (const auto& c : modelassetgroups)
@@ -141,8 +166,80 @@ AssetCatalog::AssetCatalog(const Config& conf)
             {
                 ModelAsset asset(m);
                 asset.group() = group;
-                _models[asset.name().get()] = asset;
+                _models[asset.name()] = asset;
             }
+        }
+    }
+    // load in all materials first into a temporary table
+    std::unordered_map<std::string, MaterialAsset> temp_materials;
+    ConfigSet materialassets = conf.child("materials").children("asset");
+    for (const auto& c : materialassets)
+    {
+        MaterialAsset a(c);
+        if (a.name().isSet())
+            temp_materials[a.name().get()] = std::move(a);
+    }
+
+    // make a list of materials, with the lifemap matrix materials first
+    // so their indices are 'well known' from here on out.
+    std::unordered_set<std::string> added;
+
+    // add substrate textures:
+    ConfigSet substrates = conf.child("lifemapmatrix").child("substrate").children("asset");
+    for (const auto& c : substrates)
+    {
+        auto iter = temp_materials.find(c.value("name"));
+        if (iter != temp_materials.end())
+        {
+            if (added.find(iter->first) == added.end())
+            {
+                _materials.push_back(iter->second);
+                added.emplace(iter->first);
+            }
+            else
+            {
+                OE_WARN << LC << "LifeMapMatrix materials must all be unique!" << std::endl;
+            }
+        }
+        else
+        {
+            OE_WARN << LC << "Unrecognized material asset \"" << iter->second.name().get() << "\" referenced in the lifemap matrix"
+                << std::endl;
+        }
+    }
+
+    // append overlay textures:
+    ConfigSet overlays = conf.child("lifemapmatrix").child("overlay").children("asset");
+    for (const auto& c : overlays)
+    {
+        auto iter = temp_materials.find(c.value("name"));
+        if (iter != temp_materials.end())
+        {
+            if (added.find(iter->first) == added.end())
+            {
+                _materials.push_back(iter->second);
+                added.emplace(iter->first);
+            }
+            else
+            {
+                OE_WARN << LC << "LifeMapMatrix materials must all be unique!" << std::endl;
+            }
+        }
+        else
+        {
+            OE_WARN << LC << "Unrecognized material asset \"" << iter->second.name().get() << "\" referenced in the lifemap matrix" << std::endl;
+        }
+    }
+
+    _lifemapMatrixWidth = _materials.size() / 2;
+
+    // load all the other textures at the end, avoiding dupes
+    for (auto& iter : temp_materials)
+    {
+        if (added.find(iter.first) == added.end())
+        {
+            _materials.push_back(iter.second);
+            added.emplace(iter.first);
         }
     }
 }
@@ -153,7 +250,7 @@ AssetCatalog::getConfig() const
     Config conf("AssetCatalog");
 
     //TODO - incomplete/wrong
-
+#if 0
     Config textures("LifeMapTextures");
     for (auto& texture : _textures)
         textures.add(texture.getConfig());
@@ -165,6 +262,7 @@ AssetCatalog::getConfig() const
         specifictextures.add(texture.getConfig());
     if (!specifictextures.empty())
         conf.add(specifictextures);
+#endif
 
     Config models("Models");
     for (auto& model : _models)
@@ -181,12 +279,15 @@ AssetCatalog::getLifeMapMatrixWidth() const
     return _lifemapMatrixWidth;
 }
 
+#if 0
 unsigned
 AssetCatalog::getLifeMapMatrixHeight() const
 {
     return _lifemapMatrixHeight;
 }
+#endif
 
+#if 0
 const std::vector<LifeMapTextureAsset>&
 AssetCatalog::getLifeMapTextures() const
 {
@@ -198,6 +299,7 @@ AssetCatalog::getSpecialTextures() const
 {
     return _specialTextures;
 }
+#endif
 
 const ModelAsset*
 AssetCatalog::getModel(const std::string& name) const
@@ -206,13 +308,24 @@ AssetCatalog::getModel(const std::string& name) const
     return i != _models.end() ? &i->second : nullptr;
 }
 
+const MaterialAsset*
+AssetCatalog::getMaterial(const std::string& name) const
+{
+    for (auto& material : _materials)
+    {
+        if (material.name() == name)
+            return &material;
+    }
+    return nullptr;
+}
+
 bool
 AssetCatalog::empty() const
 {
-    return _models.empty() && _textures.empty();
+    return _models.empty() && _materials.empty();
 }
 
-#if 1
+#if 0
 //...................................................................
 
 LifeMapValue::LifeMapValue(const Config& conf)
@@ -381,9 +494,15 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
     for (const auto& b_conf : biome_defs)
     {
         Biome biome(b_conf, &_assets);
+
         biome._index = _biomeIndexGenerator++;
-        _biomes_by_index[biome._index] = std::move(biome);
-        _biomes_by_id[biome._id.get()] = &_biomes_by_index[biome._index];
+
+        // save these before calling std::move
+        std::string id = biome.id();
+        int index = biome.index();
+
+        _biomes_by_index[index] = std::move(biome);
+        _biomes_by_id[id] = &_biomes_by_index[index];
     }
 
     // resolve the explicit parent biome pointers.
@@ -414,8 +533,8 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
             {
                 std::ostringstream buf;
                 for (auto& bptr : visited)
-                    buf << bptr->id().get() << " -> ";
-                buf << parent->id().get();
+                    buf << bptr->id() << " -> ";
+                buf << parent->id();
                 OE_WARN << LC << "***** I detected a parent loop in the biome catalog: " << buf.str() << std::endl;
                 biome._parentBiome = nullptr;
                 break;
@@ -442,7 +561,7 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
         // traverse "up" through the parent biomes to find them all.
         std::unordered_map<
             std::string,
-            std::set<Biome::ModelAssetToUse>[NUM_ASSET_GROUPS]> traits_table;
+            std::set<Biome::ModelAssetToUse>[NUM_ASSET_GROUPS]> lookup_table;
 
         for(const Biome* biome_ptr = &biome; 
             biome_ptr != nullptr;
@@ -454,10 +573,10 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
                 int count = 0;
                 for (auto& asset_ptr : assetsToUse)
                 {
-                    const std::string& traits = asset_ptr.asset()->traits().get();
-                    if (!traits.empty())
+                    auto permutations = AssetTraits::getPermutations(asset_ptr.asset()->traits());
+                    for (auto& permutation : permutations)
                     {
-                        traits_table[traits][g].insert(asset_ptr);
+                        lookup_table[permutation][g].insert(asset_ptr);
                     }
                 }
             }
@@ -465,13 +584,13 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
 
         // for each filter found, make a new subbiome and copy all the corresponding
         // assets to it.
-        for(auto& iter : traits_table)
+        for(auto& iter : lookup_table)
         {
-            const std::string& traits = iter.first;
-            auto& traits_asset_groups = iter.second;
+            const std::string& permutation = iter.first;
+            auto& trait_asset_groups = iter.second;
 
-            // create a new biome for this traits if it doesn't already exist:
-            std::string sub_biome_id = biome.id().get() + "." + traits;
+            // create a new biome for this traits permutation if it doesn't already exist:
+            std::string sub_biome_id = biome.id() + "." + permutation;
             const Biome* sub_biome = getBiome(sub_biome_id);
             if (sub_biome == nullptr)
             {
@@ -480,8 +599,10 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
                 Biome& new_biome = _biomes_by_index[new_index];
                 new_biome._index = new_index;
 
+                _biomes_by_id[sub_biome_id] = &new_biome;
                 new_biome.id() = sub_biome_id;
-                new_biome.name() = biome.name().get() + " (" + traits + ")";
+
+                new_biome.name() = biome.name().get() + " (" + permutation + ")";
 
                 // marks this biome as one that was derived from traits data,
                 // not defined by the configuration.
@@ -501,12 +622,12 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
                     const Biome* parent = getBiome(ptr->parentId().get());
                     if (parent)
                     {
-                        // find a selector variation of the natural parent. If found, success.
-                        std::string parent_with_traits_id = parent->id().get() + "." + traits;
-                        const Biome* temp = getBiome(parent_with_traits_id);
+                        // find a traits-variation of the natural parent. If found, success.
+                        std::string parent_with_traits = parent->id() + "." + permutation;
+                        const Biome* temp = getBiome(parent_with_traits);
                         if (temp)
                         {
-                            new_biome.parentId() = parent_with_traits_id;
+                            new_biome.parentId() = parent_with_traits;
                             new_biome._parentBiome = temp;
                             break;
                         }
@@ -516,10 +637,10 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
                     ptr = parent;
                 }
 
-                // copy over asset pointers for each asset matching the traits
+                // copy over asset pointers for each asset matching the trait
                 for (int i = 0; i < NUM_ASSET_GROUPS; ++i)
                 {
-                    for (auto& asset_ptr : traits_asset_groups[i])
+                    for (auto& asset_ptr : trait_asset_groups[i])
                     {
                         new_biome._assetsToUse[i].push_back(asset_ptr);
                     }
@@ -567,7 +688,7 @@ BiomeCatalog::getAssets() const
     return _assets;
 }
 
-#if 1
+#if 0
 const LifeMapValueTable*
 BiomeCatalog::getLandUseTable() const
 {

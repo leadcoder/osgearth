@@ -70,6 +70,11 @@ namespace osgEarth {
 
                     EventRouter::get(view(ri))
                         .onMove([&](osg::View* v, float x, float y) { onMove(v, x, y); });
+
+                    // activate tweakable uniforms
+                    stateset(ri)->setDataVariance(osg::Object::DYNAMIC);
+                    stateset(ri)->removeDefine("OE_TWEAKABLE");
+                    stateset(ri)->setDefine("OE_TWEAKABLE", 0x7);
                 }
 
                 ImGui::Begin("Vegetation", visible());
@@ -78,10 +83,21 @@ namespace osgEarth {
                     {
                         ImGui::TextColored(ImVec4(1, 1, 0, 1), "LOD scales:");
                         osg::Vec4f sse_scales = _veglayer->getSSEScales();
-                        if (ImGui::SliderFloat("Near", &sse_scales[0], 0.5f, 2.0f))
+                        if (ImGui::SliderFloat("Near", &sse_scales[0], 0.0f, 2.0f))
                             _veglayer->setSSEScales(sse_scales);
-                        if (ImGui::SliderFloat("Far", &sse_scales[1], 0.5f, 2.0f))
+                        if (ImGui::SliderFloat("Far", &sse_scales[1], 0.0f, 2.0f))
                             _veglayer->setSSEScales(sse_scales);
+
+                        static float transition = 0.1f;
+                        if (ImGui::SliderFloat("Transition", &transition, 0.0f, 1.0f))
+                            stateset(ri)->addUniform(new osg::Uniform("oe_chonk_lod_transition_factor", transition));
+
+                        static float bbd0 = 0.5f, bbd1 = 0.75f;
+                        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Billboard cos(angles):");
+                        if (ImGui::SliderFloat("Low", &bbd0, 0.0f, bbd1))
+                            stateset(ri)->addUniform(new osg::Uniform("oe_veg_bbd0", bbd0));
+                        if (ImGui::SliderFloat("High", &bbd1, bbd0, 1.0f))
+                            stateset(ri)->addUniform(new osg::Uniform("oe_veg_bbd1", bbd1));
 
                         ImGui::Separator();
                         ImGui::TextColored(ImVec4(1, 1, 0, 1), "Generator:");
@@ -99,10 +115,12 @@ namespace osgEarth {
                                 AssetGroup::name(type).c_str(),
                                 &_veglayer->options().group(type).enabled().mutable_value());
 
-                            ImGui::SliderFloat(
-                                "Density",
-                                &_veglayer->options().group(type).density().mutable_value(),
-                                0.0f, 4.0f);
+                            ImGui::SliderInt(
+                                "Instances per sqkm",
+                                &_veglayer->options().group(type).instancesPerSqKm().mutable_value(),
+                                1024, 1024000,
+                                "%d",
+                                ImGuiSliderFlags_Logarithmic);
 
                             ImGui::PopID();
                         }
@@ -138,7 +156,7 @@ namespace osgEarth {
                             {
                                 ImGui::Text("%s", biome->name()->c_str());
                                 ImGui::Text("id=%s parentid=%s index=%d",
-                                    biome->id()->c_str(),
+                                    biome->id().c_str(),
                                     biome->parentId()->c_str(),
                                     biome->index());
                             }
@@ -185,7 +203,7 @@ namespace osgEarth {
                             {
                                 ImGui::PushID(biome);
                                 char buf[255];
-                                sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                                sprintf(buf, "[%s] %s", biome->id().c_str(), biome->name()->c_str());
                                 if (ImGui::Checkbox(buf, &_isManualBiomeActive[biome]))
                                 {
                                     if (_isManualBiomeActive[biome])
@@ -206,7 +224,7 @@ namespace osgEarth {
                             for (auto biome : biocat->getBiomes())
                             {
                                 char buf[255];
-                                sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                                sprintf(buf, "[%s] %s", biome->id().c_str(), biome->name()->c_str());
                                 ImGui::Text(buf);
                             }
                         }
@@ -220,7 +238,7 @@ namespace osgEarth {
                         for (auto biome : biomes)
                         {
                             char buf[255];
-                            sprintf(buf, "[%s] %s", biome->id()->c_str(), biome->name()->c_str());
+                            sprintf(buf, "[%s] %s", biome->id().c_str(), biome->name()->c_str());
                             if (ImGui::TreeNode(buf))
                             {
                                 for (int group = 0; group < NUM_ASSET_GROUPS; ++group)
@@ -231,11 +249,7 @@ namespace osgEarth {
                                     {
                                         for (auto& pointer : biome->getModelAssetsToUse(group))
                                         {
-                                            if (ImGui::TreeNode(pointer.asset()->name()->c_str()))
-                                            {
-                                                drawModelAsset(pointer.asset());
-                                                ImGui::TreePop();
-                                            }
+                                            drawModelAsset(pointer.asset());
                                         }
                                         ImGui::TreePop();
                                     }
@@ -253,11 +267,7 @@ namespace osgEarth {
                         auto assets = bioman.getResidentAssetsIfNotLocked();
                         for (auto& asset : assets)
                         {
-                            if (ImGui::TreeNode(asset->name()->c_str()))
-                            {
-                                drawModelAsset(asset);
-                                ImGui::TreePop();
-                            }
+                            drawModelAsset(asset);
                         }
                     }
                 }
@@ -266,12 +276,23 @@ namespace osgEarth {
 
             void drawModelAsset(const ModelAsset* asset)
             {
-                if (asset->modelURI().isSet())
-                    ImGui::Text("Model: %s", asset->modelURI()->base().c_str());
-                if (asset->sideBillboardURI().isSet())
-                    ImGui::Text("Side BB: %s", asset->sideBillboardURI()->base().c_str());
-                if (asset->topBillboardURI().isSet())
-                    ImGui::Text("Top BB: %s", asset->topBillboardURI()->base().c_str());
+                std::string name = asset->name();
+                if (asset->traits().empty() == false)
+                    name += " (" + AssetTraits::toString(asset->traits()) + ")";
+
+                if (ImGui::TreeNode(name.c_str()))
+                {
+                    if (asset->modelURI().isSet())
+                        ImGui::Text("Model: %s", asset->modelURI()->base().c_str());
+                    if (asset->sideBillboardURI().isSet())
+                        ImGui::Text("Side BB: %s", asset->sideBillboardURI()->base().c_str());
+                    if (asset->topBillboardURI().isSet())
+                        ImGui::Text("Top BB: %s", asset->topBillboardURI()->base().c_str());
+                    if (asset->traits().empty() == false)
+                        ImGui::Text("Traits: %s", AssetTraits::toString(asset->traits()).c_str());
+
+                    ImGui::TreePop();
+                }
             }
 
             void onMove(osg::View* view, float x, float y)

@@ -57,6 +57,20 @@ namespace osgEarth
         };
 
         /**
+         * Holds a collection of asset traits, which can 
+         * "filter" assets into particular biomes.
+         */
+        class OSGEARTHPROCEDURAL_EXPORT AssetTraits
+        {
+        public:
+            static std::vector<std::string>
+                getPermutations(const std::vector<std::string>& traits);
+
+            static std::string
+                toString(const std::vector<std::string>& traits);
+        };
+
+        /**
          * Individual artwork asset that lives in the AssetCatalog.
          * This structure defines the asset only; it does not contain
          * the actual loaded asset data like the 3D model or billboard
@@ -66,7 +80,7 @@ namespace osgEarth
         {
         public:
             //! Readable name of the asset
-            OE_OPTION(std::string, name);
+            OE_PROPERTY(std::string, name);
 
             //! URI from which to load the asset 3D model
             OE_OPTION(URI, modelURI);
@@ -100,8 +114,8 @@ namespace osgEarth
             //! Default is 0.
             OE_OPTION(float, stiffness);
 
-            //! User-defined traits string
-            OE_OPTION(std::string, traits);
+            //! User-defined traits string (comma-delimited)
+            OE_PROPERTY(std::vector<std::string>, traits);
 
             //! Asset group to which this model belongs.
             OE_PROPERTY(AssetGroup::Type, group);
@@ -128,11 +142,11 @@ namespace osgEarth
         };
 
         /**
-         * Definition of a ground texture artwork asset.
+         * Definition of a ground material artwork asset.
          * This structure contains the definition only and does not hold
          * any actual loaded data.
          */
-        class OSGEARTHPROCEDURAL_EXPORT LifeMapTextureAsset
+        class OSGEARTHPROCEDURAL_EXPORT MaterialAsset
         {
         public:
             OE_OPTION(std::string, name);
@@ -140,8 +154,8 @@ namespace osgEarth
             OE_OPTION(Distance, size);
 
         public:
-            LifeMapTextureAsset() { }
-            LifeMapTextureAsset(const Config& conf);
+            MaterialAsset() { }
+            MaterialAsset(const Config& conf);
             Config getConfig() const;
         };
 
@@ -161,15 +175,18 @@ namespace osgEarth
             //! @return ModelAsset or nullptr if no match
             const ModelAsset* getModel(const std::string& name) const;
 
+            //! Material asset with the given name
+            //! @param name Name of material asset to return
+            //! @return MaterialAsset or nullptr if no match
+            const MaterialAsset* getMaterial(const std::string& name) const;
+
             //! Dimensions of the lifemap texture matrix (x,y)
             unsigned getLifeMapMatrixWidth() const;
-            unsigned getLifeMapMatrixHeight() const;
 
             //! Collection of ground textures in the lifemap matrix
-            const std::vector<LifeMapTextureAsset>& getLifeMapTextures() const;
-
-            //! Collection of special ground textures
-            const std::vector<LifeMapTextureAsset>& getSpecialTextures() const;
+            const std::vector<MaterialAsset>& getMaterials() const {
+                return _materials;
+            }
 
             //! Is the catalog empty?
             bool empty() const;
@@ -179,10 +196,9 @@ namespace osgEarth
             Config getConfig() const;
 
         protected:
-            unsigned _lifemapMatrixWidth, _lifemapMatrixHeight;
-            std::vector<LifeMapTextureAsset> _textures;
-            std::vector<LifeMapTextureAsset> _specialTextures;
             std::unordered_map<std::string, ModelAsset> _models;
+            unsigned _lifemapMatrixWidth;
+            std::vector<MaterialAsset> _materials;
         };
 
         /** 
@@ -198,8 +214,13 @@ namespace osgEarth
             Biome(const Config& conf, AssetCatalog* assets);
             Config getConfig() const;
 
-            OE_OPTION(std::string, id);
+            //! Unique identifier of the biome
+            OE_PROPERTY(std::string, id);
+
+            //! Readable name/description of the biome
             OE_OPTION(std::string, name);
+
+            //! Optional identifier of this biome's parent
             OE_OPTION(std::string, parentId);
 
             // points to an asset, adding in some custom parameters.
@@ -244,41 +265,6 @@ namespace osgEarth
         };
 
         /**
-         * A single lifemap value set.
-         */
-        class OSGEARTHPROCEDURAL_EXPORT LifeMapValue
-        {
-        public:
-            LifeMapValue() { }
-            LifeMapValue(const Config& conf);
-            Config getConfig() const;
-
-            OE_OPTION(std::string, id);
-            OE_OPTION(float, dense);
-            OE_OPTION(float, lush);
-            OE_OPTION(float, rugged);
-            OE_OPTION(std::string, special);
-        };
-
-        /**
-         * Mappings from IDs to lifemap parameters.
-         */
-        class OSGEARTHPROCEDURAL_EXPORT LifeMapValueTable
-        {
-        public:
-            LifeMapValueTable() { }
-            LifeMapValueTable(const Config& conf);
-            Config getConfig() const;
-
-            OE_OPTION_VECTOR(LifeMapValue, values);
-
-            const LifeMapValue* getValue(const std::string& id) const;
-
-        private:
-            std::unordered_map<std::string, LifeMapValue> _lut;
-        };
-
-        /**
          * Defines all biomes, assets, and land use mappings used
          * by the procedural system.
          */
@@ -301,19 +287,11 @@ namespace osgEarth
             //! Asset catalog
             const AssetCatalog& getAssets() const;
 
-            //! Table that maps land use classes to lifemap values.
-            const LifeMapValueTable* getLandUseTable() const;
-
-            //! Table that maps land cover classes to lifemap values.
-            const LifeMapValueTable* getLandCoverTable() const;
-
         public:
             Config getConfig() const;
 
             int _biomeIndexGenerator;
             AssetCatalog _assets;
-            std::shared_ptr<LifeMapValueTable> _landUseTable;
-            std::shared_ptr<LifeMapValueTable> _landCoverTable;
 
             std::map<int, Biome> _biomes_by_index; // keep ordered by index
             std::unordered_map<std::string, Biome*> _biomes_by_id; // Fast 
