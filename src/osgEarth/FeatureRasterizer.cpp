@@ -1120,7 +1120,7 @@ FeatureRasterizer::render_agglite(
 
                 // enfore a minimum width of one pixel.
                 float minPixels = masterLine->stroke()->minPixels().getOrUse(1.0f);
-                lineWidth = osg::clampAbove(lineWidth, (float)pixelWidth*minPixels);
+                lineWidth = osg::clampAbove(lineWidth, (float)pixelWidth * minPixels);
             }
 
             else // pixels
@@ -1130,18 +1130,27 @@ FeatureRasterizer::render_agglite(
 
             for (FeatureList::iterator i = lines.begin(); i != lines.end(); i++)
             {
-                Feature*  feature = i->get();
+                Feature* feature = i->get();
                 Geometry* geometry = feature->getGeometry();
 
                 osg::ref_ptr<Geometry> croppedGeometry;
                 if (geometry->crop(cropPoly.get(), croppedGeometry))
                 {
-                    const LineSymbol* line =
-                        feature->style().isSet() && feature->style()->has<LineSymbol>() ? feature->style()->get<LineSymbol>() :
-                        masterLine;
+                    if (!covValue.isSet())
+                    {
+                        const LineSymbol* line =
+                            feature->style().isSet() && feature->style()->has<LineSymbol>() ? feature->style()->get<LineSymbol>() :
+                            masterLine;
 
-                    osg::Vec4f color = line ? static_cast<osg::Vec4>(line->stroke()->color()) : osg::Vec4(1, 1, 1, 1);
-                    rasterize_agglite(croppedGeometry.get(), color, frame, ras, rbuf);
+                        osg::Vec4f color = line ? static_cast<osg::Vec4>(line->stroke()->color()) : osg::Vec4(1, 1, 1, 1);
+                        rasterize_agglite(croppedGeometry.get(), color, frame, ras, rbuf);
+                    }
+                    else
+                    {
+                        float value = feature->eval(covValue.mutable_value(), &context);
+                        rasterizeCoverage_agglite(croppedGeometry.get(), value, frame, ras, rbuf);
+                    }
+
                 }
             }
         }
