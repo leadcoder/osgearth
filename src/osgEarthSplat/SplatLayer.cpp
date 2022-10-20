@@ -48,6 +48,7 @@ SplatLayer::Options::getConfig() const
 {
     Config conf = VisibleLayer::Options::getConfig();
     conf.set("land_cover_layer", landCoverLayer() );
+    colorLayer().set(conf, "color_layer");
 
     Config zones("zones");
     for (int i = 0; i < _zones.size(); ++i) {
@@ -64,7 +65,7 @@ void
 SplatLayer::Options::fromConfig(const Config& conf)
 {
     conf.get("land_cover_layer", landCoverLayer() );
-
+    colorLayer().get(conf, "color_layer");
     const Config* zones = conf.child_ptr("zones");
     if (zones) {
         const ConfigSet& children = zones->children();
@@ -197,6 +198,18 @@ SplatLayer::addedToMap(const Map* map)
     }
 
     _zonesConfigured = true;
+
+    options().colorLayer().addedToMap(map);
+    
+    if (getColorLayer())
+    {
+        OE_INFO << LC << "Color modulation layer is \"" << getColorLayer()->getName() << "\"" << std::endl;
+        if (getColorLayer()->isShared() == false)
+        {
+            OE_WARN << LC << "Color modulation is not shared and is therefore being disabled." << std::endl;
+            options().colorLayer().removedFromMap(map);
+        }
+    }
     
     buildStateSets();
 }
@@ -247,6 +260,11 @@ SplatLayer::prepareForRendering(TerrainEngine* engine)
             buildStateSets();
         }
     }
+}
+
+ImageLayer* SplatLayer::getColorLayer() const
+{
+    return options().colorLayer().getLayer();
 }
 
 void
@@ -339,6 +357,15 @@ SplatLayer::buildStateSets()
         stateset->setDefine("OE_SPLAT_GPU_NOISE");
 
     stateset->setDefine("OE_USE_NORMAL_MAP");
+    
+    if (getColorLayer())
+    {
+        stateset->addUniform(new osg::Uniform("oe_splat_color_ratio", 0.8f));
+        stateset->addUniform(new osg::Uniform("oe_splat_color_start_dist", 0.0f));
+        stateset->addUniform(new osg::Uniform("oe_splat_color_end_dist", 300.0f));
+        stateset->setDefine("OE_SPLAT_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
+        stateset->setDefine("OE_SPLAT_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
+    }
 
     SplattingShaders splatting;
     VirtualProgram* vp = VirtualProgram::getOrCreate(stateset);

@@ -73,6 +73,9 @@ void oe_splat_sampleCoverage(inout vec4 unused)
 #pragma import_defines(OE_TERRAIN_RENDER_NORMAL_MAP)
 #pragma import_defines(OE_TERRAIN_BLEND_IMAGERY)
 #pragma import_defines(OE_SPLAT_USE_MATERIALS)
+#pragma import_defines(OE_SPLAT_COLOR_SAMPLER)
+#pragma import_defines(OE_SPLAT_COLOR_MATRIX)
+
 
 // from: Splat.util.glsl
 void oe_splat_getLodBlend(in float range, out float lod0, out float rangeOuter, out float rangeInner, out float clampedRange);
@@ -110,6 +113,14 @@ uniform float oe_splat_minSlope;
 uniform samplerBuffer oe_splat_coverageLUT;
 
 uniform int oe_layer_order;
+
+#ifdef OE_SPLAT_COLOR_SAMPLER
+uniform sampler2D OE_SPLAT_COLOR_SAMPLER;
+uniform mat4 OE_SPLAT_COLOR_MATRIX;
+uniform float oe_splat_color_start_dist;
+uniform float oe_splat_color_end_dist;
+uniform float oe_splat_color_ratio;
+#endif
 
 //............................................................................
 // Get the slope of the terrain
@@ -459,4 +470,20 @@ void oe_splat_complex(inout vec4 color)
     // No blending? The output is just the texel value.
     color = texel;
 #endif // OE_TERRAIN_BLEND_IMAGERY
+
+#ifdef OE_SPLAT_COLOR_SAMPLER
+	vec3 groundColor = texture(OE_SPLAT_COLOR_SAMPLER, (OE_SPLAT_COLOR_MATRIX*oe_layer_tilec).st).rgb;
+	float fade_dist = oe_splat_color_start_dist + 0.1;
+
+    color.rgb = vec3((color.r + color.g + color.b)/3.0); 
+
+	float fade = clamp(oe_splat_range, 0, fade_dist);
+	fade = fade/fade_dist;
+	color.rgb = mix(color.rgb, color.rgb*(2.2*groundColor), oe_splat_color_ratio*fade);
+	fade_dist = oe_splat_color_end_dist;
+	fade = clamp(oe_splat_range, 0, fade_dist);
+	fade = fade/fade_dist;
+	color.rgb = mix(color.rgb, groundColor, fade);
+#endif
+
 }
