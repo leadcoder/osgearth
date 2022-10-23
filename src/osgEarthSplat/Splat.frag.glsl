@@ -408,6 +408,16 @@ mat3 oe_normalMapTBN;
 
 void oe_splat_complex(inout vec4 color)
 {
+
+#ifdef OE_SPLAT_COLOR_SAMPLER
+	vec3 groundColor = texture(OE_SPLAT_COLOR_SAMPLER, (OE_SPLAT_COLOR_MATRIX*oe_layer_tilec).st).rgb;
+	if(oe_splat_range > oe_splat_color_end_dist)
+    {
+	    color.rgb = groundColor;
+        return;
+    }
+#endif
+
     // Noise coords.
     float noiseLOD = floor(oe_splat_noiseScale);
     vec2 noiseCoords = oe_scaleToRefLOD(oe_layer_tilec.st, noiseLOD);
@@ -449,7 +459,9 @@ void oe_splat_complex(inout vec4 color)
     // Blend together the material samples:
     vec4 material = mix(material0, material1, lodBlend);
     vec3 n = oe_normalMapTBN * (material.xyz*2.0-1.0);
+#ifndef OE_SPLAT_COLOR_SAMPLER
     vp_Normal = normalize(vp_Normal + n);
+#endif
 #endif
 
     // incorporate the layer's opacity:
@@ -472,11 +484,8 @@ void oe_splat_complex(inout vec4 color)
 #endif // OE_TERRAIN_BLEND_IMAGERY
 
 #ifdef OE_SPLAT_COLOR_SAMPLER
-	vec3 groundColor = texture(OE_SPLAT_COLOR_SAMPLER, (OE_SPLAT_COLOR_MATRIX*oe_layer_tilec).st).rgb;
 	float fade_dist = oe_splat_color_start_dist + 0.1;
-
     color.rgb = vec3((color.r + color.g + color.b)/3.0); 
-
 	float fade = clamp(oe_splat_range, 0, fade_dist);
 	fade = fade/fade_dist;
 	color.rgb = mix(color.rgb, color.rgb*(2.2*groundColor), oe_splat_color_ratio*fade);
@@ -484,6 +493,9 @@ void oe_splat_complex(inout vec4 color)
 	fade = clamp(oe_splat_range, 0, fade_dist);
 	fade = fade/fade_dist;
 	color.rgb = mix(color.rgb, groundColor, fade);
+    #ifdef OE_SPLAT_USE_MATERIALS
+        vp_Normal = normalize(vp_Normal + (1-fade)*n);
+    #endif
 #endif
 
 }

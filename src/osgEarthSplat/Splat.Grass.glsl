@@ -241,6 +241,7 @@ vec3 vp_Normal;
 
 uniform float oe_GroundCover_maxAlpha;
 uniform int oe_GroundCover_A2C;
+uniform float oe_grass_modulation = 0.5;
 
 void oe_Grass_FS(inout vec4 color)
 {
@@ -265,9 +266,8 @@ void oe_Grass_FS(inout vec4 color)
     }
 
 #ifdef OE_GROUNDCOVER_COLOR_SAMPLER
-    const float modulation = 0.75;
     float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
     vec4 mod_color = texture(OE_GROUNDCOVER_COLOR_SAMPLER, (OE_GROUNDCOVER_COLOR_MATRIX*oe_layer_tilec).st);
-    color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*2.0, modulation);
+    color.rgb = mix(mod_color.rgb, mod_color.rgb*vec3(mono)*2.1, oe_grass_modulation);
 #endif
 }

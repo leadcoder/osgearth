@@ -356,11 +356,11 @@ SplatLayer::buildStateSets()
     if (_gpuNoise)
         stateset->setDefine("OE_SPLAT_GPU_NOISE");
 
-    stateset->setDefine("OE_USE_NORMAL_MAP");
+    stateset->setDefine("OE_SPLAT_USE_MATERIALS");
     
     if (getColorLayer())
     {
-        stateset->addUniform(new osg::Uniform("oe_splat_color_ratio", 0.8f));
+        stateset->addUniform(new osg::Uniform("oe_splat_color_ratio", 1.0f));
         stateset->addUniform(new osg::Uniform("oe_splat_color_start_dist", 0.0f));
         stateset->addUniform(new osg::Uniform("oe_splat_color_end_dist", 300.0f));
         stateset->setDefine("OE_SPLAT_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
