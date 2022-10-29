@@ -217,7 +217,8 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
             vp_Normal =
                 which == 0 || which == 2 ? mix(-tangentVector, faceNormalVector, blend) :
                 mix(tangentVector, faceNormalVector, blend);
-
+           
+            vp_Normal = normalize(heightVector) + vp_Normal;
             oe_GroundCover_atlasIndex = float(render[gl_InstanceID].sideIndex);
         }
     }
@@ -247,7 +248,8 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
             which == 6 ? vec4(C - E * k + N * k, 1.0) :
             vec4(C + E * k + N * k, 1.0);
 
-        vp_Normal = vertex_view.xyz - C;
+        vp_Normal = normalize(heightVector) + normalize(vertex_view.xyz - C);
+       
 
         vp_Color.a = topDownAmount;
     }
@@ -284,12 +286,13 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 #pragma import_defines(OE_WIND_TEX)
 #pragma import_defines(OE_GROUNDCOVER_COLOR_SAMPLER)
 #pragma import_defines(OE_GROUNDCOVER_COLOR_MATRIX)
+#pragma import_defines(OE_USE_PBR)
 
 #ifdef OE_GROUNDCOVER_COLOR_SAMPLER
   in vec4 oe_layer_tilec;
   uniform sampler2D OE_GROUNDCOVER_COLOR_SAMPLER ;
   uniform mat4 OE_GROUNDCOVER_COLOR_MATRIX ;
-  uniform float oe_billboard_color_modulation;
+  uniform float oe_billboard_color_modulation = 1.0;
 #endif
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
@@ -306,6 +309,24 @@ uniform sampler2D oe_GroundCover_noiseTex;
 in vec4 oe_layer_tilec;
 #endif
 in vec4 oe_gc_windData;
+#endif
+
+uniform float oe_GroundCover_mod_factor = 2.2;
+#ifdef OE_USE_PBR
+// fragment stage global PBR params
+uniform float oe_GroundCover_brightness = 1; 
+uniform float oe_GroundCover_contrast = 1; 
+uniform float oe_GroundCover_roughness = 0;
+uniform float oe_GroundCover_ao = 0;
+uniform float oe_GroundCover_metal = 0;
+
+struct OE_PBR {
+    float roughness;
+    float ao;
+    float metal;
+    float brightness;
+    float contrast;
+} oe_pbr;
 #endif
 
 // remap x from [0..1] to [lo..hi]
@@ -340,12 +361,20 @@ void oe_GroundCover_FS(inout vec4 color)
     color *= texture(oe_GroundCover_billboardTex, vec3(tc, oe_GroundCover_atlasIndex));
 
 #ifdef OE_GROUNDCOVER_COLOR_SAMPLER
-    float modulation = 0.7;//oe_billboard_color_modulation;
     float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
     vec4 mod_color = texture(OE_GROUNDCOVER_COLOR_SAMPLER, (OE_GROUNDCOVER_COLOR_MATRIX*oe_layer_tilec).st);
-    color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*2.0, modulation);
+    color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*oe_GroundCover_mod_factor, oe_billboard_color_modulation);
 #endif
 
+#ifdef OE_USE_PBR
+    oe_pbr.brightness = oe_GroundCover_brightness;
+    oe_pbr.contrast= oe_GroundCover_contrast;
+    oe_pbr.roughness = oe_GroundCover_roughness;
+    oe_pbr.ao = oe_GroundCover_ao;
+    oe_pbr.metal = oe_GroundCover_metal;
+    
+    
+#endif
 
 #ifdef OE_IS_SHADOW_CAMERA
     if (color.a < oe_GroundCover_maxAlpha)
