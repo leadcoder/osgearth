@@ -8,6 +8,7 @@
 
 uniform float oe_sky_exposure = 3.3; // HDR scene exposure (ground level)
 uniform float oe_sky_ambientBoostFactor; // ambient sunlight booster for daytime
+uniform float oe_sky_contrast = 1.0;
 
 in vec3 atmos_lightDir;    // light direction (view coords)
 in vec3 atmos_color;       // atmospheric lighting color
@@ -166,10 +167,9 @@ void atmos_fragment_main_pbr(inout vec4 color)
 
     // exposure:
     color.rgb = 1.0 - exp(-oe_sky_exposure * color.rgb);
-    //color.rgb = 1.0 - exp(-oe_sky_exposure * 0.33 * color.rgb);
-
+    
     // brightness and contrast
-    color.rgb = ((color.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    color.rgb = ((color.rgb - 0.5)*oe_pbr.contrast * oe_sky_contrast + 0.5) * oe_pbr.brightness;
 }
 
 #else
