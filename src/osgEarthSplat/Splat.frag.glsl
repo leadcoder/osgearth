@@ -73,8 +73,8 @@ void oe_splat_sampleCoverage(inout vec4 unused)
 #pragma import_defines(OE_TERRAIN_RENDER_NORMAL_MAP)
 #pragma import_defines(OE_TERRAIN_BLEND_IMAGERY)
 #pragma import_defines(OE_SPLAT_USE_MATERIALS)
-#pragma import_defines(OE_SPLAT_COLOR_SAMPLER)
-#pragma import_defines(OE_SPLAT_COLOR_MATRIX)
+#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
+
 
 
 // from: Splat.util.glsl
@@ -114,9 +114,8 @@ uniform samplerBuffer oe_splat_coverageLUT;
 
 uniform int oe_layer_order;
 
-#ifdef OE_SPLAT_COLOR_SAMPLER
-uniform sampler2D OE_SPLAT_COLOR_SAMPLER;
-uniform mat4 OE_SPLAT_COLOR_MATRIX;
+#ifdef OE_GROUND_COLOR_SAMPLER
+vec4 oe_getGroundColor();
 uniform float oe_splat_color_start_dist;
 uniform float oe_splat_color_end_dist;
 uniform float oe_splat_color_ratio;
@@ -409,8 +408,8 @@ mat3 oe_normalMapTBN;
 void oe_splat_complex(inout vec4 color)
 {
 
-#ifdef OE_SPLAT_COLOR_SAMPLER
-	vec3 groundColor = texture(OE_SPLAT_COLOR_SAMPLER, (OE_SPLAT_COLOR_MATRIX*oe_layer_tilec).st).rgb;
+#ifdef OE_GROUND_COLOR_SAMPLER
+	vec3 groundColor = oe_getGroundColor().rgb;
 	if(oe_splat_range > oe_splat_color_end_dist)
     {
 	    color.rgb = groundColor;
@@ -483,7 +482,7 @@ void oe_splat_complex(inout vec4 color)
     color = texel;
 #endif // OE_TERRAIN_BLEND_IMAGERY
 
-#ifdef OE_SPLAT_COLOR_SAMPLER
+#ifdef OE_GROUND_COLOR_SAMPLER
 	float fade_dist = oe_splat_color_start_dist + 0.1;
     color.rgb = vec3((color.r + color.g + color.b)/3.0); 
 	float fade = clamp(oe_splat_range, 0, fade_dist);

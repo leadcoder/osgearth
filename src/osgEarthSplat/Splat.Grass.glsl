@@ -225,13 +225,10 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 #pragma vp_entryPoint oe_Grass_FS
 #pragma vp_location fragment
 
-#pragma import_defines(OE_GROUNDCOVER_COLOR_SAMPLER)
-#pragma import_defines(OE_GROUNDCOVER_COLOR_MATRIX)
+#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
 
-#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
-uniform sampler2D OE_GROUNDCOVER_COLOR_SAMPLER;
-uniform mat4 OE_GROUNDCOVER_COLOR_MATRIX;
-in vec4 oe_layer_tilec;
+#ifdef OE_GROUND_COLOR_SAMPLER
+ vec4 oe_getGroundColor();
 #endif
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
@@ -265,9 +262,9 @@ void oe_Grass_FS(inout vec4 color)
         discard;
     }
 
-#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
+#ifdef OE_GROUND_COLOR_SAMPLER
     float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    vec4 mod_color = texture(OE_GROUNDCOVER_COLOR_SAMPLER, (OE_GROUNDCOVER_COLOR_MATRIX*oe_layer_tilec).st);
+    vec4 mod_color = oe_getGroundColor();
     color.rgb = mix(mod_color.rgb, mod_color.rgb*vec3(mono)*2.1, oe_grass_modulation);
 #endif
 }

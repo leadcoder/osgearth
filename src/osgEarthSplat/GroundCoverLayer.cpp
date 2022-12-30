@@ -579,8 +579,8 @@ GroundCoverLayer::buildStateSets()
 
     if (getColorLayer())
     {
-        stateset->setDefine("OE_GROUNDCOVER_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
-        stateset->setDefine("OE_GROUNDCOVER_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
+        stateset->setDefine("OE_GROUND_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
+        stateset->setDefine("OE_GROUND_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
         stateset->addUniform(new osg::Uniform("oe_GroundCover_colorMinSaturation", options().colorMinSaturation().get()));
     }
 
@@ -614,7 +614,12 @@ GroundCoverLayer::buildStateSets()
 
     // Load shaders particular to this class
     loadShaders(vp, getReadOptions());
-
+    if (getColorLayer())
+    {
+        //load ground color shader
+        SplattingShaders splat_shaders;
+        splat_shaders.load(vp, splat_shaders.Util, getReadOptions());
+    }
     // whether to support top-down image billboards. We disable it when not in use
     // for performance reasons.
     if (shouldEnableTopDownBillboards())

@@ -363,8 +363,8 @@ SplatLayer::buildStateSets()
         stateset->addUniform(new osg::Uniform("oe_splat_color_ratio", 1.0f));
         stateset->addUniform(new osg::Uniform("oe_splat_color_start_dist", 0.0f));
         stateset->addUniform(new osg::Uniform("oe_splat_color_end_dist", 300.0f));
-        stateset->setDefine("OE_SPLAT_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
-        stateset->setDefine("OE_SPLAT_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
+        stateset->setDefine("OE_GROUND_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
+        stateset->setDefine("OE_GROUND_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
     }
 
     SplattingShaders splatting;

@@ -134,8 +134,9 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #ifdef OE_GROUNDCOVER_HEIGHT_SAMPLER
     float wh_ratio = render[gl_InstanceID].width / render[gl_InstanceID].height;
-    float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
-    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r *falloff;
+    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
+    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
+    float height = (0.5 + texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r) *falloff;
     if(2.0 * height < render[gl_InstanceID].height)
         return;
     float width = wh_ratio * height;
@@ -284,14 +285,11 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
 #pragma import_defines(OE_WIND_TEX)
-#pragma import_defines(OE_GROUNDCOVER_COLOR_SAMPLER)
-#pragma import_defines(OE_GROUNDCOVER_COLOR_MATRIX)
+#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
 #pragma import_defines(OE_USE_PBR)
 
-#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
-  in vec4 oe_layer_tilec;
-  uniform sampler2D OE_GROUNDCOVER_COLOR_SAMPLER ;
-  uniform mat4 OE_GROUNDCOVER_COLOR_MATRIX ;
+#ifdef OE_GROUND_COLOR_SAMPLER
+  vec4 oe_getGroundColor();
   uniform float oe_billboard_color_modulation = 1.0;
 #endif
 
@@ -360,9 +358,9 @@ void oe_GroundCover_FS(inout vec4 color)
     // modulate the texture
     color *= texture(oe_GroundCover_billboardTex, vec3(tc, oe_GroundCover_atlasIndex));
 
-#ifdef OE_GROUNDCOVER_COLOR_SAMPLER
+#ifdef OE_GROUND_COLOR_SAMPLER
     float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    vec4 mod_color = texture(OE_GROUNDCOVER_COLOR_SAMPLER, (OE_GROUNDCOVER_COLOR_MATRIX*oe_layer_tilec).st);
+    vec4 mod_color = oe_getGroundColor();
     color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*oe_GroundCover_mod_factor, oe_billboard_color_modulation);
 #endif
 

@@ -1,4 +1,7 @@
 #pragma vp_location fragment_coloring
+#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
+#pragma import_defines(OE_GROUND_COLOR_MATRIX)
+
 
 // Number of LOD range. Do not increase this past 25; doing so will result in precision errors
 // and rendering artifacts when the camera is very close to the ground.
@@ -61,3 +64,22 @@ oe_splat_getLodBlend(in float range, out float out_LOD0, out float out_rangeOute
     out_rangeOuter = oe_SplatRanges[int(out_LOD0)];
     out_rangeInner = oe_SplatRanges[int(out_LOD0)+1];
 }
+
+#ifdef OE_GROUND_COLOR_SAMPLER
+uniform sampler2D OE_GROUND_COLOR_SAMPLER;
+uniform mat4 OE_GROUND_COLOR_MATRIX;
+uniform float oe_ground_color_contrast = 1.0;
+uniform float oe_ground_color_brightness = 0.0;
+uniform float oe_ground_color_exposure = 1.0;
+in vec4 oe_layer_tilec; // unit tile coords
+
+vec4 oe_getGroundColor()
+{
+    vec4 color = texture(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st);
+    // brightness and contrast
+    color.rgb = ((color.rgb - 0.5)*oe_ground_color_contrast + 0.5) + oe_ground_color_brightness;
+    color.rgb = vec3(1) - exp(color.rgb * -oe_ground_color_exposure);
+    return color;
+}
+
+#endif
