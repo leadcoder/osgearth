@@ -71,7 +71,36 @@ uniform mat4 OE_GROUND_COLOR_MATRIX;
 uniform float oe_ground_color_contrast = 1.0;
 uniform float oe_ground_color_brightness = 0.0;
 uniform float oe_ground_color_exposure = 1.0;
+uniform float oe_ground_color_saturate = 0.5;
+uniform float oe_ground_color_hue = 0.5;
+uniform float oe_ground_color_v = 0.5;
 in vec4 oe_layer_tilec; // unit tile coords
+
+
+const float Epsilon = 1e-10;
+
+vec3 RGBtoHSV(in vec3 RGB)
+{
+    vec4  P   = (RGB.g < RGB.b) ? vec4(RGB.bg, -1.0, 2.0/3.0) : vec4(RGB.gb, 0.0, -1.0/3.0);
+    vec4  Q   = (RGB.r < P.x) ? vec4(P.xyw, RGB.r) : vec4(RGB.r, P.yzx);
+    float C   = Q.x - min(Q.w, Q.y);
+    float H   = abs((Q.w - Q.y) / (6.0 * C + Epsilon) + Q.z);
+    vec3  HCV = vec3(H, C, Q.x);
+    float S   = HCV.y / (HCV.z + Epsilon);
+    return vec3(HCV.x, S, HCV.z);
+}
+
+
+vec3 HSVtoRGB(in vec3 HSV)
+{
+    float H   = HSV.x;
+    float R   = abs(H * 6.0 - 3.0) - 1.0;
+    float G   = 2.0 - abs(H * 6.0 - 2.0);
+    float B   = 2.0 - abs(H * 6.0 - 4.0);
+    vec3  RGB = clamp( vec3(R,G,B), 0.0, 1.0 );
+    return ((RGB - 1.0) * HSV.y + 1.0) * HSV.z;
+}
+    
 
 vec4 oe_getGroundColor()
 {
@@ -79,6 +108,14 @@ vec4 oe_getGroundColor()
     // brightness and contrast
     color.rgb = ((color.rgb - 0.5)*oe_ground_color_contrast + 0.5) + oe_ground_color_brightness;
     color.rgb = vec3(1) - exp(color.rgb * -oe_ground_color_exposure);
+
+     vec3 col_hsv = RGBtoHSV(color.rgb);
+     col_hsv.y *= (oe_ground_color_saturate * 2.0);
+     col_hsv.x *= (oe_ground_color_hue * 2.0);
+     col_hsv.z *= (oe_ground_color_v * 2.0);
+     color.rgb = HSVtoRGB(col_hsv.rgb);
+
+
     return color;
 }
 

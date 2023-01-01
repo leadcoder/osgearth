@@ -137,8 +137,8 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
     //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
     //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
     float height = (0.5 + texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r) *falloff;
-    if(2.0 * height < render[gl_InstanceID].height)
-        return;
+    //if(2.0 * height < render[gl_InstanceID].height)
+    //    return;
     float width = wh_ratio * height;
 #else
     float height = render[gl_InstanceID].height * falloff;
@@ -359,9 +359,10 @@ void oe_GroundCover_FS(inout vec4 color)
     color *= texture(oe_GroundCover_billboardTex, vec3(tc, oe_GroundCover_atlasIndex));
 
 #ifdef OE_GROUND_COLOR_SAMPLER
-    float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    vec4 mod_color = oe_getGroundColor();
-    color.rgb = mix(color.rgb, mod_color.rgb*vec3(mono)*oe_GroundCover_mod_factor, oe_billboard_color_modulation);
+    vec3 bb_mono = vec3(color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
+    vec4 ground_color = oe_getGroundColor();
+    vec3 ground_mono = vec3(ground_color.r*0.2126 + ground_color.g*0.7152 + ground_color.b*0.0722);
+    color.rgb = oe_GroundCover_mod_factor * mix(ground_mono*color.rgb, ground_color.rgb * bb_mono, oe_billboard_color_modulation);
 #endif
 
 #ifdef OE_USE_PBR

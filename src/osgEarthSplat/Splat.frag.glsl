@@ -119,6 +119,7 @@ vec4 oe_getGroundColor();
 uniform float oe_splat_color_start_dist;
 uniform float oe_splat_color_end_dist;
 uniform float oe_splat_color_ratio;
+uniform float oe_splat_color_factor = 2.2;
 #endif
 
 //............................................................................
@@ -365,6 +366,8 @@ vec2 oe_scaleToRefLOD(in vec2 tc, in float refLOD)
     float m = floor(clamp(factor, 0.0, 1.0)); // if factor>=1.0
     result += m * (oe_tile_key_u.xy - b) / (c - b);
 
+	//Scale to avoid stretched tiling in more northern latitudes  
+    result.x *= 0.5;
     return result;
 }
 
@@ -458,7 +461,7 @@ void oe_splat_complex(inout vec4 color)
     // Blend together the material samples:
     vec4 material = mix(material0, material1, lodBlend);
     vec3 n = oe_normalMapTBN * (material.xyz*2.0-1.0);
-#ifndef OE_SPLAT_COLOR_SAMPLER
+#ifndef OE_GROUND_COLOR_SAMPLER
     vp_Normal = normalize(vp_Normal + n);
 #endif
 #endif
@@ -484,10 +487,11 @@ void oe_splat_complex(inout vec4 color)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
 	float fade_dist = oe_splat_color_start_dist + 0.1;
-    color.rgb = vec3((color.r + color.g + color.b)/3.0); 
+    //vec3 mono = vec3((color.r + color.g + color.b)/3.0);
+    vec3 mono = vec3(color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
 	float fade = clamp(oe_splat_range, 0, fade_dist);
 	fade = fade/fade_dist;
-	color.rgb = mix(color.rgb, color.rgb*(2.2*groundColor), oe_splat_color_ratio*fade);
+	color.rgb = mix(color.rgb, (mono * groundColor) * oe_splat_color_factor, oe_splat_color_ratio*fade);
 	fade_dist = oe_splat_color_end_dist;
 	fade = clamp(oe_splat_range, 0, fade_dist);
 	fade = fade/fade_dist;
