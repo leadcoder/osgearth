@@ -61,7 +61,7 @@ ShaderFactory::getGLSLHeader()
             int version = Capabilities::get().getGLSLVersionInt();
 
             std::ostringstream buf;
-            buf << "#version " << version;
+            buf << "#version " << version << " compatibility";
 
 #if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
             buf << "\nprecision highp float";
