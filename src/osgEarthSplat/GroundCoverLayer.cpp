@@ -77,7 +77,8 @@ GroundCoverLayer::Options::getConfig() const
     conf.set("max_alpha", maxAlpha());
     conf.set("alpha_to_coverage", alphaToCoverage());
     conf.set("wind_scale", windScale());
-
+    conf.set("max_height", maxHeight());
+    conf.set("min_height", minHeight());
     Config zones("zones");
     for (int i = 0; i < _biomeZones.size(); ++i) {
         Config zone = _biomeZones[i].getConfig();
@@ -98,6 +99,8 @@ GroundCoverLayer::Options::fromConfig(const Config& conf)
     maxAlpha().setDefault(0.15f);
     alphaToCoverage().setDefault(true);
     windScale().setDefault(1.0f);
+    maxHeight().setDefault(40);
+    minHeight().setDefault(2);
 
     maskLayer().get(conf, "mask_layer");
     colorLayer().get(conf, "color_layer");
@@ -109,6 +112,8 @@ GroundCoverLayer::Options::fromConfig(const Config& conf)
     conf.get("max_alpha", maxAlpha());
     conf.get("alpha_to_coverage", alphaToCoverage());
     conf.get("wind_scale", windScale());
+    conf.get("max_height", maxHeight());
+    conf.get("min_height", minHeight());
 
     const Config* zones = conf.child_ptr("zones");
     if (zones)
@@ -588,6 +593,8 @@ GroundCoverLayer::buildStateSets()
     {
         stateset->setDefine("OE_GROUNDCOVER_HEIGHT_SAMPLER", getHeightLayer()->getSharedTextureUniformName());
         stateset->setDefine("OE_GROUNDCOVER_HEIGHT_MATRIX", getHeightLayer()->getSharedTextureMatrixUniformName());
+        stateset->addUniform(new osg::Uniform("oe_GroundCover_maxHeight", options().maxHeight().get()));
+        stateset->addUniform(new osg::Uniform("oe_GroundCover_minHeight", options().minHeight().get()));
     }
 
     // disable backface culling to support shadow/depth cameras,

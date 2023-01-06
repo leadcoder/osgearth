@@ -19,6 +19,8 @@
  // in vec4 oe_layer_tilec;
   uniform sampler2D OE_GROUNDCOVER_HEIGHT_SAMPLER;
   uniform mat4 OE_GROUNDCOVER_HEIGHT_MATRIX;
+  uniform float oe_GroundCover_minHeight = 10;
+  uniform float oe_GroundCover_maxHeight = 20;
 #endif
 
 // Instance data from compute shader
@@ -134,11 +136,10 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #ifdef OE_GROUNDCOVER_HEIGHT_SAMPLER
     float wh_ratio = render[gl_InstanceID].width / render[gl_InstanceID].height;
-    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
-    //float height = texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r * 255.0* 0.1 * falloff;
     float height = (0.5 + texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r) *falloff;
-    //if(2.0 * height < render[gl_InstanceID].height)
-    //    return;
+    if(height < oe_GroundCover_minHeight || height > oe_GroundCover_maxHeight)
+        return;
+    
     float width = wh_ratio * height;
 #else
     float height = render[gl_InstanceID].height * falloff;
