@@ -624,8 +624,8 @@ GroundCoverLayer::buildStateSets()
     if (getColorLayer())
     {
         //load ground color shader
-        SplattingShaders splat_shaders;
-        splat_shaders.load(vp, splat_shaders.Util, getReadOptions());
+        ColorSplattingShaders splat_shaders;
+        splat_shaders.load(vp, splat_shaders.Common, getReadOptions());
     }
     // whether to support top-down image billboards. We disable it when not in use
     // for performance reasons.

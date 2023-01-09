@@ -28,6 +28,16 @@ SplattingShaders::SplattingShaders()
 }
 
 
+ColorSplattingShaders::ColorSplattingShaders()
+{
+    SplatTerrain = "Splat.Color.glsl";
+    _sources[SplatTerrain] = @Splat.Color.glsl@;
+
+    Common = "Splat.Color.common.glsl";
+    _sources[Common] = @Splat.Color.common.glsl@;
+}
+
+
 GroundCoverShaders::GroundCoverShaders()
 {
     Grass = "Splat.Grass.glsl";

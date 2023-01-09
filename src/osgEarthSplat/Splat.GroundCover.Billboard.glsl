@@ -62,6 +62,7 @@ vec3 oe_UpVectorView;
 out vec4 vp_Color;
 out vec3 vp_Normal;
 out vec4 oe_layer_tilec;
+out float oe_vertex_dist;
 // Output grass texture coordinates to the fragment shader
 out vec2 oe_GroundCover_texCoord;
 
@@ -123,6 +124,9 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
     // Calculate the normalized camera range (oe_Camera.z = LOD Scale)
     float maxRange = oe_VisibleLayer_ranges[1] / oe_Camera.z;
     float nRange = clamp(-vertex_view.z / maxRange, 0.0, 1.0);
+
+    // range from camera to vertex
+    oe_vertex_dist = -vertex_view.z * oe_Camera.z;
 
     // cull verts that are out of range. Sadly we can't do this in COMPUTE.
     if (nRange >= 0.99)
@@ -250,7 +254,7 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
             which == 6 ? vec4(C - E * k + N * k, 1.0) :
             vec4(C + E * k + N * k, 1.0);
 
-        vp_Normal = normalize(heightVector) + normalize(vertex_view.xyz - C);
+        vp_Normal = normalize(heightVector)*0.5 + normalize(vertex_view.xyz - C);
        
 
         vp_Color.a = topDownAmount;
@@ -290,8 +294,10 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 #pragma import_defines(OE_USE_PBR)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
-  vec4 oe_getGroundColor();
-  uniform float oe_billboard_color_modulation = 1.0;
+  uniform float oe_GroundCover_colorLOD = 0.0;
+  vec4 oe_getGroundColorLod(float lod);
+  vec4 oe_getTreeColorAtDistance(float distance);
+  uniform float oe_billboard_color_modulation = 0.5;
 #endif
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
@@ -300,6 +306,8 @@ uniform int oe_GroundCover_A2C;
 
 in vec2 oe_GroundCover_texCoord;
 flat in float oe_GroundCover_atlasIndex;
+
+in float oe_vertex_dist;
 
 #ifdef OE_WIND_TEX
 uniform float osg_FrameTime;
@@ -314,7 +322,7 @@ uniform float oe_GroundCover_mod_factor = 2.2;
 #ifdef OE_USE_PBR
 // fragment stage global PBR params
 uniform float oe_GroundCover_brightness = 1; 
-uniform float oe_GroundCover_contrast = 1; 
+uniform float oe_GroundCover_contrast = 0.7; 
 uniform float oe_GroundCover_roughness = 0;
 uniform float oe_GroundCover_ao = 0;
 uniform float oe_GroundCover_metal = 0;
@@ -361,7 +369,8 @@ void oe_GroundCover_FS(inout vec4 color)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
     vec3 bb_mono = vec3(color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    vec4 ground_color = oe_getGroundColor();
+    //vec4 ground_color = oe_getGroundColorLod(oe_GroundCover_colorLOD);
+    vec4 ground_color = oe_getTreeColorAtDistance(oe_vertex_dist);
     vec3 ground_mono = vec3(ground_color.r*0.2126 + ground_color.g*0.7152 + ground_color.b*0.0722);
     color.rgb = oe_GroundCover_mod_factor * mix(ground_mono*color.rgb, ground_color.rgb * bb_mono, oe_billboard_color_modulation);
 #endif

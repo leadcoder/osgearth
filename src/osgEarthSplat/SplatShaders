@@ -40,6 +40,14 @@ namespace osgEarth { namespace Splat
             Util;
 	};
 
+    struct ColorSplattingShaders : public osgEarth::Util::ShaderPackage
+    {
+        ColorSplattingShaders();
+        std::string
+            SplatTerrain,
+            Common;
+    };
+
     struct GroundCoverShaders : public osgEarth::Util::ShaderPackage
 	{
         GroundCoverShaders();

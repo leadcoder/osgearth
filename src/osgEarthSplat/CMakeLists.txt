@@ -23,7 +23,9 @@ set(TARGET_GLSL
     Splat.GroundCover.Generate.CS.glsl
     Splat.GroundCover.Render.glsl
     Splat.GroundCover.Types.glsl
-    Splat.Grass.glsl)
+    Splat.Grass.glsl
+    Splat.Color.glsl
+    Splat.Color.common.glsl)
 
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
@@ -45,6 +47,7 @@ set(TARGET_SRC
     RoadSurfaceLayer.cpp
 	SplatCatalog.cpp
     SplatLayer.cpp
+    ColorSplatLayer.cpp
     Surface.cpp
     Zone.cpp
     OldInstanceCloud.cpp
@@ -61,6 +64,7 @@ set(LIB_PUBLIC_HEADERS
     RoadSurfaceLayer
 	SplatCatalog
     SplatShaders
+    ColorSplatLayer
     SplatLayer
     Surface
     Zone

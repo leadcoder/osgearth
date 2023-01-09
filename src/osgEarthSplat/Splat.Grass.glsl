@@ -59,7 +59,7 @@ uniform mat4 osg_ViewMatrix;
 #endif
 
 uniform vec3 oe_Camera; // (vp width, vp height, LOD scale)
-
+out float oe_vertex_dist;
 out vec2 oe_GroundCover_texCoord;
 
 // Output that selects the land cover texture from the texture array (flat)
@@ -213,6 +213,9 @@ void oe_Grass_VS(inout vec4 vertex)
 
     // Some color variation.
     vp_Color.gb -= browning * oe_noise_wide[NOISE_SMOOTH];
+
+    // range from camera to vertex
+    oe_vertex_dist = -vertex.z * oe_Camera.z;
 }
 
 
@@ -229,10 +232,12 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 
 #ifdef OE_GROUND_COLOR_SAMPLER
  vec4 oe_getGroundColor();
+ vec4 oe_getGrassColorAtDistance(float distance);
 #endif
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
 in vec2 oe_GroundCover_texCoord;
+in float oe_vertex_dist;
 flat in float oe_GroundCover_atlasIndex;
 vec3 vp_Normal;
 
@@ -264,7 +269,16 @@ void oe_Grass_FS(inout vec4 color)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
     float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    vec4 mod_color = oe_getGroundColor();
-    color.rgb = mix(mod_color.rgb, mod_color.rgb*vec3(mono)*2.1, oe_grass_modulation);
+    vec4 mod_color = oe_getGrassColorAtDistance(oe_vertex_dist);
+    color.rgb = mix(mod_color.rgb, mod_color.rgb * vec3(mono)*2.3, oe_grass_modulation);
+
+    float div = mod_color.r + mod_color.g + mod_color.b;
+    vec3 norm_color = mod_color.rgb/div;
+	float grenness = 2.0 * norm_color.g - norm_color.r - norm_color.b;
+	if(grenness < 0.05)
+	{
+		discard;
+	}
+
 #endif
 }
