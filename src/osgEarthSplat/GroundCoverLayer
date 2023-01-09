@@ -25,6 +25,7 @@
 #include "Export"
 #include "Biome"
 #include "OldInstanceCloud"
+#include "ColorSplatLayer"
 
 #include <osgEarth/PatchLayer>
 #include <osgEarth/LayerReference>
@@ -46,6 +47,7 @@ namespace osgEarth { namespace Splat
             OE_OPTION_LAYER(ImageLayer, maskLayer);
             OE_OPTION_LAYER(ImageLayer, colorLayer);
             OE_OPTION_LAYER(ImageLayer, heightLayer);
+            OE_OPTION_LAYER(ColorSplatLayer, colorSplatLayer);
             OE_OPTION(float, colorMinSaturation);
             OE_OPTION(unsigned, lod);
             OE_OPTION(bool, castShadows);

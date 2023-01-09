@@ -71,6 +71,7 @@ GroundCoverLayer::Options::getConfig() const
     maskLayer().set(conf, "mask_layer");
     colorLayer().set(conf, "color_layer");
     heightLayer().set(conf, "height_layer");
+    colorSplatLayer().set(conf, "color_splat_layer");
     conf.set("color_min_saturation", colorMinSaturation());
     conf.set("lod", _lod);
     conf.set("cast_shadows", _castShadows);
@@ -105,6 +106,7 @@ GroundCoverLayer::Options::fromConfig(const Config& conf)
     maskLayer().get(conf, "mask_layer");
     colorLayer().get(conf, "color_layer");
     heightLayer().get(conf, "height_layer");
+    colorSplatLayer().get(conf, "color_splat_layer");
     
     conf.get("color_min_saturation", colorMinSaturation());
     conf.get("lod", _lod);
@@ -445,6 +447,7 @@ GroundCoverLayer::addedToMap(const Map* map)
     options().maskLayer().addedToMap(map);
     options().colorLayer().addedToMap(map);
     options().heightLayer().addedToMap(map);
+    options().colorSplatLayer().addedToMap(map);
 
     if (getMaskLayer())
     {
@@ -589,6 +592,11 @@ GroundCoverLayer::buildStateSets()
         stateset->addUniform(new osg::Uniform("oe_GroundCover_colorMinSaturation", options().colorMinSaturation().get()));
     }
 
+     if (options().colorSplatLayer().getLayer())
+    {
+        stateset->setDefine("OE_USE_COLOR_SPLAT");
+    }
+   
     if (getHeightLayer())
     {
         stateset->setDefine("OE_GROUNDCOVER_HEIGHT_SAMPLER", getHeightLayer()->getSharedTextureUniformName());

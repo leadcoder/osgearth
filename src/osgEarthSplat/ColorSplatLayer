@@ -50,6 +50,8 @@ namespace osgEarth { namespace Splat
             void fromConfig(const Config& conf);
            
         };
+        //! Serialize
+        Config getConfig() const override;
 
     public:
         META_Layer(osgEarthSplat, ColorSplatLayer, Options, VisibleLayer, ColorSplatImage);
@@ -61,8 +63,7 @@ namespace osgEarth { namespace Splat
         virtual Status openImplementation() override;
         virtual void prepareForRendering(TerrainEngine*) override;
 
-        //! Serialize
-        Config getConfig() const override;
+        
 
         ImageLayer* getColorLayer() const;
 

@@ -291,6 +291,7 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
 #pragma import_defines(OE_WIND_TEX)
 #pragma import_defines(OE_GROUND_COLOR_SAMPLER)
+#pragma import_defines(OE_USE_COLOR_SPLAT)
 #pragma import_defines(OE_USE_PBR)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
@@ -369,8 +370,11 @@ void oe_GroundCover_FS(inout vec4 color)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
     vec3 bb_mono = vec3(color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-    //vec4 ground_color = oe_getGroundColorLod(oe_GroundCover_colorLOD);
+#ifdef OE_USE_COLOR_SPLAT
     vec4 ground_color = oe_getTreeColorAtDistance(oe_vertex_dist);
+#else
+    vec4 ground_color = oe_getGroundColorLod(oe_GroundCover_colorLOD);
+#endif
     vec3 ground_mono = vec3(ground_color.r*0.2126 + ground_color.g*0.7152 + ground_color.b*0.0722);
     color.rgb = oe_GroundCover_mod_factor * mix(ground_mono*color.rgb, ground_color.rgb * bb_mono, oe_billboard_color_modulation);
 #endif
