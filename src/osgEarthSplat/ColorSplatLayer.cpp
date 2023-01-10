@@ -1,6 +1,7 @@
 
 #include "ColorSplatLayer"
 #include "SplatShaders"
+#include "NoiseTextureFactory"
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/TerrainEngineNode>
 #include <osgUtil/CullVisitor>
@@ -15,8 +16,6 @@
 using namespace osgEarth::Splat;
 
 REGISTER_OSGEARTH_LAYER(colorsplatimage, ColorSplatLayer);
-//REGISTER_OSGEARTH_LAYER(splatimage, ColorSplatLayer);
-//REGISTER_OSGEARTH_LAYER(splat_imagery, ColorSplatLayer);
 
 osgEarth::Config ColorSplatLayer::Options::getConfig() const
 {
@@ -73,8 +72,6 @@ ColorSplatLayer::addedToMap(const Map* map)
 			options().colorLayer().removedFromMap(map);
 		}
 	}
-
-	//buildStateSets();
 }
 
 void
@@ -101,39 +98,15 @@ ColorSplatLayer::prepareForRendering(TerrainEngine* engine)
 			// Load the image
 			if (options()._detailGreenImageURI.isSet())
 			{
-				/*osg::ref_ptr<osg::Image> image = options().detailImageURI()->getImage();
-				if (!image.valid())
-				{
-					OE_WARN << LC << "Failed; unable to load detail map image from "
-						<< options().detailImageURI()->full() << "\n";
-					return;
-				}
-
-				// Create the texture
-				auto _tex = new osg::Texture2D(image.get());
-				_tex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
-				_tex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
-				_tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-				_tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-				_tex->setMaxAnisotropy(1.0f);
-				_tex->setUnRefImageDataAfterApply(true);
-				_tex->setResizeNonPowerOfTwoHint(false);*/
 				 auto stateset = engine->getTerrainStateSet();
 				 // Create the uniform for the sampler.
-				 
 				 std::vector<URI> detail_textures;
 				 detail_textures.push_back(options()._detailBaseImageURI.get());
 				 detail_textures.push_back(options()._detailGreenImageURI.get());
 				 const int num_detail_tex = detail_textures.size();
 				 int sizeX = 0, sizeY = 0;
 				 osg::Texture2DArray* tex = new osg::Texture2DArray();
-				 //tex->setTextureSize(512, 512, num_detail_tex);
-				 //tex->setTextureDepth(num_detail_tex);
-				 
-
-				 int arrayIndex = 0;
 				 float s = -1.0f, t = -1.0f;
-
 				 for (unsigned i = 0; i < detail_textures.size(); ++i)
 				 {
 					 const URI& uri = detail_textures[i];
@@ -167,21 +140,31 @@ ColorSplatLayer::prepareForRendering(TerrainEngine* engine)
 				 tex->setWrap(tex->WRAP_T, tex->REPEAT);
 				 tex->setUnRefImageDataAfterApply(true);
 				 tex->setResizeNonPowerOfTwoHint(false);
-
-				 
 				 stateset->setTextureAttribute(_detailBinding.unit(), tex);
-				 stateset->addUniform(new osg::Uniform("oe_splat_detail_sampler", _detailBinding.unit()));
+				 stateset->addUniform(new osg::Uniform("oe_csplat_detail_sampler", _detailBinding.unit()));
 			}
 		}
 
-		// Next set up the elements that apply to all zones:
+		if (_noiseBinding.valid() == false)
+		{
+			auto stateset = engine->getTerrainStateSet();
+			if (res->reserveTextureImageUnit(_noiseBinding, "Splat noise sampler") == false)
+			{
+				OE_WARN << LC << "No texture unit available for splatting Noise function\n";
+			}
+
+			NoiseTextureFactory noise;
+			osg::ref_ptr<osg::Texture> noiseTexture = noise.create(256u, 4u);
+			stateset->setTextureAttribute(_noiseBinding.unit(), noiseTexture.get());
+			stateset->addUniform(new osg::Uniform("oe_csplat_noise_tex_sampler", _noiseBinding.unit()));
+			stateset->setDefine("OE_CSPLAT_NOISE_SAMPLER", "oe_csplat_noise_tex_sampler");
+		}
+
 		osg::StateSet* stateset = this->getOrCreateStateSet();
 
 		if (getColorLayer())
 		{
-			stateset->addUniform(new osg::Uniform("oe_splat_color_ratio", 1.0f));
-			stateset->addUniform(new osg::Uniform("oe_splat_color_start_dist", 0.0f));
-			stateset->addUniform(new osg::Uniform("oe_splat_color_end_dist", 300.0f));
+			//stateset->addUniform(new osg::Uniform("oe_csplat_color_ratio", 1.0f));
 			stateset->setDefine("OE_GROUND_COLOR_SAMPLER", getColorLayer()->getSharedTextureUniformName());
 			stateset->setDefine("OE_GROUND_COLOR_MATRIX", getColorLayer()->getSharedTextureMatrixUniformName());
 		}

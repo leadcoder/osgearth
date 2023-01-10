@@ -1,19 +1,34 @@
-#pragma vp_location fragment_coloring
+
 #pragma import_defines(OE_GROUND_COLOR_SAMPLER)
 #pragma import_defines(OE_GROUND_COLOR_MATRIX)
+#pragma import_defines(OE_CSPLAT_NOISE_SAMPLER)
+
+#define DETAIL_TERRAIN_LOD 21
 
 uniform sampler2D OE_GROUND_COLOR_SAMPLER;
 uniform mat4 OE_GROUND_COLOR_MATRIX;
-uniform float oe_ground_color_contrast = 1.0;
-uniform float oe_ground_color_brightness = 0.0;
-uniform float oe_ground_color_exposure = 1.0;
-uniform float oe_ground_color_saturate = 0.5;
-uniform float oe_ground_color_hue = 0.5;
-uniform float oe_ground_color_v = 0.5;
 
-uniform float oe_detail_distance = 300;
-uniform float oe_detail_factor = 2.2;
-uniform float oe_detail_ratio = 0;
+//color correction values
+uniform float oe_csplat_imagery_contrast = 1.0;
+uniform float oe_csplat_imagery_brightness = 0.0;
+uniform float oe_csplat_imagery_exposure = 1.0;
+uniform float oe_csplat_imagery_hue = 0.5;
+uniform float oe_csplat_imagery_saturate = 0.5;
+uniform float oe_csplat_imagery_value = 0.5;
+
+//used to distort imagery tex-coords 
+uniform float oe_csplat_imagery_noise_scale = 0.2;
+uniform float oe_csplat_imagery_noise_lod = 22;
+
+uniform sampler2DArray oe_csplat_detail_sampler;
+uniform float oe_csplat_detail_distance = 300;
+uniform float oe_csplat_detail_scale = 2.2;
+uniform float oe_csplat_detail_ratio = 0;
+
+
+
+//from terrain sdk
+uniform vec4 oe_tile_key_u;
 in vec4 oe_layer_tilec; // unit tile coords
 
 const float Epsilon = 1e-10;
@@ -58,8 +73,7 @@ vec3 HSVtoRGB(in vec3 HSV)
 }
 
 
-uniform sampler2DArray oe_splat_detail_sampler;
-uniform vec4 oe_tile_key_u;
+
 
 // cannot use the SDK version because it is VS only
 vec2 oe_scaleToRefLOD2(in vec2 tc, in float refLOD)
@@ -84,14 +98,22 @@ vec2 oe_scaleToRefLOD2(in vec2 tc, in float refLOD)
 vec4 oe_colorCorrect(vec4 color)
 {
     // brightness and contrast
-    color.rgb = ((color.rgb - 0.5)*oe_ground_color_contrast + 0.5) + oe_ground_color_brightness;
-    color.rgb = vec3(1) - exp(color.rgb * -oe_ground_color_exposure);
+    color.rgb = ((color.rgb - 0.5)*oe_csplat_imagery_contrast + 0.5) + oe_csplat_imagery_brightness;
+    color.rgb = vec3(1) - exp(color.rgb * -oe_csplat_imagery_exposure);
 
     vec3 col_hsv = RGBtoHSV(color.rgb);
-    col_hsv.y *= (oe_ground_color_saturate * 2.0);
-    col_hsv.x *= (oe_ground_color_hue * 2.0);
-    col_hsv.z *= (oe_ground_color_v * 2.0);
-    //col_hsv.z = max(col_hsv.z ,oe_ground_color_v);
+    col_hsv.y *= (oe_csplat_imagery_saturate * 2.0);
+    col_hsv.x *= (oe_csplat_imagery_hue * 2.0);
+#if 0 //test shadow suppression
+    if(col_hsv.z < oe_ground_color_v)
+    {
+        float ratio = 1.0 - (oe_ground_color_v - col_hsv.z)/oe_ground_color_v;
+        col_hsv.z = oe_ground_color_v;
+        col_hsv.y *= ratio;
+    }
+#else
+    col_hsv.z *= (oe_csplat_imagery_value * 2.0);
+#endif
     color.rgb = HSVtoRGB(col_hsv.rgb);
     return color;
 }
@@ -122,7 +144,7 @@ vec4 oe_getMaterial(vec4 color)
      // amplification factors for greenness and redness,
      // obtained empirically
      const float green_amp = 2.0;
-     const float red_amp = 5.0;
+     const float red_amp = 15.0;
 
      // Set lower limits for saturation and lightness, because
      // when these levels get too low, the HUE channel starts to
@@ -161,30 +183,60 @@ vec4 oe_getMaterial(vec4 color)
      color.g = greenness;
      color.b = greenness * (1.0 - hsl.z); // lighter green is less lush.
      color.r = redness;
+     color.a = hsl.z;
      return color;
 }
 
-#define DETAIL_TERRAIN_LOD 21
-
-vec4 oe_getColorAtDistance(float distance, int detail_lod)
+#ifdef OE_CSPLAT_NOISE_SAMPLER
+uniform sampler2D OE_CSPLAT_NOISE_SAMPLER;
+vec4 oe_splat_getNoise(in vec2 tc)
 {
-     vec4 base_color = texture(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st);
-     base_color = oe_colorCorrect(base_color);
-     vec4 ground_mat = oe_getMaterial(base_color);
-	 //return vec4(ground_mat.b, ground_mat.b, ground_mat.b,1.0);
-     vec4 color = oe_colorCorrect(base_color);
+    return texture(OE_CSPLAT_NOISE_SAMPLER, tc.st);
+}
+#else
+vec4 oe_splat_getNoise(in vec2 tc)
+{
+    return vec4(0.0);
+}
+#endif
+
+
+vec4 oe_getColorAtDistance(float camera_distance, int detail_lod)
+{
+     vec2 color_tex_coord = (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st;
+
+#ifdef OE_CSPLAT_NOISE_SAMPLER
+	 float dL = oe_tile_key_u.z - oe_csplat_imagery_noise_lod;
+     float lod_factor = exp2(dL);
+	 vec2 noise_coords = oe_scaleToRefLOD2(oe_layer_tilec.st, oe_csplat_imagery_noise_lod);
+	 vec2 offset = oe_csplat_imagery_noise_scale * lod_factor * (vec2(oe_splat_getNoise(noise_coords).x) - vec2(0.5));
+     color_tex_coord += offset;
+#endif
+	 vec4 ground_color = texture(OE_GROUND_COLOR_SAMPLER, color_tex_coord);
+     vec4 ground_mat = oe_getMaterial(ground_color);
+
+	 //try to blend upper lod to deshadow
+	 //vec2 lod = textureQueryLod(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st);
+	 //vec4 base_color_low = textureLod(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st,lod.y+5);
+	 //base_color = ground_mat.a < 0.5 ? base_color_low : base_color;
+	 //base_color.rgb = mix(base_color_low, base_color, ).rgb;
+	 //return base_color;
+	 //return vec4(ground_mat.a, ground_mat.a, ground_mat.a,1.0);
+     
      vec2 detail_coords = oe_scaleToRefLOD2(oe_layer_tilec.st, DETAIL_TERRAIN_LOD);
-
-     vec4 detail_color = detail_lod > 0 ? textureLod(oe_splat_detail_sampler, vec3(detail_coords,0), detail_lod) : texture(oe_splat_detail_sampler, vec3(detail_coords,0));
-	 vec4 dc1 = detail_lod > 0 ? textureLod(oe_splat_detail_sampler, vec3(detail_coords,1), detail_lod) : texture(oe_splat_detail_sampler, vec3(detail_coords,1));
+     vec4 detail_color = detail_lod > 0 ? textureLod(oe_csplat_detail_sampler, vec3(detail_coords,0),float(detail_lod)) : texture(oe_csplat_detail_sampler, vec3(detail_coords,0));
+	 vec4 dc1 = detail_lod > 0 ? textureLod(oe_csplat_detail_sampler, vec3(detail_coords,1), float(detail_lod)) : texture(oe_csplat_detail_sampler, vec3(detail_coords,1));
 	 detail_color = mix(detail_color, dc1, max(ground_mat.g,ground_mat.b));
-	
-     vec3 detail_mono = vec3(detail_color.r*0.2126 + detail_color.g*0.7152 + detail_color.b*0.0722);
 
-     color.rgb = oe_detail_factor * mix(base_color.rgb * detail_mono.rgb, detail_color.rgb, oe_detail_ratio);
-     float fade = clamp(distance, 0, oe_detail_distance)/oe_detail_distance;
-     color.rgb = mix(color.rgb, base_color.rgb ,fade);
-     return color;
+     vec3 detail_mono = vec3(detail_color.r*0.2126 + detail_color.g*0.7152 + detail_color.b*0.0722);
+     vec4 ground_color_corrected = oe_colorCorrect(ground_color);
+     vec3 ground_mono = vec3(ground_color_corrected.r*0.2126 + ground_color_corrected.g*0.7152 + ground_color_corrected.b*0.0722);
+     detail_color.rgb = oe_csplat_detail_scale * mix(ground_color_corrected.rgb * detail_mono.rgb, detail_color.rgb * ground_mono, oe_csplat_detail_ratio);
+     
+     float fade = clamp(camera_distance, 0.0, oe_csplat_detail_distance)/oe_csplat_detail_distance;
+     vec3 color = mix(detail_color.rgb, ground_color.rgb ,fade);
+	 
+     return vec4(color,1);
 }
 
 vec4 oe_getGroundColorAtDistance(float distance)

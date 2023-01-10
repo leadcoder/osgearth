@@ -81,6 +81,7 @@ namespace osgEarth { namespace Splat
     protected:
         virtual ~ColorSplatLayer() { }
         TextureImageUnitReservation _detailBinding;
+        TextureImageUnitReservation _noiseBinding;
     };
 
 } } 

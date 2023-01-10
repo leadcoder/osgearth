@@ -8,6 +8,12 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 // default view space shaders further down the chain such as the VisibleLayer rangeOpacityVS work correctly
 #pragma vp_order      0.9
 
+
+// include files
+#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
+#pragma import_defines(OE_USE_COLOR_SPLAT)
+//#pragma include Splat.Color.common.glsl
+
 // Instance data from compute shader
 struct RenderData // vec4 aligned please
 {
@@ -62,6 +68,13 @@ uniform vec3 oe_Camera; // (vp width, vp height, LOD scale)
 out float oe_vertex_dist;
 out vec2 oe_GroundCover_texCoord;
 
+
+#ifdef OE_GROUND_COLOR_SAMPLER
+vec4 oe_getGroundColor();
+vec4 oe_getGrassColorAtDistance(float distance);
+#endif
+
+
 // Output that selects the land cover texture from the texture array (flat)
 flat out float oe_GroundCover_atlasIndex;
 
@@ -101,6 +114,24 @@ void oe_Grass_VS(inout vec4 vertex)
     // cull verts that are out of range. Sadly we can't do this in COMPUTE.
     if (nRange >= 0.99)
         return;
+
+    // range from camera to vertex
+    oe_vertex_dist = -vertex.z * oe_Camera.z;
+#ifdef OE_GROUND_COLOR_SAMPLER
+#ifdef OE_USE_COLOR_SPLAT
+    vec4 ground_color = oe_getGrassColorAtDistance(oe_vertex_dist);
+#else
+    vec4 ground_color = oe_getGroundColor();
+#endif
+    float div = ground_color.r + ground_color.g + ground_color.b;
+    vec3 norm_color = ground_color.rgb/div;
+	float grenness = 2.0 * norm_color.g - norm_color.r - norm_color.b;
+	if(grenness < 0.05)
+	{
+		return;
+	}
+#endif
+
 
     // make the grass smoothly disappear in the distance
     float falloff = clamp(2.0 - (nRange + oe_noise[NOISE_SMOOTH]), 0, 1);
@@ -214,8 +245,12 @@ void oe_Grass_VS(inout vec4 vertex)
     // Some color variation.
     vp_Color.gb -= browning * oe_noise_wide[NOISE_SMOOTH];
 
-    // range from camera to vertex
-    oe_vertex_dist = -vertex.z * oe_Camera.z;
+    
+
+#ifdef OE_GROUND_COLOR_SAMPLER
+    vp_Color.rgb = ground_color.rgb;
+#endif
+
 }
 
 
@@ -228,24 +263,15 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 #pragma vp_entryPoint oe_Grass_FS
 #pragma vp_location fragment
 
-#pragma import_defines(OE_GROUND_COLOR_SAMPLER)
-#pragma import_defines(OE_USE_COLOR_SPLAT)
-
-
-#ifdef OE_GROUND_COLOR_SAMPLER
- vec4 oe_getGroundColor();
- vec4 oe_getGrassColorAtDistance(float distance);
-#endif
-
 uniform sampler2DArray oe_GroundCover_billboardTex;
 in vec2 oe_GroundCover_texCoord;
-in float oe_vertex_dist;
 flat in float oe_GroundCover_atlasIndex;
 vec3 vp_Normal;
 
 uniform float oe_GroundCover_maxAlpha;
 uniform int oe_GroundCover_A2C;
-uniform float oe_grass_modulation = 0.5;
+uniform float oe_GroundCover_grass_color_mix = 0.5;
+uniform float oe_GroundCover_grass_color_scale = 2.3;
 
 void oe_Grass_FS(inout vec4 color)
 {
@@ -253,7 +279,10 @@ void oe_Grass_FS(inout vec4 color)
         discard;
 
     // paint the texture
-    color = texture(oe_GroundCover_billboardTex, vec3(oe_GroundCover_texCoord, oe_GroundCover_atlasIndex)) * color;
+    vec4 texture_color = texture(oe_GroundCover_billboardTex, vec3(oe_GroundCover_texCoord, oe_GroundCover_atlasIndex));
+    float mono = (texture_color.r*0.2126 + texture_color.g*0.7152 + texture_color.b*0.0722);
+    color.rgb = mix(color.rgb, color.rgb * vec3(mono)*oe_GroundCover_grass_color_scale, oe_GroundCover_grass_color_mix);
+    color.a = texture_color.a*color.a;
 
     // uncomment to see triangles
     //if (color.a < 0.2)
@@ -268,23 +297,4 @@ void oe_Grass_FS(inout vec4 color)
     {
         discard;
     }
-
-#ifdef OE_GROUND_COLOR_SAMPLER
-    float mono = (color.r*0.2126 + color.g*0.7152 + color.b*0.0722);
-#ifdef OE_USE_COLOR_SPLAT
-    vec4 mod_color = oe_getGrassColorAtDistance(oe_vertex_dist);
-#else
-    vec4 mod_color = oe_getGroundColor();
-#endif
-    color.rgb = mix(mod_color.rgb, mod_color.rgb * vec3(mono)*2.3, oe_grass_modulation);
-
-    float div = mod_color.r + mod_color.g + mod_color.b;
-    vec3 norm_color = mod_color.rgb/div;
-	float grenness = 2.0 * norm_color.g - norm_color.r - norm_color.b;
-	if(grenness < 0.05)
-	{
-		discard;
-	}
-
-#endif
 }
