@@ -75,6 +75,7 @@ GroundCoverLayer::Options::getConfig() const
     conf.set("color_min_saturation", colorMinSaturation());
     conf.set("lod", _lod);
     conf.set("cast_shadows", _castShadows);
+    conf.set("receive_shadows", _receiveShadows);
     conf.set("max_alpha", maxAlpha());
     conf.set("alpha_to_coverage", alphaToCoverage());
     conf.set("wind_scale", windScale());
@@ -97,6 +98,7 @@ GroundCoverLayer::Options::fromConfig(const Config& conf)
     // defaults:
     lod().setDefault(13u);
     castShadows().setDefault(false);
+    receiveShadows().setDefault(false);
     maxAlpha().setDefault(0.15f);
     alphaToCoverage().setDefault(true);
     windScale().setDefault(1.0f);
@@ -111,6 +113,8 @@ GroundCoverLayer::Options::fromConfig(const Config& conf)
     conf.get("color_min_saturation", colorMinSaturation());
     conf.get("lod", _lod);
     conf.get("cast_shadows", _castShadows);
+    conf.get("receive_shadows", _receiveShadows);
+    
     conf.get("max_alpha", maxAlpha());
     conf.get("alpha_to_coverage", alphaToCoverage());
     conf.get("wind_scale", windScale());
@@ -579,6 +583,9 @@ GroundCoverLayer::buildStateSets()
     stateset->setTextureAttribute(_noiseBinding.unit(), noiseTexture.get());
     stateset->addUniform(new osg::Uniform(NOISE_SAMPLER, _noiseBinding.unit()));
 
+    if(!options().receiveShadows().get())
+        stateset->setDefine("OE_REJECT_SHADOWS");
+    
     if (getMaskLayer())
     {
         stateset->setDefine("OE_GROUNDCOVER_MASK_SAMPLER", getMaskLayer()->getSharedTextureUniformName());

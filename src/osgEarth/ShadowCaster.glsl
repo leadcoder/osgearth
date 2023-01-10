@@ -30,6 +30,8 @@ void oe_shadow_vertex(inout vec4 VertexVIEW)
 
 #pragma import_defines(OE_LIGHTING)
 #pragma import_defines(OE_NUM_LIGHTS)
+#pragma import_defines(OE_REJECT_SHADOWS)
+
 
 uniform sampler2DArray oe_shadow_map;
 uniform float          oe_shadow_color;
@@ -109,6 +111,9 @@ float oe_shadow_multisample(in vec3 c, in float refvalue, in float blur)
 
 void oe_shadow_fragment(inout vec4 color)
 {
+#ifdef OE_REJECT_SHADOWS
+    return; //NOP
+#endif
     float alpha = color.a;
     float factor = 1.0;
 

@@ -51,6 +51,8 @@ namespace osgEarth { namespace Splat
             OE_OPTION(float, colorMinSaturation);
             OE_OPTION(unsigned, lod);
             OE_OPTION(bool, castShadows);
+            OE_OPTION(bool, receiveShadows);
+            
             OE_OPTION(float, maxAlpha);
             OE_OPTION(bool, alphaToCoverage);
             OE_OPTION_VECTOR(BiomeZone, biomeZones);
