@@ -43,7 +43,10 @@ namespace osgEarth { namespace Splat
             // detail texture.
             Config getConfig() const override;
 
-            optional<URI> _detailGreenImageURI;
+            optional<URI> _detail1ImageURI;
+            optional<URI> _detail2ImageURI;
+            optional<URI> _detail3ImageURI;
+            optional<URI> _detail4ImageURI;
             optional<URI> _detailBaseImageURI;
 
         private:

@@ -22,7 +22,10 @@ osgEarth::Config ColorSplatLayer::Options::getConfig() const
 	Config conf = VisibleLayer::Options::getConfig();
 	colorLayer().set(conf, "color_layer");
 	conf.set("detail_base_image", _detailBaseImageURI);
-	conf.set("detail_green_image", _detailGreenImageURI);
+	conf.set("detail_1_image", _detail1ImageURI);
+	conf.set("detail_2_image", _detail2ImageURI);
+	conf.set("detail_3_image", _detail3ImageURI);
+	conf.set("detail_4_image", _detail4ImageURI);
 	return conf;
 }
 
@@ -31,7 +34,10 @@ ColorSplatLayer::Options::fromConfig(const Config& conf)
 {
 	colorLayer().get(conf, "color_layer");
 	conf.get("detail_base_image", _detailBaseImageURI);
-	conf.get("detail_green_image", _detailGreenImageURI);
+	conf.get("detail_1_image", _detail1ImageURI);
+	conf.get("detail_2_image", _detail2ImageURI);
+	conf.get("detail_3_image", _detail3ImageURI);
+	conf.get("detail_4_image", _detail4ImageURI);
 }
 
 
@@ -96,13 +102,19 @@ ColorSplatLayer::prepareForRendering(TerrainEngine* engine)
 			}
 
 			// Load the image
-			if (options()._detailGreenImageURI.isSet())
+			if (options()._detail1ImageURI.isSet() && options()._detailBaseImageURI.isSet())
 			{
 				 auto stateset = engine->getTerrainStateSet();
 				 // Create the uniform for the sampler.
 				 std::vector<URI> detail_textures;
 				 detail_textures.push_back(options()._detailBaseImageURI.get());
-				 detail_textures.push_back(options()._detailGreenImageURI.get());
+				 detail_textures.push_back(options()._detail1ImageURI.get());
+				 if(options()._detail2ImageURI.isSet())
+					 detail_textures.push_back(options()._detail2ImageURI.get());
+				 if (options()._detail3ImageURI.isSet())
+					 detail_textures.push_back(options()._detail3ImageURI.get());
+				 if (options()._detail4ImageURI.isSet())
+					 detail_textures.push_back(options()._detail4ImageURI.get());
 				 const int num_detail_tex = detail_textures.size();
 				 int sizeX = 0, sizeY = 0;
 				 osg::Texture2DArray* tex = new osg::Texture2DArray();

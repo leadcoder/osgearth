@@ -22,8 +22,13 @@ uniform float oe_csplat_imagery_noise_lod = 22;
 
 uniform sampler2DArray oe_csplat_detail_sampler;
 uniform float oe_csplat_detail_distance = 300;
-uniform float oe_csplat_detail_scale = 2.2;
 uniform float oe_csplat_detail_ratio = 0;
+uniform float oe_csplat_detail_contrast = 1.0;
+uniform float oe_csplat_detail_brightness = 1.0;
+uniform float oe_csplat_detail_exposure = 1.0;
+
+
+
 
 
 
@@ -132,6 +137,14 @@ vec4 oe_getGroundColorLod(float lod)
     color = oe_colorCorrect(color);
     return color;
 }
+uniform float green_amp = 2;
+uniform float red_amp = 2;
+uniform float blue_amp = 2;
+
+uniform float green_threshold = 1;
+
+uniform float oe_shadow_lum  = 0.1;
+uniform float oe_shadow_blue = 0.1;
 
 vec4 oe_getMaterial(vec4 color)
 {
@@ -143,8 +156,9 @@ vec4 oe_getMaterial(vec4 color)
 
      // amplification factors for greenness and redness,
      // obtained empirically
-     const float green_amp = 2.0;
-     const float red_amp = 15.0;
+     //const float green_amp = 2.0;
+     //const float red_amp = 2.0;
+	 //const float blue_amp = 1;
 
      // Set lower limits for saturation and lightness, because
      // when these levels get too low, the HUE channel starts to
@@ -165,24 +179,43 @@ vec4 oe_getMaterial(vec4 color)
      if (dist_to_red > 0.5)
          dist_to_red = 1.0 - dist_to_red;
      float redness = 1.0 - 2.0 * dist_to_red;
+	 
+	 float dist_to_blue = abs(blue - hsl[0]);
+     if (dist_to_blue > 0.5)
+         dist_to_blue = 1.0 - dist_to_blue;
+     float blueness = 1.0 - 2.0 * dist_to_blue;
 
      if (hsl[1] < saturation_threshold)
      {
          greenness *= hsl[1] / saturation_threshold;
          redness *= hsl[1] / saturation_threshold;
+		 blueness *= hsl[1] / saturation_threshold;
      }
      if (hsl[2] < lightness_threshold)
      {
          greenness *= hsl[2] / lightness_threshold;
          redness *= hsl[2] / lightness_threshold;
+		 blueness *= hsl[2] / lightness_threshold;
      }
 
      greenness = pow(greenness, green_amp);
      redness = pow(redness, red_amp);
+	 blueness = pow(blueness, blue_amp);
      
      color.g = greenness;
-     color.b = greenness * (1.0 - hsl.z); // lighter green is less lush.
-     color.r = redness;
+	 color.b = blueness;
+	 color.r = redness;
+     //color.b = greenness * (1.0 - hsl.z); // lighter green is less lush.
+     //if(hsl.z > green_threshold)
+	//	color.b = greenness;
+	 //else
+	//	color.b = 0;
+	
+	if(blueness > oe_shadow_blue && hsl.z < oe_shadow_lum)
+	{
+		color.g = blueness;
+	}
+	 
      color.a = hsl.z;
      return color;
 }
@@ -200,8 +233,18 @@ vec4 oe_splat_getNoise(in vec2 tc)
 }
 #endif
 
+vec4 getDetail(vec2 detail_coords, float detail_layer, float detail_lod)
+{
+    vec4 detail_color = detail_lod > 0 ? textureLod(oe_csplat_detail_sampler, vec3(detail_coords,detail_layer),detail_lod) : texture(oe_csplat_detail_sampler, vec3(detail_coords,detail_layer));
+	return detail_color;
+}
+//#define DESHADOW
+#ifdef DESHADOW
+uniform float oe_deshadow_factor = 2.9;
+uniform float oe_deshadow_exp = 2.3;
+#endif
 
-vec4 oe_getColorAtDistance(float camera_distance, int detail_lod)
+vec4 oe_getColorAtDistance(float camera_distance, float detail_lod)
 {
      vec2 color_tex_coord = (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st;
 
@@ -215,6 +258,19 @@ vec4 oe_getColorAtDistance(float camera_distance, int detail_lod)
 	 vec4 ground_color = texture(OE_GROUND_COLOR_SAMPLER, color_tex_coord);
      vec4 ground_mat = oe_getMaterial(ground_color);
 
+
+#ifdef DESHADOW
+	//try to deshadow
+	const float lum_threshold = 0.3;
+	const float lum = ground_mat.a;
+	if(lum < lum_threshold)
+	{
+		float shadow_contrast = (1 - pow((oe_deshadow_factor*(lum_threshold-lum)), oe_deshadow_exp));
+		ground_color.rgb = ((ground_color.rgb - 0.5) * shadow_contrast + 0.5);
+	}
+#endif
+	
+
 	 //try to blend upper lod to deshadow
 	 //vec2 lod = textureQueryLod(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st);
 	 //vec4 base_color_low = textureLod(OE_GROUND_COLOR_SAMPLER, (OE_GROUND_COLOR_MATRIX*oe_layer_tilec).st,lod.y+5);
@@ -224,16 +280,24 @@ vec4 oe_getColorAtDistance(float camera_distance, int detail_lod)
 	 //return vec4(ground_mat.a, ground_mat.a, ground_mat.a,1.0);
      
      vec2 detail_coords = oe_scaleToRefLOD2(oe_layer_tilec.st, DETAIL_TERRAIN_LOD);
-     vec4 detail_color = detail_lod > 0 ? textureLod(oe_csplat_detail_sampler, vec3(detail_coords,0),float(detail_lod)) : texture(oe_csplat_detail_sampler, vec3(detail_coords,0));
-	 vec4 dc1 = detail_lod > 0 ? textureLod(oe_csplat_detail_sampler, vec3(detail_coords,1), float(detail_lod)) : texture(oe_csplat_detail_sampler, vec3(detail_coords,1));
-	 detail_color = mix(detail_color, dc1, max(ground_mat.g,ground_mat.b));
-
+     vec4 detail_color = getDetail(detail_coords,0,detail_lod);
+	 vec4 dc1 = getDetail(detail_coords,1,detail_lod);
+	 vec4 dc2 = getDetail(detail_coords,2,detail_lod);
+	
+	 detail_color = mix(detail_color, dc2, ground_mat.g);
+	 detail_color = mix(detail_color, dc1, ground_mat.r); 
+	
+	 // brightness and contrast
+     detail_color.rgb = ((detail_color.rgb - 0.5)*oe_csplat_detail_contrast + 0.5) * oe_csplat_detail_brightness;
+     detail_color.rgb = vec3(1) - exp(detail_color.rgb * -oe_csplat_detail_exposure);
+	 
      vec3 detail_mono = vec3(detail_color.r*0.2126 + detail_color.g*0.7152 + detail_color.b*0.0722);
      vec4 ground_color_corrected = oe_colorCorrect(ground_color);
      vec3 ground_mono = vec3(ground_color_corrected.r*0.2126 + ground_color_corrected.g*0.7152 + ground_color_corrected.b*0.0722);
-     detail_color.rgb = oe_csplat_detail_scale * mix(ground_color_corrected.rgb * detail_mono.rgb, detail_color.rgb * ground_mono, oe_csplat_detail_ratio);
-     
-     float fade = clamp(camera_distance, 0.0, oe_csplat_detail_distance)/oe_csplat_detail_distance;
+     detail_color.rgb = 2.2 * mix(ground_color_corrected.rgb * detail_mono.rgb, detail_color.rgb * ground_mono, oe_csplat_detail_ratio);
+    
+	 //detail_color = vec4(ground_mat.r,ground_mat.g,ground_mat.b,1);
+	 float fade = clamp(camera_distance, 0.0, oe_csplat_detail_distance)/oe_csplat_detail_distance;
      vec3 color = mix(detail_color.rgb, ground_color.rgb ,fade);
 	 
      return vec4(color,1);
