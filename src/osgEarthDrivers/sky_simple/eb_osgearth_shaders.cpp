@@ -160,6 +160,7 @@ ground_best_frag = R"(
 #pragma import_defines(OE_USE_PBR)
 
 uniform float oe_sky_exposure;
+uniform float oe_sky_contrast;
 uniform vec2 sun_size;
 const vec3 white_point = vec3(1,1,1);
 const vec3 camera_pos = vec3(0,0,0);
@@ -203,7 +204,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
 #endif
 
     // limit to ambient floor:
