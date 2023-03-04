@@ -61,7 +61,7 @@ namespace osgEarth { namespace Splat
         //! Splatting zones
         Zones& getZones() { return _zones; }
         const Zones& getZones() const { return _zones; }
-        ImageLayer* SplatLayer::getColorLayer() const;
+        ImageLayer* getColorLayer() const;
 
     protected:
 
