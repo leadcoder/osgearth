@@ -252,10 +252,44 @@ BoundingVolume::asBoundingSphere() const
 void
 TileContent::fromJSON(const Json::Value& value, LoadContext& lc)
 {
+    
     if (value.isMember("boundingVolume"))
         boundingVolume() = BoundingVolume(value.get("boundingVolume", Json::nullValue));
     if (value.isMember("uri"))
-        uri() = URI(value.get("uri", "").asString(), lc._uc);
+    {
+        std::string uri_str = value.get("uri", "").asString();
+        const bool is_googleapis = lc._uc.referrer().find("tile.googleapis.com") != std::string::npos;
+        if (is_googleapis)
+        {
+            std::string SESSION;
+            std::string KEY;
+            //find key from referrer
+            auto key_pos = lc._uc.referrer().find("key=");
+            if(key_pos != std::string::npos)
+                KEY = lc._uc.referrer().substr(key_pos);
+            else
+                OE_WARN << "TileContent - tile.googleapis: Failed to find key";
+            
+            //find session from referrer
+            auto session_pos = lc._uc.referrer().find("?session=");
+            if (session_pos != std::string::npos && key_pos != std::string::npos)
+                SESSION = lc._uc.referrer().substr(session_pos, key_pos - session_pos-1);
+            else //session must be provided in new url
+            {
+                //...and check that it exist!
+                if (uri_str.find("?session=") == std::string::npos)
+                {
+                    OE_WARN << "TileContent - tile.googleapis: Failed to find session";
+                }
+            }
+
+            if (!uri_str.empty())
+            {
+                 uri_str = "https://tile.googleapis.com" + uri_str + SESSION + "&" + KEY;
+            }
+        }
+        uri() = URI(uri_str, lc._uc);
+    }
     if (value.isMember("url"))
         uri() = URI(value.get("url", "").asString(), lc._uc);
 }
@@ -640,7 +674,8 @@ ThreeDTileNode::ThreeDTileNode(ThreeDTilesetNode* tileset, Tile* tile, bool imme
         URI uri(_tile->content()->uri()->base(), context);
 
 
-        if (osgEarth::Strings::endsWith(_tile->content()->uri()->base(), ".json"))
+        if (_tile->content()->uri()->base().find(".json") != std::string::npos)
+//      if (osgEarth::Strings::endsWith(_tile->content()->uri()->base(), ".json"))
         {
             _content = readTilesetSync(_tileset, uri, options).get();
         }
@@ -930,7 +965,8 @@ void ThreeDTileNode::requestContent(ICO* ico)
 
         NetworkMonitor::ScopedRequestLayer layerRequest(_tileset->getOwnerName());
 
-        if (osgEarth::Strings::endsWith(_tile->content()->uri()->base(), ".json"))
+        if (_tile->content()->uri()->base().find(".json") != std::string::npos)
+        //if (osgEarth::Strings::endsWith(_tile->content()->uri()->base(), ".json"))
         {
             // "json" extension = external tileset:
             _contentFuture = readTilesetAsync(_tileset, uri, localOptions.get());

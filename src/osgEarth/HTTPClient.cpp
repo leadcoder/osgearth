@@ -1519,6 +1519,13 @@ HTTPClient::doGet(const HTTPRequest&    request,
 
     URI uri(request.getURL());
 
+    //remove url options from cache key
+    std::string cache_path = uri.full();
+    auto pos = cache_path.find("?");
+    if (pos != std::string::npos)
+        cache_path = cache_path.substr(0, pos);
+    URI cache_uri(cache_path);
+
     // URL caching
     CacheBin* bin = nullptr;
     CacheSettings* cacheSettings = CacheSettings::get(options);
@@ -1543,7 +1550,7 @@ HTTPClient::doGet(const HTTPRequest&    request,
     //Try to read result from the cache.
     if (bin)
     {
-        ReadResult result = bin->readString(uri.cacheKey(), options);
+        ReadResult result = bin->readString(cache_uri.cacheKey(), options);
         if (result.succeeded())
         {
             gotFromCache = true;
@@ -1572,7 +1579,7 @@ HTTPClient::doGet(const HTTPRequest&    request,
             OE_DEBUG << LC << uri.full() << " not modified, using cached result" << std::endl;
             // Touch the cached item to update it's last modified timestamp so it doesn't expire again immediately.
             if (bin)
-                bin->touch(uri.cacheKey());
+                bin->touch(cache_uri.cacheKey());
         }
         else
         {
@@ -1584,7 +1591,7 @@ HTTPClient::doGet(const HTTPRequest&    request,
                 if (bin != nullptr)
                 {
                     osg::ref_ptr< StringObject> stringObject = new StringObject(response.getPartAsString(0));
-                    bin->write(uri.cacheKey(), stringObject, response.getHeadersAsConfig(), options);
+                    bin->write(cache_uri.cacheKey(), stringObject, response.getHeadersAsConfig(), options);
                 }
             }
         }
@@ -1645,6 +1652,9 @@ namespace
 
         // try extension first:
         std::string ext = osgDB::getFileExtension( url );
+        auto pos = ext.find("?");
+        if (pos != std::string::npos)
+           ext = ext.substr(0, pos);
         if ( !ext.empty() )
         {
             reader = osgDB::Registry::instance()->getReaderWriterForExtension( ext );

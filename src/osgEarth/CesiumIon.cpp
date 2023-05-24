@@ -264,7 +264,13 @@ CesiumIon3DTilesLayer::openImplementation()
     {
         return Status(Status::ConfigurationError, "CesiumIon API key is required");
     }
-
+#define GOOGLE_PM
+#ifdef GOOGLE_PM
+	URI serverURI = "https://tile.googleapis.com/v1/3dtiles/root.json?key=" + _key;
+	//URI serverURI("v1/3dtiles/root.json?key=" + _key, URIContext("https://tile.googleapis.com/"));
+	std::cout << serverURI.full();
+	std::string accept_header;
+#else
     CesiumIonResource ionResource;
     Status status = ionResource.open(
         options().server().get(),
@@ -279,12 +285,16 @@ CesiumIon3DTilesLayer::openImplementation()
         uriContext.addHeader("authorization", ionResource._acceptHeader);
         serverURI = URI(ionResource._resourceUrl, uriContext);
     }
-
+    std::string accept_header = ionResource._acceptHeader
+#endif
     Status parentStatus = VisibleLayer::openImplementation();
     if (parentStatus.isError())
         return parentStatus;
 
-    ReadResult rr = serverURI.readString();
+    // Clone the read options
+    osg::ref_ptr< osgDB::Options > readOptions = osgEarth::Registry::instance()->cloneOrCreateOptions(this->getReadOptions());
+
+    ReadResult rr = serverURI.readString(readOptions);
     if (rr.failed())
     {
         return Status(Status::ResourceUnavailable, Stringify() << "Error loading tileset: " << rr.errorDetail());
@@ -298,10 +308,8 @@ CesiumIon3DTilesLayer::openImplementation()
         return Status(Status::GeneralError, "Bad tileset");
     }
 
-    // Clone the read options
-    osg::ref_ptr< osgDB::Options > readOptions = osgEarth::Registry::instance()->cloneOrCreateOptions(this->getReadOptions());
-
-    _tilesetNode = new ThreeDTilesetNode(tileset, ionResource._acceptHeader, getSceneGraphCallbacks(), readOptions.get());
+    
+    _tilesetNode = new ThreeDTilesetNode(tileset, accept_header, getSceneGraphCallbacks(), readOptions.get());
     _tilesetNode->setMaximumScreenSpaceError(*options().maximumScreenSpaceError());
 
     return STATUS_OK;
