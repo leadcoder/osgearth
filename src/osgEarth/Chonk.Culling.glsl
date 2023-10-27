@@ -4,13 +4,6 @@
 #pragma import_defines(OE_GPUCULL_DEBUG)
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
 
-#pragma import_defines(OE_TWEAKABLE)
-#ifdef OE_TWEAKABLE
-#define tweakable uniform
-#else
-#define tweakable const
-#endif
-
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 struct DrawElementsIndirectCommand
@@ -43,8 +36,14 @@ struct ChonkLOD
     vec4 bs;
     float far_pixel_scale;
     float near_pixel_scale;
-    uint num_lods; // chonk-global
-    uint total_num_commands; // global
+    // chonk-globals:
+    float alpha_cutoff;
+    float birthday;
+    float fade_near;
+    float fade_far;
+    uint num_lods;
+    // globals:
+    uint total_num_commands;
 };
 
 struct Instance
@@ -52,7 +51,9 @@ struct Instance
     mat4 xform;
     vec2 local_uv;
     uint lod;
-    float visibility[4];
+    float visibility[2]; // per LOD
+    float radius;
+    float alpha_cutoff;
     uint first_lod_cmd_index;
 };
 
@@ -79,6 +80,8 @@ layout(binding = 31) buffer InputBuffer
 uniform vec3 oe_Camera;
 uniform float oe_sse;
 uniform vec4 oe_lod_scale;
+uniform float osg_FrameTime;
+uniform float oe_chonk_lod_transition_factor = 0.1;
 
 #if OE_GPUCULL_DEBUG
 //#ifdef OE_GPUCULL_DEBUG
@@ -89,8 +92,6 @@ uniform vec4 oe_lod_scale;
 #define REASON_FRUSTUM 1.5
 #define REASON_SSE 2.5
 #define REASON_NEARCLIP 3.5
-
-tweakable float oe_chonk_lod_transition_factor = 0.1;
 
 void cull()
 {
@@ -104,12 +105,6 @@ void cull()
     uint v = input_instances[i].first_lod_cmd_index + lod;
     if (lod >= chonks[v].num_lods)
         return;
-
-#ifdef OE_IS_SHADOW_CAMERA
-    // only the lowest LOD for shadow-casting.
-    if (lod < chonks[v].num_lods - 1)
-        return;
-#endif
 
     // intialize:
     float fade = 1.0;
@@ -169,31 +164,55 @@ void cull()
     vec2 dims = 0.5*(UR.xy - LL.xy)*oe_Camera.xy;
 
     float pixelSize = max(dims.x, dims.y);
-    float pixelSizePad = pixelSize * oe_chonk_lod_transition_factor; // 0.1;
+    float pixelSizePad = pixelSize * oe_chonk_lod_transition_factor;
 
     float minPixelSize = oe_sse * chonks[v].far_pixel_scale * oe_lod_scale[lod];
     if (pixelSize < (minPixelSize - pixelSizePad))
         REJECT(REASON_SSE);
 
-    float near_scale = lod > 0 ? chonks[v].near_pixel_scale * oe_lod_scale[lod - 1] : 99999.0;
-    float maxPixelSize = oe_sse * near_scale;
+    float maxPixelSize = 1e7;
+    if (lod > 0) {
+        float near_scale = chonks[v].near_pixel_scale * oe_lod_scale[lod - 1];
+        maxPixelSize = oe_sse * near_scale;
+    }
     if (pixelSize > (maxPixelSize + pixelSizePad))
         REJECT(REASON_SSE);
 
     if (fade == 1.0)  // good to go, set the proper fade:
     {
+        pixelSizePad = max(pixelSizePad, 1.0);
         if (pixelSize > maxPixelSize)
             fade = 1.0 - (pixelSize - maxPixelSize) / pixelSizePad;
         else if (pixelSize < minPixelSize)
             fade = 1.0 - (minPixelSize - pixelSize) / pixelSizePad;
     }
-#endif
+
+    // Birthday-based fading:
+    const float fadein_time = 2.0; // seconds
+    float birth = clamp((osg_FrameTime - chonks[v].birthday) / fadein_time, 0.0, 1.0);
+    fade *= birth;
+
+    // Distance-based fading:
+    float fade_range = chonks[v].fade_far - chonks[v].fade_near;
+    if (fade_range > 0.0)
+    {
+        float dist = length(center_view.xyz);
+        fade *= clamp((chonks[v].fade_far - dist) / fade_range, 0.0, 1.0);
+    }
 
     if (fade < 0.1)
         return;
 
+#endif // !OE_IS_SHADOW_CAMERA
+
     // Pass! Set the visibility for this LOD:
     input_instances[i].visibility[lod] = fade;
+
+    // Send along the other values:
+    input_instances[i].alpha_cutoff = chonks[v].alpha_cutoff;
+
+    // Send along the scaled radius of this instance
+    input_instances[i].radius = r;
 
     // Bump all baseInstances following this one:
     const uint cmd_count = chonks[v].total_num_commands;

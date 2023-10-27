@@ -28,7 +28,7 @@
 
 using namespace osgEarth;
 
-#define LC "[Layer] Layer \"" << getName() << "\" "
+#define LC "[" << className() << "] " << getName() << "\" "
 
 //.................................................................
 
@@ -47,7 +47,7 @@ Layer::Options::getConfig() const
     conf.set("attribution", attribution());
     conf.set("terrain", terrainPatch());
     conf.set("proxy", _proxySettings );
-    conf.set("osg_options", osgOptionString());
+    conf.set("read_options", osgOptionString());
     conf.set("l2_cache_size", l2CacheSize());
 
     for(std::vector<ShaderOptions>::const_iterator i = shaders().begin();
@@ -95,7 +95,8 @@ Layer::Options::fromConfig(const Config& conf)
     conf.get("terrain", terrainPatch());
     conf.get("patch", terrainPatch());
     conf.get("proxy", _proxySettings );
-    conf.get("osg_options", osgOptionString());
+    conf.get("read_options", osgOptionString());
+    conf.get("osg_options", osgOptionString()); // back compat
 }
 
 //.................................................................
@@ -345,13 +346,14 @@ Layer::init()
 
     // Copy the layer options name into the Object name.
     // This happens here AND in open.
-    if (options().name().isSet())
+    if (osg::Object::getName().empty())
     {
         osg::Object::setName(options().name().get());
     }
-    else
+
+    if (osg::Object::getName().empty())
     {
-        osg::Object::setName("Unnamed " + std::string(className()));
+        osg::Object::setName("[" + std::string(className()) + "]");
     }
 
     _mutex = new Threading::ReadWriteMutex(options().name().isSet() ? options().name().get() : "Unnamed Layer(OE)");
@@ -426,13 +428,13 @@ Layer::openImplementation()
         CacheBin* bin = _cacheSettings->getCache()->addBin(_runtimeCacheId);
         if (bin)
         {
-            OE_INFO << LC << "Cache bin is [" << _runtimeCacheId << "]\n";
+            OE_INFO << LC << "Cache bin is [" << _runtimeCacheId << "]" << std::endl;
             _cacheSettings->setCacheBin(bin);
         }
         else
         {
             // failed to create the bin, so fall back on no cache mode.
-            OE_WARN << LC << "Failed to open a cache bin [" << _runtimeCacheId << "], disabling caching\n";
+            OE_WARN << LC << "Failed to open a cache bin [" << _runtimeCacheId << "], disabling caching" << std::endl;
             _cacheSettings->cachePolicy() = CachePolicy::NO_CACHE;
         }
     }
@@ -484,7 +486,10 @@ Layer::invoke_prepareForRendering(TerrainEngine* engine)
 
     // deprecation path; call this in case some older layer is still
     // implementing it.
-    setTerrainResources(engine->getResources());
+    if (engine)
+    {
+        setTerrainResources(engine->getResources());
+    }
 }
 
 void

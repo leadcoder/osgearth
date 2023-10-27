@@ -12,7 +12,6 @@ $GLSL_DEFAULT_PRECISION_FLOAT
 // include files
 #pragma import_defines(OE_GROUND_COLOR_SAMPLER)
 #pragma import_defines(OE_USE_COLOR_SPLAT)
-//#pragma include Splat.Color.common.glsl
 
 // Instance data from compute shader
 struct RenderData // vec4 aligned please
@@ -70,8 +69,8 @@ out vec2 oe_GroundCover_texCoord;
 
 
 #ifdef OE_GROUND_COLOR_SAMPLER
-vec4 oe_getGroundColor();
-vec4 oe_getGrassColorAtDistance(float distance);
+vec4 oe_getGroundColor(in vec4 tex_coord);
+vec4 oe_getGrassColorAtDistance(in vec4 tex_coord, float distance);
 #endif
 
 
@@ -119,9 +118,9 @@ void oe_Grass_VS(inout vec4 vertex)
     oe_vertex_dist = -vertex.z * oe_Camera.z;
 #ifdef OE_GROUND_COLOR_SAMPLER
 #ifdef OE_USE_COLOR_SPLAT
-    vec4 ground_color = oe_getGrassColorAtDistance(oe_vertex_dist);
+    vec4 ground_color = oe_getGrassColorAtDistance(oe_layer_tilec,oe_vertex_dist);
 #else
-    vec4 ground_color = oe_getGroundColor();
+    vec4 ground_color = oe_getGroundColor(oe_layer_tilec);
 #endif
     float div = ground_color.r + ground_color.g + ground_color.b;
     vec3 norm_color = ground_color.rgb/div;

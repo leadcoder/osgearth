@@ -28,8 +28,8 @@
 
 #ifdef OE_GROUND_COLOR_SAMPLER
   uniform float oe_GroundCover_colorLOD = 0.0;
-  vec4 oe_getGroundColorLod(float lod);
-  vec4 oe_getTreeColorAtDistance(float distance);
+  vec4 oe_getGroundColorLod(in vec4 tex_coord,float lod);
+  vec4 oe_getTreeColorAtDistance(in vec4 tex_coord,float distance);
 #endif
 
 // Instance data from compute shader
@@ -229,11 +229,24 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
             float blend = 0.25 + (noise[NOISE_RANDOM_2] * 0.25);
 
+            //vp_Normal =
+            //   which == 0 || which == 2 ? faceNormalVector :
+            //    faceNormalVector;
+            
             vp_Normal =
-                which == 0 || which == 2 ? mix(-tangentVector, faceNormalVector, blend) :
+               which == 0 || which == 2 ? mix(-tangentVector, faceNormalVector, blend) :
                 mix(tangentVector, faceNormalVector, blend);
-           
-            vp_Normal = normalize(normalize(heightVector)*0.5 + vp_Normal);
+             vp_Normal = normalize(normalize(heightVector)*0.5 + vp_Normal);
+             //vp_Normal =
+             //   which == 0 ? -tangentVector :
+             //   which == 1 ? tangentVector :
+             //   which == 2 ? -tangentVector + heightVector :
+             //   tangentVector + heightVector;
+
+            //vp_Normal.z = 0.05 * length(heightVector);
+            vp_Normal = normalize(vp_Normal);
+            //vp_Normal = normalize(heightVector);
+
             oe_GroundCover_atlasIndex = float(render[gl_InstanceID].sideIndex);
         }
     }
@@ -271,9 +284,9 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #ifdef OE_GROUND_COLOR_SAMPLER
 #ifdef OE_USE_COLOR_SPLAT
-    vec4 ground_color = oe_getTreeColorAtDistance(oe_vertex_dist);
+    vec4 ground_color = oe_getTreeColorAtDistance(oe_layer_tilec, oe_vertex_dist);
 #else
-    vec4 ground_color = oe_getGroundColorLod(oe_GroundCover_colorLOD);
+    vec4 ground_color = oe_getGroundColorLod(oe_layer_tilec,oe_GroundCover_colorLOD);
 #endif
     vp_Color.rgb = ground_color.rgb;
 #endif
@@ -335,9 +348,9 @@ uniform float oe_GroundCover_color_scale = 2.2;
 #ifdef OE_USE_PBR
 // fragment stage global PBR params
 uniform float oe_GroundCover_brightness = 1; 
-uniform float oe_GroundCover_contrast = 0.7; 
+uniform float oe_GroundCover_contrast = 1; 
 uniform float oe_GroundCover_roughness = 0;
-uniform float oe_GroundCover_ao = 0;
+uniform float oe_GroundCover_ao = 1;
 uniform float oe_GroundCover_metal = 0;
 
 struct OE_PBR {
@@ -376,7 +389,7 @@ void oe_GroundCover_FS(inout vec4 color)
     vec4 noise_moving = textureLod(oe_GroundCover_noiseTex, oe_layer_tilec.st + osg_FrameTime * rate, 0);
     tc.x += 0.05 * windEffect * remap(noise_moving[2], -1.0, 1.0);
 #endif
-
+#if 1
     // modulate the texture
     vec4 bb_color = texture(oe_GroundCover_billboardTex, vec3(tc, oe_GroundCover_atlasIndex));
     vec3 bb_mono = vec3(bb_color.r*0.2126 + bb_color.g*0.7152 + bb_color.b*0.0722);
@@ -390,6 +403,8 @@ void oe_GroundCover_FS(inout vec4 color)
     oe_pbr.ao = oe_GroundCover_ao;
     oe_pbr.metal = oe_GroundCover_metal;
 #endif
+#endif
+    
 
 #ifdef OE_IS_SHADOW_CAMERA
     if (color.a < oe_GroundCover_maxAlpha)

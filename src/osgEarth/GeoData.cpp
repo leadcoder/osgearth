@@ -360,10 +360,12 @@ GeoPoint::transformResolution(const Distance& resolution, const Units& outUnits)
 bool
 GeoPoint::makeGeographic()
 {
-    if ( !isValid() ) return false;
-    if ( !_srs->isGeographic() )
-        return _srs->transform( _p, _srs->getGeographicSRS(), _p);
-    return true;
+    if (!_srs)
+        return false;
+    if (_srs->isGeographic())
+        return true;
+    else
+        return transformInPlace(_srs->getGeographicSRS());
 }
 
 bool
@@ -867,16 +869,20 @@ double
 GeoExtent::width(const Units& units) const
 {
     if (!isValid())
+    {
         return 0.0;
-    else if (getSRS()->isProjected()) {
+    }
+    else if (getSRS()->isProjected()) 
+    {
         return Units::convert(getSRS()->getUnits(), units, width());
     }
-    else {
-        Distance d(width(), getSRS()->getUnits());
-        double m_per_deg = 2.0 * getSRS()->getEllipsoid().getRadiusEquator() * osg::PI / 360.0;
-        double d0 = m_per_deg * fabs(cos(yMin())) * width();
-        double d1 = m_per_deg * fabs(cos(yMax())) * height();
-        return Distance(std::max(d0, d1), Units::METERS).as(units);
+    else
+    {
+        std::vector<osg::Vec3d> points = { { xMin(), yMin(), 0 }, { xMax(), yMax(), 0 } };
+        double d = GeoMath::distance(points, getSRS()->getEllipsoid().getRadiusEquator());
+        double h = height(Units::METERS);
+        double m = sqrt(d * d - h * h);
+        return Units::convert(Units::METERS, units, m);
     }
 }
 
@@ -916,12 +922,6 @@ bool
 GeoExtent::operator != ( const GeoExtent& rhs ) const
 {
     return !( *this == rhs );
-}
-
-bool
-GeoExtent::isValid() const
-{
-    return _srs.valid() && _width >= 0.0 && _height >= 0.0;
 }
 
 bool
@@ -1368,8 +1368,6 @@ GeoExtent::intersectionSameSRS(const GeoExtent& rhs) const
 
     if ( !intersects(rhs) )
     {
-        OE_DEBUG << "Extents " << toString() << " and " << rhs.toString() << " do not intersect."
-            << std::endl;
         return GeoExtent::INVALID;
     }
 
@@ -1392,56 +1390,52 @@ GeoExtent::intersectionSameSRS(const GeoExtent& rhs) const
             // Sort the four X coordinates, remembering whether each one is west or east edge:
             double x[4];
             bool iswest[4];
-            x[0] = west(), x[1] = east(), x[2] = rhs.west(), x[3] = rhs.east();
+            // use min/max here to prevent auto-wraparound
+            x[0] = xMin(), x[1] = xMax(), x[2] = rhs.xMin(), x[3] = rhs.xMax();
             iswest[0] = true, iswest[1] = false, iswest[2] = true, iswest[3] = false;
             sort4(x, iswest);
 
             // find the western-most west coord:
-            int iw = -1;
-            for (int i=0; i<4 && iw<0; ++i)
+            int i_west = -1;
+            for (int i=0; i<4 && i_west <0; ++i)
             {
                 if (iswest[i])
-                    iw = i;
+                    i_west = i;
             }
 
             // iterate from there, finding the LAST west coord and stopping on the 
             // FIRST east coord found.
-            int q = iw+4;
-            int ie = -1;
-            for (int i = iw; i < q && ie < 0; ++i)
+            int q = i_west + 4;
+            int i_east = -1;
+            for (int i = i_west; i < q && i_east < 0; ++i)
             {
                 int j = i;
                 if (j >= 4) j-=4;
                 if (iswest[j])
-                    iw = j; // found a better west coord; remember it.
+                    i_west = j; // found a better west coord; remember it.
                 else
-                    ie = j; // found the western-most east coord; done.
+                    i_east = j; // found the western-most east coord; done.
             }
 
-            result._west = x[iw];
-            if (ie >= iw)
-                result._width = x[ie] - x[iw];
+            result._west = x[i_west];
+
+            if (i_east >= i_west)
+                result._width = x[i_east] - x[i_west];
             else
-                result._width = (180.0 - x[iw]) + (x[ie] - (-180.0)); // crosses the antimeridian
+                result._width = (180.0 - x[i_west]) + (x[i_east] - (-180.0)); // crosses the antimeridian
         }
     }
     else
     {
         // projected mode is simple
-        result._west = osg::maximum(west(), rhs.west());
-        double eastTemp = osg::minimum(east(), rhs.east());
-        result._width = eastTemp - result._west;
+        result._west = std::max(xMin(), rhs.xMin());
+        result._width = std::min(xMax(), rhs.xMax()) - result._west;
     }
 
-    result._south = osg::maximum(south(), rhs.south());
-    double northTemp = osg::minimum(north(), rhs.north());
-    result._height = northTemp - result._south;
+    result._south = std::max(south(), rhs.south());
+    result._height = std::min(north(), rhs.north()) - result._south;
 
     result.clamp();
-
-    OE_DEBUG << "Intersection of " << this->toString() << " and " << rhs.toString() << " is: " 
-        << result.toString()
-        << std::endl;
 
     return result;
 }
@@ -1833,6 +1827,9 @@ GeoImage::GeoImage(Threading::Future<osg::ref_ptr<osg::Image>> fimage, const Geo
 bool
 GeoImage::valid() const 
 {
+    if (_status.isError())
+        return false;
+
     if (!_extent.isValid())
         return false;
 
@@ -1903,8 +1900,6 @@ GeoImage::crop( const GeoExtent& extent, bool exact, unsigned int width, unsigne
         //If we want an exact crop or they want to specify the output size of the image, use GDAL
         if (exact || width != 0 || height != 0 )
         {
-            OE_DEBUG << "[osgEarth::GeoImage::crop] Performing exact crop" << std::endl;
-
             //Suggest an output image size
             if (width == 0 || height == 0)
             {
@@ -1913,10 +1908,6 @@ GeoImage::crop( const GeoExtent& extent, bool exact, unsigned int width, unsigne
 
                 width =  osg::maximum(1u, (unsigned int)(extent.width() / xRes));
                 height = osg::maximum(1u, (unsigned int)(extent.height() / yRes));
-                //width =  osg::maximum(1u, (unsigned int)((extent.xMax() - extent.xMin()) / xRes));
-                //height = osg::maximum(1u, (unsigned int)((extent.yMax() - extent.yMin()) / yRes));
-
-                OE_DEBUG << "[osgEarth::GeoImage::crop] Computed output image size " << width << "x" << height << std::endl;
             }
 
             //Note:  Passing in the current SRS simply forces GDAL to not do any warping
@@ -1924,7 +1915,6 @@ GeoImage::crop( const GeoExtent& extent, bool exact, unsigned int width, unsigne
         }
         else
         {
-            OE_DEBUG << "[osgEarth::GeoImage::crop] Performing non-exact crop " << std::endl;
             //If an exact crop is not desired, we can use the faster image cropping code that does no resampling.
             double destXMin = extent.xMin();
             double destYMin = extent.yMin();
@@ -2180,8 +2170,7 @@ GeoImage::getTrackingToken() const
 bool
 GeoImage::read(
     GeoImage::pixel_type& output,
-    const GeoPoint& p,
-    const RasterInterpolation& interp) const
+    const GeoPoint& p) const
 {
     if (!p.isValid() || !valid())
     {
@@ -2191,7 +2180,7 @@ GeoImage::read(
     // transform if necessary
     if (!p.getSRS()->isHorizEquivalentTo(getSRS()))
     {
-        return read(output, p.transform(getSRS()), interp);
+        return read(output, p.transform(getSRS()));
     }
 
     double u = (p.x() - _extent.xMin()) / _extent.width();
@@ -2295,7 +2284,7 @@ GeoHeightField::valid() const
 }
 
 float
-GeoHeightField::getElevation(double x, double y) const
+GeoHeightField::getElevation(double x, double y, RasterInterpolation interp) const
 {
     if (!valid())
         return NO_DATA_VALUE;
@@ -2305,7 +2294,7 @@ GeoHeightField::getElevation(double x, double y) const
         x, y,
         _extent.xMin(), _extent.yMin(),
         _heightField->getXInterval(), _heightField->getYInterval(),
-        INTERP_BILINEAR);
+        interp);
 }
 
 bool

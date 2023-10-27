@@ -121,12 +121,12 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
                 AnnotationNode* modelNode   = 0L;
 
                 // one coordinate? It's a place marker or a label.
-                if ( (model || icon || text) && geom->getTotalPointCount() == 1 )
+                if (geom->getTotalPointCount() == 1)
                 {
                     // if there's a model, render that - models do NOT get labels.
                     if ( model )
                     {
-                        ModelNode* node = new ModelNode( cx._mapNode, style, cx._dbOptions.get() );
+                        ModelNode* node = new ModelNode(nullptr, style, cx._dbOptions.get() );
                         node->setPosition( position );
 
                         // model scale:
@@ -159,7 +159,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
                     // is there an icon?
                     if ( icon )
                     {
-                        PlaceNode* placeNode = new PlaceNode( position );
+                        PlaceNode* placeNode = new PlaceNode(position);
                         placeNode->setStyle(style, cx._dbOptions.get());
                         iconNode = placeNode;
                     }
@@ -167,7 +167,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
                     else if ( !model && text && !name.empty() )
                     {
                         // note: models do not get labels.
-                        iconNode = new LabelNode();
+                        iconNode = new LabelNode(position);
                         iconNode->setStyle(style);
                     }
                 }
@@ -186,7 +186,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
 
                     Feature* feature = new Feature(geom, cx._srs.get(), style);
                     featureNode = new FeatureNode(feature );
-                    featureNode->setMapNode( cx._mapNode );
+                    //featureNode->setMapNode( cx._mapNode );
                 }
 
                 if ( iconNode )
@@ -250,7 +250,9 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
 
                         // If this feature node is map-clamped, we most likely need a depth-offset
                         // shader to prevent z-fighting with the terrain.
-                        if (alt && alt->clamping() == alt->CLAMP_TO_TERRAIN && alt->technique() == alt->TECHNIQUE_MAP)
+                        if (alt && 
+                            alt->clamping() == alt->CLAMP_TO_TERRAIN && 
+                            (alt->technique() == alt->TECHNIQUE_MAP || alt->technique() == alt->TECHNIQUE_SCENE))
                         {
                             DepthOffsetGroup* g = new DepthOffsetGroup();
                             g->addChild( featureNode );

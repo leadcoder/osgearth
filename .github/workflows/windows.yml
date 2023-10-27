@@ -6,7 +6,7 @@ env:
   VCPKG_BINARY_SOURCES : 'clear;nuget,GitHub,readwrite'
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
-  VCPKG_VERSION: 'bb584d35bba70ca9f1ecaf09ad96ce5d1ff946f8'
+  VCPKG_VERSION: 'master'
 
 jobs:
 
@@ -23,7 +23,7 @@ jobs:
             VCPKG_WORKSPACE: 'c:/vcpkg_own'
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         submodules: recursive
 
@@ -43,14 +43,17 @@ jobs:
     - name: 'Setup NuGet Credentials'
       working-directory: ${{ matrix.VCPKG_WORKSPACE }}
       shell: 'bash'
-      run: >
-        ${{ matrix.mono }} `./vcpkg/vcpkg fetch nuget | tail -n 1`
-        sources add
-        -source "https://nuget.pkg.github.com/gwaldron/index.json"
-        -storepasswordincleartext
-        -name "GitHub"
-        -username "gwaldron"
-        -password "${{ secrets.GITHUB_TOKEN }}"
+      run: |
+        ${{ matrix.mono }} `./vcpkg/vcpkg fetch nuget | tail -n 1` \
+        sources add \
+        -source "https://nuget.pkg.github.com/${{ github.actor }}/index.json" \
+        -storepasswordincleartext \
+        -name "GitHub" \
+        -username "${{ github.actor }}" \
+        -password "${{ secrets.GITHUB_TOKEN }}" 
+        ${{ matrix.mono }} `./vcpkg/vcpkg fetch nuget | tail -n 1` \
+          setapikey "${{ secrets.GITHUB_TOKEN }}" \
+          -source "https://nuget.pkg.github.com/${{ github.actor }}/index.json"
 
     - name: Create Build Environment
       run: |
@@ -59,10 +62,12 @@ jobs:
     - name: Configure CMake
       shell: bash
       working-directory: ${{ runner.workspace }}/build
-      run: cmake $GITHUB_WORKSPACE -DWIN32_USE_MP=ON -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=ON -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE=${{ matrix.VCPKG_WORKSPACE }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+      # Add the following for vcpkg install debugging: -DVCPKG_INSTALL_OPTIONS=--debug  
+      run: |
+        cmake $GITHUB_WORKSPACE -DWIN32_USE_MP=ON -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=OFF -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE=${{ matrix.VCPKG_WORKSPACE }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_MANIFEST_DIR=$GITHUB_WORKSPACE/vcpkg
 
     - name: 'Upload cmake configure log artifact'
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       if: ${{ failure() }}
       with:
         name: cmake-log

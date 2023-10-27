@@ -1,5 +1,33 @@
 # Release Notes
 
+## Version 3.5 (October 2023)
+
+Release Highlights:
+
+* New `osgEarthCesium` nodekit using the cesium-native SDK for 3D-Tiles integration
+* Upgrades to the `TerrainConstraintLayer` for better meshing, performance, and support for 3D model constraints
+* New `TerrainMeshLayer` for "bring your own" terrain surface meshing
+* Integration of [spdlog](https://github.com/gabime/spdlog) logging SDK (optional)
+* Various updates to the `osgearth_imgui` panels
+* Updated [Triton](https://sundog-soft.com/features/ocean-and-water-rendering-with-triton/) and [Silverlining](https://sundog-soft.com/features/real-time-3d-clouds/) shader sets
+
+## Version 3.4 (May 2023)
+
+Version 3.4 is an incremental bugfix and maintenance release.
+
+Release Highlights:
+
+* Require OSG_GL3_AVAILABLE in OpenSceneGraph build
+* Improved vcpkg build support
+* Updates to the GLTF loader
+* New Draco plugin
+* Stroke outlines for FeatureImageLayer
+* ImGui tool updates
+* Performance updates to the ElevationPool
+* NVIDIA-specific GL extensions (NVGL) for terrain rendering
+* Improvements to sky lighting model
+* KML loader bugfixes
+
 ## Version 3.3 (April 2022)
 
 Version 3.3 is an incremental bugfix and performance release.

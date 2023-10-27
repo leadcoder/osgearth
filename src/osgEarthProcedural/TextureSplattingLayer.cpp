@@ -29,9 +29,9 @@
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/Shaders>
 #include <osgEarth/Capabilities>
+#include <osgEarth/Registry>
 
 #include <osgUtil/CullVisitor>
-#include <osg/BlendFunc>
 #include <osg/Drawable>
 #include <osgDB/Registry>
 #include <osgDB/ReadFile>
@@ -43,7 +43,6 @@
 #define LC LC0 << getName() << ": "
 
 #define TEXTURE_ARENA_BINDING_POINT 5
-#define RENDERPARAMS_BINDING_POINT  6
 
 using namespace osgEarth::Procedural;
 
@@ -58,6 +57,10 @@ TextureSplattingLayer::Options::getConfig() const
     Config conf = VisibleLayer::Options::getConfig();
     conf.set("num_levels", numLevels());
     conf.set("use_hex_tiler", useHexTiler());
+    conf.set("normalmap_power", normalMapPower());
+    conf.set("lifemap_threshold", lifeMapMaskThreshold());
+    conf.set("displacement_depth", displacementDepth());
+    conf.set("max_texture_size", maxTextureSize());
     return conf;
 }
 
@@ -65,9 +68,18 @@ void
 TextureSplattingLayer::Options::fromConfig(const Config& conf)
 {
     numLevels().setDefault(1);
-    useHexTiler().setDefault(false);
+    useHexTiler().setDefault(true);
+    normalMapPower().setDefault(1.0f);
+    lifeMapMaskThreshold().setDefault(0.0f);
+    displacementDepth().setDefault(0.1f);
+    maxTextureSize().setDefault(INT_MAX);
+
     conf.get("num_levels", numLevels());
     conf.get("use_hex_tiler", useHexTiler());
+    conf.get("normalmap_power", normalMapPower());
+    conf.get("lifemap_threshold", lifeMapMaskThreshold());
+    conf.get("displacement_depth", displacementDepth());
+    conf.get("max_texture_size", maxTextureSize());
 }
 
 //........................................................................
@@ -113,6 +125,8 @@ TextureSplattingLayer::addedToMap(const Map* map)
             options().lifeMapLayer().setLayer(layer);
     }
 
+    _mapProfile = map->getProfile();
+
     buildStateSets();
 }
 
@@ -133,6 +147,14 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
     if (Capabilities::get().supportsInt64() == false)
     {
         setStatus(Status::ResourceUnavailable, "GLSL int64 support required but not available");
+        OE_WARN << LC << getStatus().message() << std::endl;
+        return;
+    }
+
+    if (Capabilities::get().getGLSLVersion() < 4.6f || Capabilities::get().supportsNVGL() == false)
+    {
+        setStatus(Status::ResourceUnavailable, "GLSL 4.6+ required but not available");
+        OE_WARN << LC << getStatus().message() << std::endl;
         return;
     }
 
@@ -165,15 +187,21 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
             const AssetCatalog& assets = biome_cat->getAssets();
 
             std::vector<GeoExtent> ex;
-            ex.push_back(engine->getMap()->getProfile()->calculateExtent(14, 0, 0));
-            ex.push_back(engine->getMap()->getProfile()->calculateExtent(19, 0, 0));
+            ex.push_back(_mapProfile->calculateExtent(14, 0, 0));
+            ex.push_back(_mapProfile->calculateExtent(19, 0, 0));
 
             std::vector<double> tile_height_m;
             tile_height_m.push_back(ex[0].height(Units::METERS));
             tile_height_m.push_back(ex[1].height(Units::METERS));
 
+            osg::ref_ptr<const osgDB::Options> readOptions = getReadOptions();
+
+            unsigned maxTextureSize = std::min(
+                (int)options().maxTextureSize().get(),
+                Registry::instance()->getMaxTextureSize());
+
             // Function to load all material textures.
-            auto loadMaterials = [assets, tile_height_m](Cancelable* c) -> Materials::Ptr
+            auto loadMaterials = [assets, tile_height_m, readOptions, maxTextureSize](Cancelable* c) -> Materials::Ptr
             {
                 Materials::Ptr result = Materials::Ptr(new Materials);
 
@@ -181,6 +209,7 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
                 result->_arena = new TextureArena();
                 result->_arena->setName("TextureSplattingLayer");
                 result->_arena->setBindingPoint(TEXTURE_ARENA_BINDING_POINT);
+                result->_arena->setMaxTextureSize(maxTextureSize);
 
                 // contains metadata about the textures
                 result->_textureScales = new osg::Uniform();
@@ -192,13 +221,16 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
                 int ptr0 = 0;
                 int ptr1 = assets.getMaterials().size();
 
-                for(auto& material : assets.getMaterials())
+                for (auto& material : assets.getMaterials())
                 {
                     auto t0 = std::chrono::steady_clock::now();
 
                     result->_assets.push_back(&material);
 
-                    RGBH_NNRA_Loader::load(material.uri()->full(), result->_arena.get());
+                    RGBH_NNRA_Loader::load(
+                        material.uri()->full(),
+                        result->_arena.get(),
+                        readOptions.get());
 
                     auto t1 = std::chrono::steady_clock::now();
 
@@ -262,6 +294,7 @@ TextureSplattingLayer::buildStateSets()
 
         // Install the texture arena as a state attribute:
         ss->setAttribute(_materials->_arena);
+        _materials->_arena->setMaxTextureSize(options().maxTextureSize().get());
 
         // Install the uniform holding constant texture scales
         ss->addUniform(_materials->_textureScales);
@@ -281,8 +314,8 @@ TextureSplattingLayer::buildStateSets()
             getLifeMapLayer()->getSharedTextureMatrixUniformName());
 
         terrain_shaders.load(
-            vp, 
-            terrain_shaders.TextureSplatting, 
+            vp,
+            terrain_shaders.TextureSplatting,
             getReadOptions());
 
         // General purpose define indicating that this layer sets PBR values.
@@ -301,21 +334,109 @@ TextureSplattingLayer::buildStateSets()
             "OE_SPLAT_NUM_LEVELS",
             std::to_string(clamp(options().numLevels().get(), 1, 2)));
 
-        if (options().useHexTiler() == true)
+        setUseHexTiler(options().useHexTiler().get());
+        setNormalMapPower(options().normalMapPower().get());
+        setLifeMapMaskThreshold(options().lifeMapMaskThreshold().get());
+        setDisplacementDepth(options().displacementDepth().get());
+    }
+}
+
+void
+TextureSplattingLayer::setUseHexTiler(bool value)
+{
+    options().useHexTiler() = value;
+    auto ss = getOrCreateStateSet();
+    ss->removeDefine("OE_SPLAT_HEX_TILER");
+    ss->setDefine("OE_SPLAT_HEX_TILER", value ? "1" : "0");
+}
+
+bool
+TextureSplattingLayer::getUseHexTiler() const
+{
+    return options().useHexTiler().get();
+}
+
+void
+TextureSplattingLayer::setNormalMapPower(float value)
+{
+    if (options().normalMapPower().get() != value)
+        options().normalMapPower() = value;
+
+    auto ss = getOrCreateStateSet();
+    ss->getOrCreateUniform("oe_normal_power", osg::Uniform::FLOAT)->set(value);
+}
+
+float
+TextureSplattingLayer::getNormalMapPower() const
+{
+    return options().normalMapPower().get();
+}
+
+void
+TextureSplattingLayer::setLifeMapMaskThreshold(float value)
+{
+    if (getLifeMapMaskThreshold() != value)
+        options().lifeMapMaskThreshold() = value;
+
+    auto ss = getOrCreateStateSet();
+    ss->getOrCreateUniform("oe_mask_alpha", osg::Uniform::FLOAT)->set(value);
+}
+
+float
+TextureSplattingLayer::getLifeMapMaskThreshold() const
+{
+    return options().lifeMapMaskThreshold().get();
+}
+
+void
+TextureSplattingLayer::setDisplacementDepth(float value)
+{
+    if (getDisplacementDepth() != value)
+        options().displacementDepth() = value;
+
+    auto ss = getOrCreateStateSet();
+    ss->getOrCreateUniform("oe_displacement_depth", osg::Uniform::FLOAT)->set(value);
+}
+
+float
+TextureSplattingLayer::getDisplacementDepth() const
+{
+    return options().displacementDepth().get();
+}
+
+void
+TextureSplattingLayer::setMaxTextureSize(unsigned value)
+{
+    if (options().maxTextureSize().get() != value)
+    {
+        options().maxTextureSize() = value;
+        if (_materials && _materials->_arena)
         {
-            ss->setDefine("OE_SPLAT_HEX_TILER", "1");
+            _materials->_arena->setMaxTextureSize(value);
         }
     }
+}
+
+unsigned
+TextureSplattingLayer::getMaxTextureSize() const
+{
+    return options().maxTextureSize().value();
 }
 
 void
 TextureSplattingLayer::resizeGLObjectBuffers(unsigned maxSize)
 {
     VisibleLayer::resizeGLObjectBuffers(maxSize);
+
+    if (_materials && _materials->_arena.valid())
+        _materials->_arena->resizeGLObjectBuffers(maxSize);
 }
 
 void
 TextureSplattingLayer::releaseGLObjects(osg::State* state) const
 {
     VisibleLayer::releaseGLObjects(state);
+
+    if (_materials && _materials->_arena.valid())
+        _materials->_arena->releaseGLObjects(state);
 }

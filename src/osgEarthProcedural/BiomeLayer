@@ -43,7 +43,7 @@ namespace osgEarth
             OE_OPTION(float, lush);
             OE_OPTION(float, rugged);
             OE_OPTION(std::string, material);
-            OE_OPTION(std::string, soilType);
+            OE_OPTION(std::string, soiltype);
             OE_PROPERTY(std::vector<std::string>, traits);
 
             LandCoverSample() { }
@@ -56,7 +56,7 @@ namespace osgEarth
                 conf.get("lush", lush());
                 conf.get("rugged", rugged());
                 conf.get("material", material());
-                conf.get("soiltype", soilType());
+                conf.get("soiltype", soiltype());
             }
 
             bool valid() const {
@@ -67,7 +67,7 @@ namespace osgEarth
                     lush().isSet() ||
                     rugged().isSet() ||
                     material().isSet() ||
-                    soilType().isSet();
+                    soiltype().isSet();
             }
 
             bool operator < (const LandCoverSample& rhs) const
@@ -78,7 +78,7 @@ namespace osgEarth
                 OE_OPTION_LESS(lush, rhs.lush);
                 OE_OPTION_LESS(rugged, rhs.rugged);
                 OE_OPTION_LESS(material, rhs.material);
-                OE_OPTION_LESS(soilType, rhs.soilType);
+                OE_OPTION_LESS(soiltype, rhs.soiltype);
                 if (traits() < rhs.traits()) return true;
                 if (traits() > rhs.traits()) return false;
                 return false;
@@ -106,7 +106,7 @@ namespace osgEarth
 
             bool operator < (const BiomeSample& rhs) const
             {
-                OE_OPTION_LESS(biomeid, rhs.biomeid);            
+                OE_OPTION_LESS(biomeid, rhs.biomeid);
                 return false;
             }
 
@@ -115,20 +115,20 @@ namespace osgEarth
 
 
         /**
-         * BiomeLayer creates rasters that encode Biome indices. 
+         * BiomeLayer creates rasters that encode Biome indices.
          *
          * Each Biome has an associated integer index, corresponding to the order
          * in which it appears in the biome catalog. (NB: This index is totally
          * transparent to the user, and has no relationship to the Biome ID.)
-         * For a given TileKey, this layer will create a raster for which each 
+         * For a given TileKey, this layer will create a raster for which each
          * pixel holds an index corresponding to a specific Biome.
          *
          * At runtime this object will scan each raster, determine which Biomes
          * are currently visible, and tell the BiomeManager to load the corresponding
          * assets.
          */
-        class OSGEARTHPROCEDURAL_EXPORT BiomeLayer : 
-            public ImageLayer, 
+        class OSGEARTHPROCEDURAL_EXPORT BiomeLayer :
+            public ImageLayer,
             public osg::Observer
         {
         public:
@@ -139,7 +139,8 @@ namespace osgEarth
                 OE_OPTION_LAYER(CoverageLayer, landCoverLayer);
                 OE_OPTION_LAYER(CoverageLayer, biomeBaseLayer);
                 OE_OPTION_SHAREDPTR(BiomeCatalog, biomeCatalog);
-                OE_OPTION(float, blendRadius);
+                OE_OPTION(Distance, blendRadius);
+                OE_OPTION(float, blendPercentage);
                 virtual Config getConfig() const;
             private:
                 void fromConfig(const Config& conf);
@@ -147,6 +148,16 @@ namespace osgEarth
 
         public:
             META_Layer(osgEarthProcedural, BiomeLayer, Options, ImageLayer, Biomes);
+
+            //! Radius around which to randomly permute biome selection
+            const Distance& getBlendRadius() const;
+            void setBlendRadius(const Distance& value);
+
+            //! Percentage (of tile size) by which to blend biome data
+            //! for a natural transitions betwen adjacent biomes.
+            //! [0..1] default is 0.1
+            void setBlendPercentage(float value);
+            float getBlendPercentage() const;
 
             //! The catalog holding all biome information
             std::shared_ptr<const BiomeCatalog> getBiomeCatalog() const;
@@ -176,25 +187,29 @@ namespace osgEarth
 
         public: // Layer
 
-            virtual void addedToMap(const Map*) override;
+            void addedToMap(const Map*) override;
 
-            virtual void removedFromMap(const Map*) override;
+            void removedFromMap(const Map*) override;
 
         protected: // Layer
 
-            virtual void init() override;
+            void init() override;
 
-            virtual Status openImplementation() override;
+            Status openImplementation() override;
 
-            virtual Status closeImplementation() override;
+            Status closeImplementation() override;
+
+            void resizeGLObjectBuffers(unsigned) override;
+
+            void releaseGLObjects(osg::State*) const override;
 
         protected: // ImageLayer
 
-            virtual GeoImage createImageImplementation(
-                const TileKey& key, 
+            GeoImage createImageImplementation(
+                const TileKey& key,
                 ProgressCallback* progress) const override;
 
-            virtual void postCreateImageImplementation(
+            void postCreateImageImplementation(
                 GeoImage& createdImage,
                 const TileKey& key,
                 ProgressCallback* progress) const override;

@@ -101,9 +101,6 @@ FeatureModelLayer::init()
     // TODO: consider removing this in osgEarth 3.3 since it prevents the "render-order"
     // symbol from really working properly
     getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-
-    // activate opacity support
-    installDefaultOpacityShader();
 }
 
 void FeatureModelLayer::dirty()
@@ -114,7 +111,12 @@ void FeatureModelLayer::dirty()
     // create the scene graph
     if (isOpen())
     {
-        create();
+        if (getFeatureSource())
+        {
+            // tell the source to recompute its profile, etc.
+            getFeatureSource()->dirty();
+            create();
+        }
     }
 }
 
@@ -235,6 +237,19 @@ FeatureModelLayer::getExtent() const
     return fs && fs->getFeatureProfile() ?
         fs->getFeatureProfile()->getExtent() :
         s_invalid;
+}
+
+Layer::Stats
+FeatureModelLayer::reportStats() const
+{
+    auto fmg = findTopMostNodeOfType<FeatureModelGraph>(_root.get());
+    if (fmg)
+    {
+        Layer::Stats result;
+        result.push_back({ "Resident tiles", std::to_string((unsigned)fmg->loadedTiles) });
+        return result;
+    }
+    else return {};
 }
 
 void

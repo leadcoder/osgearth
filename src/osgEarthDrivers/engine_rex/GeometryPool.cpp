@@ -17,14 +17,10 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include "GeometryPool"
-#include "MeshEditor"
-#include <osgEarth/Locators>
-#include <osgEarth/NodeUtils>
-#include <osgEarth/TopologyGraph>
 #include <osgEarth/Metrics>
-#include <osgEarth/Registry>
-#include <osg/Point>
-#include <osgUtil/MeshOptimizers>
+#include <osgEarth/NodeUtils>
+#include <osgEarth/TerrainMeshLayer>
+#include <osgEarth/TerrainConstraintLayer>
 #include <cstdlib> // for getenv
 
 using namespace osgEarth;
@@ -59,27 +55,61 @@ GeometryPool::getPooledGeometry(
     const TileKey& tileKey,
     unsigned tileSize,
     const Map* map,
-    const TerrainOptions& options,
+    const TerrainOptionsAPI& options,
     osg::ref_ptr<SharedGeometry>& out,
-    Cancelable* progress)
+    Cancelable* cancelable)
 {
-    // convert to a unique-geometry key:
-    GeometryKey geomKey;
-    createKeyForTileKey( tileKey, tileSize, geomKey );
+    TileMesher mesher;
+    mesher.setTerrainOptions(options);
 
     // make our globally shared EBO if we need it
     {
         Threading::ScopedMutexLock lock(_geometryMapMutex);
         if (!_defaultPrimSet.valid())
         {
-            _defaultPrimSet = createPrimitiveSet(
-                tileSize,
-                options.heightFieldSkirtRatio().get(),
-                options.gpuTessellation().get());
+            // convert the mesher's indices to a SharedDrawElements
+            auto indices = mesher.getOrCreateStandardIndices();
+
+            GLenum mode = options.getGPUTessellation() == true ? GL_PATCHES : GL_TRIANGLES;
+
+            _defaultPrimSet = new SharedDrawElements(mode);
+
+            for (unsigned i = 0; i < indices->getNumIndices(); ++i)
+                _defaultPrimSet->addElement(indices->getElement(i));
+
+            _defaultPrimSet->setElementBufferObject(new osg::ElementBufferObject());
         }
     }
 
-    MeshEditor meshEditor(tileKey, tileSize, map, nullptr);
+    osg::ref_ptr<ProgressCallback> progress = new ProgressCallback(cancelable);
+
+    // First check the map for a terrain mesh layer. If one exists
+    // simply pull the final tile mesh from there.
+    // TODO: support adding additional constraints to the mesh layer
+    // result? Or should the mesh layer itself worry aboug that?
+    if (map)
+    {
+        auto meshlayer = map->getLayer<TerrainMeshLayer>();
+        if (meshlayer)
+        {
+            auto mesh = meshlayer->createTile(tileKey, progress);
+            out = convertTileMeshToSharedGeometry(mesh);
+            if (out.valid())
+            {
+                // done!
+                return;
+            }
+        }
+    }
+
+    // convert to a unique-geometry key:
+    GeometryKey geomKey;
+    createKeyForTileKey(tileKey, tileSize, geomKey);
+
+    // see if there are any constraints:
+    TerrainConstraintQuery query(map);
+    MeshConstraints edits;
+    query.getConstraints(tileKey, edits, progress);
 
     if ( _enabled )
     {
@@ -87,8 +117,8 @@ GeometryPool::getPooledGeometry(
         // This was causing crashes with multiple windows opening and closing.
         ScopedGate<GeometryKey> gatelock(_keygate, geomKey);
 
-        // first check the sharing cache:
-        if (!meshEditor.hasEdits())
+        // first check the sharing cache (note: tiles with edits are not cached)
+        if (edits.empty())
         {
             Threading::ScopedMutexLock lock(_geometryMapMutex);
             GeometryMap::iterator i = _geometryMap.find(geomKey);
@@ -101,17 +131,11 @@ GeometryPool::getPooledGeometry(
 
         if (!out.valid())
         {
-            out = createGeometry(
-                tileKey,
-                tileSize,
-                options.heightFieldSkirtRatio().get(),
-                options.gpuTessellation().get(),
-                options.morphTerrain().get(),
-                meshEditor,
-                progress);
+            auto mesh = mesher.createMesh(tileKey, edits, progress);
+            out = convertTileMeshToSharedGeometry(mesh);
 
             // only store as a shared geometry if there are no constraints.
-            if (out.valid() && !meshEditor.hasEdits())
+            if (out.valid() && !out->hasConstraints())
             {
                 Threading::ScopedMutexLock lock(_geometryMapMutex);
                 _geometryMap[geomKey] = out.get();
@@ -121,14 +145,8 @@ GeometryPool::getPooledGeometry(
 
     else
     {
-        out = createGeometry(
-            tileKey,
-            tileSize,
-            options.heightFieldSkirtRatio().get(),
-            options.gpuTessellation().get(),
-            options.morphTerrain().get(),
-            meshEditor,
-            progress);
+        auto mesh = mesher.createMesh(tileKey, edits, progress);
+        out = convertTileMeshToSharedGeometry(mesh);
     }
 }
 
@@ -142,330 +160,63 @@ GeometryPool::createKeyForTileKey(const TileKey& tileKey,
     out.size = tileSize;
 }
 
-int
-GeometryPool::getNumSkirtElements(
-    unsigned tileSize,
-    float skirtRatio) const
+osg::ref_ptr<SharedGeometry>
+GeometryPool::convertTileMeshToSharedGeometry(const TileMesh& mesh) const
 {
-    return skirtRatio > 0.0f ? (tileSize-1) * 4 * 6 : 0;
-}
+    if (!mesh.verts.valid())
+        return nullptr;
 
-namespace
-{
-    int getMorphNeighborIndexOffset(unsigned col, unsigned row, int rowSize)
+    osg::ref_ptr<SharedGeometry> shared = new SharedGeometry();
+
+    shared->setVertexArray(mesh.verts);
+    shared->setNormalArray(mesh.normals);
+    shared->setTexCoordArray(mesh.uvs);
+    shared->setNeighborArray(mesh.vert_neighbors);
+    shared->setNeighborNormalArray(mesh.normal_neighbors);
+
+    if (mesh.indices.valid())
     {
-        if ( (col & 0x1)==1 && (row & 0x1)==1 ) return rowSize+2;
-        if ( (row & 0x1)==1 )                   return rowSize+1;
-        if ( (col & 0x1)==1 )                   return 2;
-        return 1;
+        auto de = new SharedDrawElements(mesh.indices->getMode());
+        de->setElementBufferObject(new osg::ElementBufferObject());
+        de->reserveElements(mesh.indices->getNumIndices());
+        for (auto i = 0u; i < mesh.indices->getNumIndices(); ++i)
+            de->addElement(mesh.indices->getElement(i));
+        shared->setDrawElements(de);
     }
-}
-
-#define addSkirtDataForIndex(INDEX, HEIGHT) \
-{ \
-    verts->push_back( (*verts)[INDEX] ); \
-    normals->push_back( (*normals)[INDEX] ); \
-    texCoords->push_back( (*texCoords)[INDEX] ); \
-    texCoords->back().z() = (float)((int)texCoords->back().z() | VERTEX_SKIRT); \
-    if ( neighbors ) neighbors->push_back( (*neighbors)[INDEX] ); \
-    if ( neighborNormals ) neighborNormals->push_back( (*neighborNormals)[INDEX] ); \
-    verts->push_back( (*verts)[INDEX] - ((*normals)[INDEX])*(HEIGHT) ); \
-    normals->push_back( (*normals)[INDEX] ); \
-    texCoords->push_back( (*texCoords)[INDEX] ); \
-    texCoords->back().z() = (float)((int)texCoords->back().z() | VERTEX_SKIRT); \
-    if ( neighbors ) neighbors->push_back( (*neighbors)[INDEX] - ((*normals)[INDEX])*(HEIGHT) ); \
-    if ( neighborNormals ) neighborNormals->push_back( (*neighborNormals)[INDEX] ); \
-}
-
-#define addSkirtTriangles(INDEX0, INDEX1) \
-{ \
-    primSet->addElement((INDEX0));   \
-    primSet->addElement((INDEX0)+1); \
-    primSet->addElement((INDEX1));   \
-    primSet->addElement((INDEX1));   \
-    primSet->addElement((INDEX0)+1); \
-    primSet->addElement((INDEX1)+1); \
-}
-
-SharedDrawElements*
-GeometryPool::createPrimitiveSet(
-    unsigned tileSize,
-    float skirtRatio,
-    bool UseGpuTessellation) const
-{
-    // Attempt to calculate the number of verts in the surface geometry.
-    bool needsSkirt = skirtRatio > 0.0f;
-
-    unsigned numVertsInSurface    = (tileSize*tileSize);
-    unsigned numVertsInSkirt      = needsSkirt ? (tileSize-1)*2u * 4u : 0;
-    unsigned numVerts             = numVertsInSurface + numVertsInSkirt;
-    unsigned numIndiciesInSurface = (tileSize-1) * (tileSize-1) * 6;
-    unsigned numIncidesInSkirt    = getNumSkirtElements(tileSize, skirtRatio);
-
-    GLenum mode = UseGpuTessellation ? GL_PATCHES : GL_TRIANGLES;
-
-    osg::ref_ptr<SharedDrawElements> primSet = new SharedDrawElements(mode);
-    primSet->reserveElements(numIndiciesInSurface + numIncidesInSkirt);
-
-    // add the elements for the surface:
-    tessellateSurface(tileSize, primSet.get());
-
-    if (needsSkirt)
+    else
     {
-        // add the elements for the skirt:
-        int skirtBegin = numVertsInSurface;
-        int skirtEnd = skirtBegin + numVertsInSkirt;
-        int i;
-        for (i = skirtBegin; i < (int)skirtEnd - 3; i += 2)
-        {
-            addSkirtTriangles(i, i + 2);
-        }
-        addSkirtTriangles( i, skirtBegin );
+        OE_HARD_ASSERT(_defaultPrimSet.valid());
+        shared->setDrawElements(_defaultPrimSet);
     }
 
-    primSet->setElementBufferObject(new osg::ElementBufferObject());
-
-    return primSet.release();
-}
-
-
-
-void
-GeometryPool::tessellateSurface(unsigned tileSize, osg::DrawElements* primSet) const
-{
-    for (unsigned j = 0; j < tileSize - 1; ++j)
-    {
-        for (unsigned i = 0; i < tileSize - 1; ++i)
-        {
-            int i00 = j * tileSize + i;
-            int i01 = i00 + tileSize;
-            int i10 = i00 + 1;
-            int i11 = i01 + 1;
-
-            primSet->addElement(i01);
-            primSet->addElement(i00);
-            primSet->addElement(i11);
-
-            primSet->addElement(i00);
-            primSet->addElement(i10);
-            primSet->addElement(i11);
-        }
-    }
-}
-
-SharedGeometry*
-GeometryPool::createGeometry(
-    const TileKey& tileKey,
-    unsigned tileSize,
-    float skirtRatio,
-    bool gpuTessellation,
-    bool morphTerrain,
-    MeshEditor& editor,
-    Cancelable* progress) const
-{
-    OE_PROFILING_ZONE;
-
-    // Establish a local reference frame for the tile:
-    osg::Vec3d centerWorld;
-    GeoPoint centroid = tileKey.getExtent().getCentroid();
-    centroid.toWorld( centerWorld );
-
-    osg::Matrix world2local, local2world;
-    centroid.createWorldToLocal( world2local );
-    local2world.invert( world2local );
-
-    // Attempt to calculate the number of verts in the surface geometry.
-    bool needsSkirt = skirtRatio > 0.0f;
-
-    unsigned numVertsInSurface    = (tileSize*tileSize);
-    unsigned numVertsInSkirt      = needsSkirt ? (tileSize-1)*2u * 4u : 0;
-    unsigned numVerts             = numVertsInSurface + numVertsInSkirt;
-    unsigned numIndiciesInSurface = (tileSize-1) * (tileSize-1) * 6;
-    unsigned numIncidesInSkirt    = getNumSkirtElements(tileSize, skirtRatio);
-
-    GLenum mode = gpuTessellation ? GL_PATCHES : GL_TRIANGLES;
-
-    osg::BoundingSphere tileBound;
-
-    // the geometry:
-    osg::ref_ptr<SharedGeometry> geom = new SharedGeometry();
-
-    osg::ref_ptr<osg::VertexBufferObject> vbo = new osg::VertexBufferObject();
-
-    SharedDrawElements* primSet = nullptr;
-
-    // the initial vertex locations:
-    osg::ref_ptr<osg::Vec3Array> verts = new osg::Vec3Array();
-    verts->setVertexBufferObject(vbo.get());
-    verts->reserve( numVerts );
-    verts->setBinding(verts->BIND_PER_VERTEX);
-    geom->setVertexArray( verts.get() );
-
-    // the surface normals (i.e. extrusion vectors)
-    osg::ref_ptr<osg::Vec3Array> normals = new osg::Vec3Array();
-    normals->setVertexBufferObject(vbo.get());
-    normals->reserve( numVerts );
-    normals->setBinding(normals->BIND_PER_VERTEX);
-    geom->setNormalArray( normals.get() );
-
-    osg::ref_ptr<osg::Vec3Array> neighbors = 0L;
-    osg::ref_ptr<osg::Vec3Array> neighborNormals = 0L;
-    if (morphTerrain == true)
-    {
-        // neighbor positions (for morphing)
-        neighbors = new osg::Vec3Array();
-        neighbors->setBinding(neighbors->BIND_PER_VERTEX);
-        neighbors->setVertexBufferObject(vbo.get());
-        neighbors->reserve( numVerts );
-        geom->setNeighborArray(neighbors.get());
-
-        neighborNormals = new osg::Vec3Array();
-        neighborNormals->setVertexBufferObject(vbo.get());
-        neighborNormals->reserve( numVerts );
-        neighborNormals->setBinding(neighborNormals->BIND_PER_VERTEX);
-        geom->setNeighborNormalArray( neighborNormals.get() );
-    }
-
-    // tex coord is [0..1] across the tile. The 3rd dimension tracks whether the
-    // vert is masked: 0=yes, 1=no
-    bool populateTexCoords = true;
-    osg::ref_ptr<osg::Vec3Array> texCoords = new osg::Vec3Array();
-    texCoords->setBinding(texCoords->BIND_PER_VERTEX);
-    texCoords->setVertexBufferObject(vbo.get());
-    texCoords->reserve( numVerts );
-    geom->setTexCoordArray(texCoords.get());
-
-    if (editor.hasEdits())
-    {
-        bool tileHasData = editor.createTileMesh(
-            geom.get(),
-            tileSize,
-            skirtRatio,
-            mode,
-            progress);
-
-        if (geom->empty())
-            return nullptr;
-    }
-
-    else // default mesh - no constraints
-    {
-        osg::Vec3d unit;
-        osg::Vec3d model;
-        osg::Vec3d modelLTP;
-        osg::Vec3d modelPlusOne;
-        osg::Vec3d normal;
-
-        GeoLocator locator(tileKey.getExtent());
-
-        for (unsigned row = 0; row < tileSize; ++row)
-        {
-            float ny = (float)row / (float)(tileSize - 1);
-            for (unsigned col = 0; col < tileSize; ++col)
-            {
-                float nx = (float)col / (float)(tileSize - 1);
-
-                unit.set(nx, ny, 0.0f);
-                locator.unitToWorld(unit, model);
-                modelLTP = model * world2local;
-                verts->push_back(modelLTP);
-
-                tileBound.expandBy(verts->back());
-
-                if (populateTexCoords)
-                {
-                    // Use the Z coord as a type marker
-                    float marker = VERTEX_VISIBLE;
-                    texCoords->push_back(osg::Vec3f(nx, ny, marker));
-                }
-
-                unit.z() = 1.0f;
-                locator.unitToWorld(unit, modelPlusOne);
-                normal = (modelPlusOne*world2local) - modelLTP;
-                normal.normalize();
-                normals->push_back(normal);
-
-                // neighbor:
-                if (neighbors)
-                {
-                    const osg::Vec3& modelNeighborLTP = (*verts)[verts->size() - getMorphNeighborIndexOffset(col, row, tileSize)];
-                    neighbors->push_back(modelNeighborLTP);
-                }
-
-                if (neighborNormals)
-                {
-                    const osg::Vec3& modelNeighborNormalLTP = (*normals)[normals->size() - getMorphNeighborIndexOffset(col, row, tileSize)];
-                    neighborNormals->push_back(modelNeighborNormalLTP);
-                }
-            }
-        }
-
-        if (needsSkirt)
-        {
-            // calculate the skirt extrusion height
-            double height = tileBound.radius() * skirtRatio;
-
-            // Normal tile skirt first:
-            unsigned skirtIndex = verts->size();
-
-            // first, create all the skirt verts, normals, and texcoords.
-            for (int c = 0; c < (int)tileSize - 1; ++c)
-                addSkirtDataForIndex(c, height); //south
-
-            for (int r = 0; r < (int)tileSize - 1; ++r)
-                addSkirtDataForIndex(r*tileSize + (tileSize - 1), height); //east
-
-            for (int c = tileSize - 1; c > 0; --c)
-                addSkirtDataForIndex((tileSize - 1)*tileSize + c, height); //north
-
-            for (int r = tileSize - 1; r > 0; --r)
-                addSkirtDataForIndex(r*tileSize, height); //west
-        }
-
-        // By default we tessellate the surface, but if there's a masking set
-        // it might replace some or all of our surface geometry.
-        bool tessellateSurface = true;
-
-        if (tessellateSurface && primSet == nullptr)
-        {
-            if (_enabled)
-                primSet = _defaultPrimSet.get();
-            else
-                primSet = createPrimitiveSet(tileSize, skirtRatio, gpuTessellation);
-        }
-
-        if (primSet)
-        {
-            geom->setDrawElements(primSet);
-        }
-    }
+    shared->setHasConstraints(mesh.hasConstraints);
 
     // if we are using GL4, create the GL4 tile model.
     if (/*using GL4*/true)
     {
-        unsigned size = geom->getVertexArray()->size();
+        unsigned size = shared->getVertexArray()->size();
 
-        geom->_verts.reserve(size);
+        shared->_verts.reserve(size);
 
         for (unsigned i = 0; i < size; ++i)
         {
             GL4Vertex v;
 
-            v.position = (*geom->getVertexArray())[i];
-            v.normal = (*geom->getNormalArray())[i];
-            v.uv = (*geom->getTexCoordArray())[i];
+            v.position = (*shared->getVertexArray())[i];
+            v.normal = (*shared->getNormalArray())[i];
+            v.uv = (*shared->getTexCoordArray())[i];
 
-            if (geom->getNeighborArray())
-                v.neighborPosition = (*geom->getNeighborArray())[i];
+            if (shared->getNeighborArray())
+                v.neighborPosition = (*shared->getNeighborArray())[i];
 
-            if (geom->getNeighborNormalArray())
-                v.neighborNormal = (*geom->getNeighborNormalArray())[i];
+            if (shared->getNeighborNormalArray())
+                v.neighborNormal = (*shared->getNeighborNormalArray())[i];
 
-            geom->_verts.emplace_back(std::move(v));
+            shared->_verts.emplace_back(std::move(v));
         }
     }
 
-    return geom.release();
+    return shared;
 }
 
 void
@@ -593,7 +344,7 @@ SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
     {
         de._ebo = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER_ARB, state);
         de._ebo->bind();
-        de._ebo->debugLabel("REX geometry");
+        de._ebo->debugLabel("REX geometry", "Shared EBO");
         de._ebo->bufferStorage(_drawElements->getTotalDataSize(), _drawElements->getDataPointer(), 0);
         de._ebo->unbind();
 
@@ -612,7 +363,7 @@ SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
             gs._vbo = GLBuffer::create(GL_ARRAY_BUFFER_ARB, state, size);
 
         gs._vbo->bind();
-        gs._vbo->debugLabel("REX geometry");
+        gs._vbo->debugLabel("REX geometry", "Shared VBO");
         gs._vbo->bufferStorage(size, _verts.data());
         gs._vbo->unbind();
 
@@ -777,7 +528,7 @@ SharedGeometry::drawVertexArraysImplementation(osg::RenderInfo& renderInfo) cons
     // if we're using a VAO, bind the EBO to the VAO here.
     if (usingVAOs)
     {
-        osg::GLBufferObject* ebo = _drawElements->getOrCreateGLBufferObject(state.getContextID());
+        osg::GLBufferObject* ebo = _drawElements->getOrCreateGLBufferObject(GLUtils::getSharedContextID(state));
         if (ebo)
         {
             state.bindElementBufferObject(ebo);
@@ -795,11 +546,11 @@ SharedGeometry::drawPrimitivesImplementation(osg::RenderInfo& renderInfo) const
         return;
 
     osg::State& state = *renderInfo.getState();
-    GLenum primitiveType = _ptype[state.getContextID()];
+    GLenum primitiveType = _ptype[GLUtils::getSharedContextID(state)];
 
     const void* indices;
     bool usingVAO = state.useVertexArrayObject(_useVertexArrayObject);
-    osg::GLBufferObject* ebo = _drawElements->getOrCreateGLBufferObject(state.getContextID());
+    osg::GLBufferObject* ebo = _drawElements->getOrCreateGLBufferObject(GLUtils::getSharedContextID(state));
 
     if (usingVAO)
     {

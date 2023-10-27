@@ -178,11 +178,14 @@ namespace osgEarth
         virtual std::string getJobArenaName() const { return ""; }
 
         //! Access an immutable options API
-        virtual const TerrainOptionsAPI getOptions() = 0;
+        virtual TerrainOptionsAPI getOptions() = 0;
 
         //! Number of terrain tiles resident in memory 
         //! (including cached dormant tiles not being rendered)
         virtual unsigned getNumResidentTiles() const = 0;
+
+        //! Tell the engine you updates options.
+        virtual void dirtyTerrainOptions() = 0;
     };
 
     /**
@@ -283,13 +286,19 @@ namespace osgEarth
 
         void setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback) override;
 
+        //! Return the top level node associated with the terrain.
         osg::Node* getNode() override {
             return this;
         }
 
-        const TerrainOptionsAPI getOptions() override {
-            return TerrainOptionsAPI(&_options);
+        //! API for accessing or changing terrain options.
+        //! You should call dirtyTerrainOptions() after changing the options.
+        TerrainOptionsAPI getOptions() override {
+            return TerrainOptionsAPI(&_optionsConcrete);
         }
+
+        //! Subclass may override this to do something when the terrain options change
+        virtual void dirtyTerrainOptions() { }
 
     public:
         class OSGEARTH_EXPORT ModifyTileBoundingBoxCallback : public osg::Referenced
@@ -328,7 +337,10 @@ namespace osgEarth
         friend class TerrainEngineNodeFactory;
 
         //! Assigns a map to render
-        virtual void setMap(const Map* map, const TerrainOptions& options);
+        void setMap(const Map* map, const TerrainOptions& options);
+
+        //! Subclass runs this after a call to setMap.
+        virtual void onSetMap() { }
 
         // signals that a redraw is needed because something changed.
         virtual void requestRedraw();
@@ -355,10 +367,10 @@ namespace osgEarth
         virtual void updateTextureCombining() { }
 
     private:
-        osg::ref_ptr<Terrain>              _terrainInterface;
-        unsigned                           _dirtyCount;
-        bool                               _updateScheduled;
-        TerrainOptions _options;
+        osg::ref_ptr<Terrain> _terrainInterface;
+        unsigned _dirtyCount;
+        bool _updateScheduled;
+        TerrainOptions _optionsConcrete;
 
         typedef std::vector<osg::ref_ptr<TerrainEffect> > TerrainEffectVector;
         TerrainEffectVector effects_;

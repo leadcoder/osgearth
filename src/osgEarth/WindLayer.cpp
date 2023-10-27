@@ -57,7 +57,8 @@ namespace
         GLfloat speed;
     };
 
-    // GL data that must be stored separately per state
+    // GL data that must be stored separately per state since it will
+    // differ by camera/view and changes every frame
     struct GLObjects : public PerStateGLObjects
     {
         GLBuffer::Ptr _buffer;
@@ -247,7 +248,7 @@ namespace
             {
                 gl._buffer = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, *state);
                 gl._buffer->bind();
-                gl._buffer->debugLabel("Wind");
+                gl._buffer->debugLabel("Wind", "SSBO");
                 gl._buffer->unbind();
             }
 
@@ -551,8 +552,12 @@ WindLayer::prepareForRendering(TerrainEngine* engine)
     {
         addWind(options().winds()[i].get());
     }
+}
 
-    _srs = engine->getMap()->getSRS();
+void
+WindLayer::addedToMap(const Map* map)
+{
+    _srs = map->getSRS();
 }
 
 osg::StateSet*

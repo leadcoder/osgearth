@@ -48,10 +48,13 @@ main(int argc, char** argv)
     if (arguments.read("--help"))
         return usage(argv[0]);
 
-    osg::DisplaySettings::instance()->setNumMultiSamples(4);
+    osg::DisplaySettings::instance()->setNumMultiSamples(8);
     osgViewer::Viewer viewer(arguments);
     viewer.setThreadingModel(viewer.SingleThreaded);
     viewer.setCameraManipulator(new EarthManipulator(arguments));
+
+    // This is normally called by Viewer::run but we are running our frame loop manually so we need to call it here.
+    viewer.setReleaseContextAtEndOfFrameHint(false);
 
     // Call this to enable ImGui rendering.
     // If you use the MapNodeHelper, call this first.
@@ -66,6 +69,7 @@ main(int argc, char** argv)
         // through to other handlers.
         viewer.getEventHandlers().push_front(new GUI::ApplicationGUI(arguments, true));
         viewer.setSceneData(node);
+        node = nullptr;
         return Metrics::run(viewer);
     }
     else

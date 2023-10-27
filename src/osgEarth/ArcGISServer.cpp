@@ -569,6 +569,8 @@ ArcGISServerImageLayer::openImplementation()
         setProfile(profile);
     }
 
+    addDataExtent(DataExtent(getProfile()->getExtent(), _map_service.getTileInfo().getMinLevel(), _map_service.getTileInfo().getMaxLevel()));
+
     return Status::NoError;
 }
 
@@ -680,7 +682,9 @@ ArcGISServerElevationLayer::openImplementation()
         return status;
 
     setProfile(_imageLayer->getProfile());
-    dataExtents() = _imageLayer->getDataExtents();
+    DataExtentList dataExtents;
+    _imageLayer->getDataExtents(dataExtents);
+    setDataExtents(dataExtents);
 
     return Status::NoError;
 }

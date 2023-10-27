@@ -263,14 +263,19 @@ ShaderPreProcessor::applySupportForNoFFP(osg::Shader* shader)
 }
 #endif
 
-std::unordered_map<std::string, std::function<void(std::string& source)>> ShaderPreProcessor::_pre_callbacks;
-std::unordered_map<std::string, std::function<void(osg::Shader*)>> ShaderPreProcessor::_post_callbacks;
+std::unordered_map<UID, ShaderPreProcessor::PreCallbackInfo> ShaderPreProcessor::_pre_callbacks;
+std::unordered_map<UID, ShaderPreProcessor::PostCallbackInfo> ShaderPreProcessor::_post_callbacks;
 
 void
 ShaderPreProcessor::runPre(std::string& source)
 {
     for (auto& callback : _pre_callbacks)
-        callback.second(source);
+    {
+        osg::ref_ptr<osg::Referenced> host_safe;
+        callback.second.host.lock(host_safe);
+        if (host_safe.valid())
+            callback.second.function(source, host_safe.get());
+    }
 }
 
 void
@@ -282,7 +287,12 @@ ShaderPreProcessor::runPost(osg::Shader* shader)
 
         // Run post-callbacks
         for (auto& callback : _post_callbacks)
-            callback.second(shader);
+        {
+            osg::ref_ptr<osg::Referenced> host_safe;
+            callback.second.host.lock(host_safe);
+            if (host_safe.valid())
+                callback.second.function(shader, host_safe.get());
+        }
 
         std::string source = shader->getShaderSource();
 
@@ -477,8 +487,8 @@ ArrayUniform::ensureCapacity( unsigned newSize )
         osg::ref_ptr<osg::StateSet> stateSet_safe = _stateSet.get();
         if ( stateSet_safe.valid() )
         {
-            osg::ref_ptr<osg::Uniform> _oldUniform    = _uniform.get();
-            osg::ref_ptr<osg::Uniform> _oldUniformAlt = _oldUniform.get();
+            osg::ref_ptr<osg::Uniform> oldUniform = _uniform.get();
+            osg::ref_ptr<osg::Uniform> oldUniformAlt = _uniformAlt.get();
 
             stateSet_safe->removeUniform( _uniform->getName() );
             stateSet_safe->removeUniform( _uniformAlt->getName() );
@@ -486,22 +496,22 @@ ArrayUniform::ensureCapacity( unsigned newSize )
             _uniform    = new osg::Uniform( _uniform->getType(), _uniform->getName(), newSize );
             _uniformAlt = new osg::Uniform( _uniform->getType(), _uniform->getName() + "[0]", newSize );
 
-            switch (_oldUniform->getType())
+            switch (oldUniform->getType())
             {
             case osg::Uniform::FLOAT:
-                copyElements<float>(_oldUniform, this); break;
+                copyElements<float>(oldUniform.get(), this); break;
             case osg::Uniform::INT:
-                copyElements<int>(_oldUniform, this); break;
+                copyElements<int>(oldUniform.get(), this); break;
             case osg::Uniform::UNSIGNED_INT:
-                copyElements<unsigned>(_oldUniform, this); break;
+                copyElements<unsigned>(oldUniform.get(), this); break;
             case osg::Uniform::FLOAT_VEC3:
-                copyElements<osg::Vec3f>(_oldUniform, this); break;
+                copyElements<osg::Vec3f>(oldUniform.get(), this); break;
             case osg::Uniform::FLOAT_VEC4:
-                copyElements<osg::Vec4f>(_oldUniform, this); break;
+                copyElements<osg::Vec4f>(oldUniform.get(), this); break;
             case osg::Uniform::FLOAT_MAT4:
-                copyElements<osg::Matrixf>(_oldUniform, this); break;
+                copyElements<osg::Matrixf>(oldUniform.get(), this); break;
             case osg::Uniform::BOOL:
-                copyElements<bool>(_oldUniform, this); break;
+                copyElements<bool>(oldUniform.get(), this); break;
             };
 
             stateSet_safe->addUniform( _uniform.get() );

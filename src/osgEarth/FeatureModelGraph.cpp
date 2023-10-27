@@ -22,7 +22,6 @@
 #include <osgEarth/FeatureSourceIndexNode>
 #include <osgEarth/FilterContext>
 
-#include <osgEarth/MapInfo>
 #include <osgEarth/Capabilities>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/ElevationLOD>
@@ -409,7 +408,8 @@ FeatureModelGraph::FeatureModelGraph(const FeatureModelOptions& options) :
     _featureExtentClamped(false),
     _useTiledSource(false),
     _blacklistMutex("FMG BlackList(OE)"),
-    _isActive(false)
+    _isActive(false),
+    loadedTiles(0)
 {
     //NOP
 }
@@ -530,6 +530,15 @@ FeatureModelGraph::open()
 
     // Create a filter chain if necessary
     _filterChain = FeatureFilterChain::create(_options.filters(), NULL);
+
+    // Call addedToMap on all of the FeatureFilters
+    if (_filterChain.valid() && !_filterChain->empty() && _session->getMap())
+    {
+        for (auto filter = _filterChain->begin(); filter != _filterChain->end(); ++filter)
+        {
+            filter->get()->addedToMap(_session->getMap());
+        }
+    }
 
     // world-space bounds of the feature layer
     _fullWorldBound = getBoundInWorldCoords(_usableMapExtent);
@@ -696,7 +705,7 @@ FeatureModelGraph::open()
             _lodmap.resize(lod + 1, 0L);
             _lodmap[lod] = level;
 
-            OE_INFO << LC << _session->getFeatureSource()->getName()
+            OE_DEBUG << LC << _session->getFeatureSource()->getName()
                 << ": No levels specified, so adding one for LOD=" << lod 
                 << ", maxRange=" << maxRange.get()
                 << std::endl;
@@ -839,6 +848,7 @@ FeatureModelGraph::getBoundInWorldCoords(const GeoExtent& extent, const Profile*
                 ElevationRanges::getElevationRange(rangeKey.getLevelOfDetail(), rangeKey.getTileX(), rangeKey.getTileY(), min, max);
                 // Clamp the min value to avoid extreme underwater values.
                 minElevation = osg::maximum(min, (short)-500);
+                // Add a little bit extra of extra height to account for feature data.
                 // Add a little bit extra of extra height to account for feature data.
                 maxElevation = max + 100.0f;
             }
@@ -1443,6 +1453,11 @@ FeatureModelGraph::buildTile(
         {
             writeTileToCache(cacheKey, group.get(), readOptions);
         }
+
+        if (group->getBound().valid())
+        {
+//          osgDB::writeNodeFile(*group, "out/road_" + std::to_string(key->hash()) + ".osgb");
+        }
     }
 
     if (group->getNumChildren() > 0)
@@ -1490,6 +1505,11 @@ FeatureModelGraph::buildTile(
                     }
                 }
             }
+        }
+
+        if (group.valid() && group->getBound().valid())
+        {
+            group->getOrCreateUserDataContainer()->addUserObject(new Util::TrackerTag(loadedTiles));
         }
 
         return group;
@@ -2101,9 +2121,6 @@ FeatureModelGraph::traverse(osg::NodeVisitor& nv)
     if (nv.getVisitorType() == nv.CULL_VISITOR)
     {
         OE_PROFILING_ZONE;
-        if (!_ownerName.empty())
-            OE_PROFILING_ZONE_TEXT(_ownerName);
-
         osg::Group::traverse(nv);
     }
     else

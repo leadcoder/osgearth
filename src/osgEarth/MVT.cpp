@@ -468,6 +468,8 @@ MVTFeatureSourceOptions::getConfig() const
 {
     Config conf = FeatureSource::Options::getConfig();
     conf.set("url", url());
+    conf.set("min_level", _minLevel);
+    conf.set("max_level", _maxLevel);
     return conf;
 }
 
@@ -475,6 +477,8 @@ void
 MVTFeatureSourceOptions::fromConfig(const Config& conf)
 {
     conf.get("url", url());
+    conf.get("min_level", _minLevel);
+    conf.get("max_level", _maxLevel);
 }
 
 //........................................................................
@@ -483,6 +487,27 @@ REGISTER_OSGEARTH_LAYER(mvtfeatures, MVTFeatureSource);
 
 OE_LAYER_PROPERTY_IMPL(MVTFeatureSource, URI, URL, url);
 
+void
+MVTFeatureSource::init()
+{
+    FeatureSource::init();
+
+    _minLevel = 0u;
+    _maxLevel = 14u;
+    _database = nullptr;
+
+    _compressor = osgDB::Registry::instance()->getObjectWrapperManager()->findCompressor("zlib");
+    if (!_compressor.valid())
+    {
+        OE_WARN << LC << "Failed to get zlib compressor" << std::endl;
+    }
+}
+
+MVTFeatureSource::~MVTFeatureSource()
+{
+    // close on destruct in case closeImplementation was never called
+    closeDatabase();
+}
 
 Status
 MVTFeatureSource::openImplementation()
@@ -492,6 +517,9 @@ MVTFeatureSource::openImplementation()
         return parent;
 
     std::string fullFilename = options().url()->full();
+
+    // close existing database if open
+    closeDatabase();
 
     sqlite3** dbptr = (sqlite3**)(&_database);
     int rc = sqlite3_open_v2(fullFilename.c_str(), dbptr, SQLITE_OPEN_READONLY, 0L);
@@ -505,20 +533,11 @@ MVTFeatureSource::openImplementation()
     return Status::NoError;
 }
 
-void
-MVTFeatureSource::init()
+Status
+MVTFeatureSource::closeImplementation()
 {
-    FeatureSource::init();
-
-    _minLevel = 0u;
-    _maxLevel = 14u;
-    _database = 0L;
-
-    _compressor = osgDB::Registry::instance()->getObjectWrapperManager()->findCompressor("zlib");
-    if (!_compressor.valid())
-    {
-        OE_WARN << LC << "Failed to get zlib compressor" << std::endl;
-    }
+    closeDatabase();
+    return FeatureSource::closeImplementation();
 }
 
 FeatureCursor*
@@ -725,11 +744,18 @@ MVTFeatureSource::createFeatureProfile()
 
 
     FeatureProfile* result = new FeatureProfile(profile->getExtent());
-    computeLevels();
-    OE_INFO << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
+    if (!options().minLevel().isSet() || !options().maxLevel().isSet())
+    {
+        computeLevels();
+        OE_INFO << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
+    }
+    else
+    {
+        _minLevel = *options().minLevel();
+        _maxLevel = *options().maxLevel();
+        OE_INFO << LC << "Got levels from setting " << _minLevel << ", " << _maxLevel << std::endl;
+    }
 
-
-    // Use the max level for now as the min level.
     result->setFirstLevel(_minLevel);
     result->setMaxLevel(_maxLevel);
     result->setTilingProfile(profile);
@@ -800,6 +826,17 @@ MVTFeatureSource::getMetaData(const std::string& key, std::string& value)
 
     sqlite3_finalize(select);
     return valid;
+}
+
+void
+MVTFeatureSource::closeDatabase()
+{
+    if (_database != nullptr)
+    {
+        sqlite3* database = (sqlite3*)_database;
+        sqlite3_close_v2(database);
+        _database = nullptr;
+    }
 }
 
 #endif // OSGEARTH_HAVE_MVT

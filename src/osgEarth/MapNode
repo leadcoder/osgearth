@@ -66,6 +66,7 @@ namespace osgEarth
             OE_OPTION(ProxySettings, proxySettings);
             OE_OPTION(bool, enableLighting);
             OE_OPTION(bool, overlayBlending);
+            OE_OPTION(bool, overlayBlendingSource);
             OE_OPTION(unsigned, overlayTextureSize);
             OE_OPTION(bool, overlayMipMapping);
             OE_OPTION(float, overlayResolutionRatio);
@@ -117,8 +118,7 @@ namespace osgEarth
         const bool& getEnableLighting() const;
 
         //! Access to the terrain-specific options API.
-        TerrainOptionsAPI& getTerrainOptions();
-        const TerrainOptionsAPI& getTerrainOptions() const;
+        TerrainOptionsAPI getTerrainOptions();
 
         //! Spatial Reference System of the underlying map.
         const SpatialReference* getMapSRS() const;
@@ -136,8 +136,9 @@ namespace osgEarth
          * @param travMask
          *      Traversal mask to apply while searching
          */
-        static MapNode* findMapNode( osg::Node* graph, unsigned travMask =~0 );
-        static MapNode* get( osg::Node* graph, unsigned travMask =~0 ) { return findMapNode(graph, travMask); }
+        static MapNode* findMapNode(osg::Node* graph, unsigned travMask = ~0);
+        static MapNode* get(osg::Node* graph, unsigned travMask = ~0) { return findMapNode(graph, travMask); }
+        static MapNode* get(osg::ref_ptr<osg::Node>& graph, unsigned travMask = ~0) { return findMapNode(graph.get(), travMask); }
 
         /**
          * Returns true if the realized terrain model is geocentric, false if
@@ -226,18 +227,18 @@ namespace osgEarth
 
     public: // osg::Object
 
-        virtual const char* libraryName() const { return "osgEarth"; }
-        virtual const char* className() const { return "MapNode"; }
+        const char* libraryName() const override { return "osgEarth"; }
+        const char* className() const override { return "MapNode"; }
 
     public: //override osg::Node
 
-        virtual osg::BoundingSphere computeBound() const;
+        osg::BoundingSphere computeBound() const override;
 
-        virtual void traverse( class osg::NodeVisitor& nv );
+        void traverse(class osg::NodeVisitor& nv) override;
 
-        virtual void resizeGLObjectBuffers(unsigned maxSize);
+        void resizeGLObjectBuffers(unsigned maxSize) override;
 
-        virtual void releaseGLObjects(osg::State* state) const;
+        void releaseGLObjects(osg::State* state) const override;
 
     protected:    
 
@@ -250,11 +251,14 @@ namespace osgEarth
         osg::Group*        _layerNodes;
         unsigned           _lastNumBlacklistedFilenames;
         Config             _externalConf;
-        TerrainEngineNode* _terrainEngine;
         osg::Group*        _terrainGroup;
         std::shared_ptr<DrapingManager> _drapingManager;
         ClampingManager*   _clampingManager;
         std::atomic<bool>  _readyForUpdate;
+
+        // yes, this must be a ref_ptr so observers can point to it
+        // in setMap().
+        osg::ref_ptr<TerrainEngineNode> _terrainEngine;
 
         std::vector< osg::ref_ptr<Extension> > _extensions;
 
@@ -284,7 +288,7 @@ namespace osgEarth
     private:
         Options _optionsConcrete;
         Options& options() { return _optionsConcrete; }
-        TerrainOptionsAPI _terrainOptionsAPI;
+
     public:
         const Options& options() const { return _optionsConcrete; }
     };

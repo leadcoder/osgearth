@@ -205,7 +205,7 @@ BuildingFactory::create(Feature*               feature,
             for(auto& i : feature->getGeometry()->asVector())
                 points.push_back(i);
 
-            envelope.sampleMapCoords(points, progress);
+            envelope.sampleMapCoords(points.begin(), points.end(), progress);
 
             for(auto& i : points)
             {

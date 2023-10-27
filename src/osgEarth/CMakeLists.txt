@@ -41,13 +41,11 @@ IF(WIN32)
     LIST(APPEND TARGET_EXTERNAL_LIBRARIES psapi)
 ENDIF(WIN32)
 
-# Generate the BuildConfig header.
-set(OSGEARTH_SOVERSION_VALUE "${OSGEARTH_SOVERSION}")
-set(OSGEARTH_BUILDCONFIG_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/BuildConfig.h")
-message(STATUS "Creating ${OSGEARTH_BUILDCONFIG_HEADER}")
-configure_file(
-    BuildConfig.h.in
-    ${OSGEARTH_BUILDCONFIG_HEADER})
+# Generate the Version header.
+# set(OSGEARTH_SOVERSION_VALUE "${OSGEARTH_SOVERSION}")
+set(OSGEARTH_VERSION_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/Version")
+message(STATUS "Creating ${OSGEARTH_VERSION_HEADER}")
+configure_file(Version.in ${OSGEARTH_VERSION_HEADER})
 
 # Name all the library files
 SET(LIB_NAME osgEarth)
@@ -61,8 +59,10 @@ set(TARGET_GLSL
     DrawInstancedAttribute.glsl
     GPUClamping.glsl
     GPUClamping.lib.glsl
+    HexTiling.glsl
     Instancing.glsl
     LineDrawable.glsl
+    MetadataNode.glsl
     WireLines.glsl
     PhongLighting.glsl
     PointDrawable.glsl
@@ -83,7 +83,7 @@ set(TARGET_GLSL
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
 set(TARGET_IN
-    BuildConfig.h.in
+    Version.in
     Shaders.cpp.in)
 
 configure_shaders(
@@ -186,7 +186,6 @@ SET(LIB_PUBLIC_HEADERS
     MapboxGLImageLayer
     MapboxGLGlyphManager
     MapCallback
-    MapInfo
     MapModelChange
     MapNode
     MapNodeObserver
@@ -247,6 +246,7 @@ SET(LIB_PUBLIC_HEADERS
     TerrainOptions
     TerrainEngineNode
     TerrainEngineRequirements
+    TerrainMeshLayer
     TerrainResources
     TerrainTileModel
     TerrainTileModelFactory
@@ -259,9 +259,11 @@ SET(LIB_PUBLIC_HEADERS
     TileKey
     TileLayer
     TileHandler
+    TileMesher
     TileRasterizer
     TiledFeatureModelGraph
     TiledFeatureModelLayer
+    TiledModelLayer
     TileSource
     TileSourceElevationLayer
     TileSourceImageLayer
@@ -273,7 +275,7 @@ SET(LIB_PUBLIC_HEADERS
     Units
     URI
     Utils
-    Version
+    #Version
     VerticalDatum
     VideoLayer
     Viewpoint
@@ -282,6 +284,8 @@ SET(LIB_PUBLIC_HEADERS
     WMS
     XmlUtils
     XYZ
+    XYZModelGraph
+    XYZModelLayer
 
     ActivityMonitorTool
     AutoClipPlaneHandler
@@ -326,7 +330,7 @@ SET(LIB_PUBLIC_HEADERS
     TerrainProfile
     TextureArena
     TileIndex
-    TileIndexBuilder
+    TileIndexBuilder    
     TFSPackager
     TMSBackFiller
     TopologyGraph
@@ -360,10 +364,12 @@ SET(LIB_PUBLIC_HEADERS
     FeatureSourceIndexNode
     Filter
     FilterContext
+    FilteredFeatureSource
     GeometryCompiler
     GeometryUtils
     ImageToFeatureLayer
     InstanceCloud
+    MetadataNode
     MVT
     OgrUtils
     OGRFeatureSource
@@ -381,7 +387,6 @@ SET(LIB_PUBLIC_HEADERS
     TextSymbolizer
     TFS
     TransformFilter
-    WingedEdgeMesh
     WireLines
     XYZFeatureSource
     WFS
@@ -459,16 +464,19 @@ SET(LIB_PUBLIC_HEADERS
 
     SDF
 
-    ${OSGEARTH_BUILDCONFIG_HEADER}
+    ${OSGEARTH_VERSION_HEADER}
 )
 
 if(OSGEARTH_ENABLE_IMGUI)
     set(LIB_PUBLIC_HEADERS_IMGUI
         ImGui/ImGui
         ImGui/ImGuiApp
+        ImGui/AnnotationsGUI
+        ImGui/ContentBrowserGUI
         ImGui/LayersGUI
         ImGui/NetworkMonitorGUI
         ImGui/NotifyGUI
+        ImGui/PickerGUI
         ImGui/SceneGraphGUI
         ImGui/SearchGUI
         ImGui/TextureInspectorGUI
@@ -477,7 +485,6 @@ if(OSGEARTH_ENABLE_IMGUI)
         ImGui/EnvironmentGUI
         ImGui/ShaderGUI
         ImGui/TerrainGUI
-        ImGui/TerrainEditGUI
         ImGui/CameraGUI
         ImGui/RenderingGUI
         )
@@ -505,7 +512,7 @@ ENDIF (NOT TINYXML_FOUND)
 
 
 SET(VERSION_GIT_SOURCE "")
-find_package(git)
+find_package(Git)
 if (GIT_FOUND)
     option(OSGEARTH_EMBED_GIT_SHA "Encode the SHA in the Version header code" OFF)
     if(OSGEARTH_EMBED_GIT_SHA)
@@ -609,7 +616,6 @@ set(TARGET_SRC
     MapboxGLImageLayer.cpp
     MapboxGLGlyphManager.cpp
     MapCallback.cpp
-    MapInfo.cpp
     MapNode.cpp
     MaterialLoader.cpp
     MemCache.cpp
@@ -657,6 +663,7 @@ set(TARGET_SRC
     Terrain.cpp
     TerrainOptions.cpp
     TerrainEngineNode.cpp
+    TerrainMeshLayer.cpp
     TerrainResources.cpp
     TerrainTileModel.cpp
     TerrainTileModelFactory.cpp
@@ -670,9 +677,11 @@ set(TARGET_SRC
     TileKey.cpp
     TileLayer.cpp
     TileHandler.cpp
+    TileMesher.cpp
     TileRasterizer.cpp
     TiledFeatureModelGraph.cpp
     TiledFeatureModelLayer.cpp
+    TiledModelLayer.cpp
     TileVisitor.cpp
     TileSource.cpp
     TileSourceElevationLayer.cpp
@@ -693,6 +702,8 @@ set(TARGET_SRC
     WMS.cpp
     XmlUtils.cpp
     XYZ.cpp
+    XYZModelGraph.cpp
+    XYZModelLayer.cpp
 
     ActivityMonitorTool.cpp
     AtlasBuilder.cpp
@@ -761,10 +772,12 @@ set(TARGET_SRC
     FeatureSourceIndexNode.cpp
     Filter.cpp
     FilterContext.cpp
+    FilteredFeatureSource.cpp
     GeometryCompiler.cpp
     GeometryUtils.cpp
     ImageToFeatureLayer.cpp
     MVT.cpp
+    MetadataNode.cpp
     OgrUtils.cpp
     OGRFeatureSource.cpp
     PolygonizeLines.cpp
@@ -851,6 +864,11 @@ set(TARGET_SRC
     ${SHADERS_CPP}
 )
 
+# MSVC 2017 and 2019 need /bigobj on debug build
+if(MSVC AND MSVC_VERSION LESS 1930)
+    add_compile_options("$<$<CONFIG:Debug>:/bigobj>")    
+endif()
+
 IF(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
   IF(NOT OUT_OF_SOURCE_BUILD)
     INCLUDE_DIRECTORIES(${Protobuf_INCLUDE_DIR})
@@ -890,6 +908,12 @@ ADD_LIBRARY(${LIB_NAME}
     ${TARGET_IN} )
 
 INCLUDE_DIRECTORIES(${GDAL_INCLUDE_DIR} ${CURL_INCLUDE_DIR} ${OSG_INCLUDE_DIR} )
+
+# spdlog support?
+if (spdlog_FOUND)
+    TARGET_LINK_LIBRARIES(${LIB_NAME} PRIVATE spdlog::spdlog)
+    message(STATUS "Linking osgEarth with spdlog")
+endif()
 
 # TinyXML support?
 IF (TINYXML_FOUND)

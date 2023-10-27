@@ -27,6 +27,7 @@
 #include <osgEarth/Style>
 #include <osgEarth/Layer>
 #include <osgEarth/LayerReference>
+#include <osgEarth/Utils>
 
 namespace osgEarth {
     class Map;
@@ -110,6 +111,10 @@ namespace osgEarth
 
         //! Serialization
         virtual Config getConfig() const;
+
+    public: // key value reporter
+
+        Stats reportStats() const override;
 
     protected: // Layer
         

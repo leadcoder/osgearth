@@ -26,6 +26,8 @@ configure_shaders(
     ${SHADERS_CPP}
     ${TARGET_GLSL} )
 
+SET(TARGET_LIBRARIES_VARS OSG_LIBRARY OSGDB_LIBRARY OSGUTIL_LIBRARY OSGTEXT_LIBRARY OPENTHREADS_LIBRARY OPENGL_gl_LIBRARY) 
+
 SET(TARGET_SRC
     CreateTileImplementation.cpp
     DrawState.cpp
@@ -35,7 +37,6 @@ SET(TARGET_SRC
     RexTerrainEngineDriver.cpp
     LayerDrawable.cpp
     LoadTileData.cpp
-    MeshEditor.cpp
 	SelectionInfo.cpp
     SurfaceNode.cpp
     TerrainCuller.cpp
@@ -59,7 +60,6 @@ SET(TARGET_H
     RexTerrainEngineNode
     LayerDrawable
     LoadTileData
-    MeshEditor
     RenderBindings
     SurfaceNode
     TerrainCuller

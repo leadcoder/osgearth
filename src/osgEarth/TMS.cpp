@@ -1093,15 +1093,15 @@ TMS::Driver::resolveWriter(const std::string& format)
 Config
 TMS::Options::getMetadata()
 {
-    return Config::readJSON(OE_MULTILINE(
-      { "name" : "TMS (Tile Map Service)",
+    return Config::readJSON(R"(
+      { "name" : "TMS Tile Map Service",
         "properties" : [
           { "name": "url", "description" : "Location of the TMS repository", "type" : "string", "default" : "" },
           { "name": "tms_type", "description" : "Set to 'google' to invert the Y index", "type" : "string", "default" : "" },
-          { "name": "format", "description" : "Image format to assume (e.g. jpeg, png)", "type" : "string", "default" : "" }
+          { "name": "format", "description" : "Image format to assume", "type" : "string", "default" : "" }
         ]
       }
-    ));
+      )");
 }
 
 void
@@ -1147,6 +1147,10 @@ OE_LAYER_PROPERTY_IMPL(TMSImageLayer, std::string, Format, format);
 void
 TMSImageLayer::init()
 {
+    // If no name is set, default it to the value of the URL
+    if (!options().name().isSet() && options().url().isSet())
+        options().name().setDefault(options().url()->base());
+
     ImageLayer::init();
 }
 
@@ -1159,12 +1163,13 @@ TMSImageLayer::openImplementation()
 
     osg::ref_ptr<const Profile> profile = getProfile();
 
+    DataExtentList dataExtents;
     Status status = _driver.open(
         options().url().get(),
         profile,
         options().format().get(),
         options().coverage().get(),
-        dataExtents(),
+        dataExtents,
         getReadOptions());
 
     if (status.isError())
@@ -1174,6 +1179,8 @@ TMSImageLayer::openImplementation()
     {
         setProfile(profile.get());
     }
+
+    setDataExtents(dataExtents);
 
     return Status::NoError;
 }
@@ -1281,7 +1288,9 @@ TMSElevationLayer::openImplementation()
         return status;
 
     setProfile(_imageLayer->getProfile());
-    dataExtents() = _imageLayer->getDataExtents();
+    DataExtentList dataExtents;
+    _imageLayer->getDataExtents(dataExtents);
+    setDataExtents(dataExtents);
 
     return Status::NoError;
 }

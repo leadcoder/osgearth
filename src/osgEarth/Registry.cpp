@@ -81,7 +81,14 @@ namespace
 {
     void CPL_STDCALL myCPLErrorHandler(CPLErr errClass, int errNum, const char* msg)
     {
-        OE_DEBUG << "[GDAL] " << msg << " (error " << errNum << ")" << std::endl;
+        if (errClass == CE_Warning)
+        {
+            OE_INFO << "GDAL warning: " << msg << " (error " << errNum << ")" << std::endl;
+        }
+        else if (errClass > CE_Warning)
+        {
+            OE_WARN << "GDAL failure: " << msg << " (error " << errNum << ")" << std::endl;
+        }
     }
 }
 
@@ -97,7 +104,8 @@ _regMutex("Registry(OE)"),
 _activityMutex("Reg.Activity(OE)"),
 _capsMutex("Reg.Caps(OE)"),
 _srsCache("Reg.SRSCache(OE)"),
-_blacklist("Reg.BlackList(OE)")
+_blacklist("Reg.BlackList(OE)"),
+_maxImageDimension(INT_MAX)
 {
     // set up GDAL and OGR.
     OGRRegisterAll();
@@ -167,6 +175,11 @@ _blacklist("Reg.BlackList(OE)")
     if ( !zipLib.empty() )
         osgDB::Registry::instance()->loadLibrary( zipLib );
 
+    // pre-load KML/KMZ plugin so that we can use it in URIs
+    std::string kmzLib = osgDB::Registry::instance()->createLibraryNameForExtension("kml");
+    if (!kmzLib.empty())
+        osgDB::Registry::instance()->loadLibrary(kmzLib);
+
     _defaultOptions = new osgDB::Options();
 
     const char* teStr = ::getenv(OSGEARTH_ENV_TERRAIN_ENGINE_DRIVER);
@@ -226,6 +239,13 @@ _blacklist("Reg.BlackList(OE)")
     osgUtil::RenderBin::addRenderBinPrototype(
         "ChonkBin",
         new ChonkRenderBin());
+
+    const char* maxDim = getenv("OSGEARTH_MAX_TEXTURE_SIZE");
+    if (maxDim)
+    {
+        _maxImageDimension = as<unsigned>(maxDim, UINT_MAX);
+        OE_INFO << LC << "Setting max texture size from environment = " << _maxImageDimension << std::endl;
+    }
 }
 
 Registry::~Registry()
@@ -813,6 +833,18 @@ unsigned
 Registry::getMaxNumberOfVertsPerDrawable() const
 {
     return _maxVertsPerDrawable;
+}
+
+int
+Registry::getMaxTextureSize() const
+{
+    return _maxImageDimension;
+}
+
+void
+Registry::setMaxTextureSize(int value)
+{
+    _maxImageDimension = value;
 }
 
 namespace

@@ -26,7 +26,7 @@
 
 using namespace osgEarth;
 
-#define LC "[ElevationLayer] \"" << getName() << "\" : "
+#define LC "[" << className() << "] \"" << getName() << "\" "
 
 //#define ANALYZE
 
@@ -56,6 +56,17 @@ ElevationLayer::Options::fromConfig( const Config& conf )
     conf.get("nodata_policy", "default",     _noDataPolicy, NODATA_INTERPOLATE );
     conf.get("nodata_policy", "interpolate", _noDataPolicy, NODATA_INTERPOLATE );
     conf.get("nodata_policy", "msl",         _noDataPolicy, NODATA_MSL );
+
+    // ElevationLayers are special in that visible really maps to whether the layer is open or closed
+    // If a layer is marked as enabled (openAutomatically) but also marked as visible=false set
+    // openAutomatically to false to prevent the layer from being opened at startup.
+    // This prevents a deadlock b/c setVisible is called during the VisibleLayer openImplementation and it
+    // will call setVisible on the Layer there which will result in trying to close the layer while it's opening.
+    // There may be a better way to sync these up but will require a bit of rework.
+    if (*openAutomatically() && !*visible())
+    {
+        openAutomatically() = false;
+    }
 }
 
 //------------------------------------------------------------------------
@@ -93,6 +104,9 @@ ElevationLayer::init()
 {
     TileLayer::init();
 
+    // open and visible are the same thing for elevation layers
+    _visibleTiedToOpen = true;
+
     _sentry.setName("ElevationLayer " + getName());
 
     // override with a different default tile size since elevation
@@ -118,15 +132,15 @@ ElevationLayer::init()
     setRenderType(RENDERTYPE_NONE);
 }
 
-void
-ElevationLayer::setVisible(bool value)
-{
-    VisibleLayer::setVisible(value);
-    if (value)
-        open();
-    else
-        close();
-}
+//void
+//ElevationLayer::setVisible(bool value)
+//{
+//    VisibleLayer::setVisible(value);
+//    if (value)
+//        open();
+//    else
+//        close();
+//}
 
 void
 ElevationLayer::setVerticalDatum(const std::string& value)
@@ -1033,9 +1047,9 @@ ElevationLayerVector::populateHeightField(
 
                         // Technically this is correct, but the resultin normal maps
                         // look awful and faceted.
-                        //resolution = osg::minimum(
-                        //    resolution,
-                        //    (float)contenderKey.getResolution(hf->getNumColumns()).second);
+                        resolution = std::min(
+                            resolution,
+                            (float)contenderKey.getResolution(hf->getNumColumns()).second);
                     }
                 }
 

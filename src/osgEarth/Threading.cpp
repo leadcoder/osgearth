@@ -507,7 +507,7 @@ JobGroup::join(Cancelable* cancelable)
 Mutex JobArena::_arenas_mutex("OE:JobArena");
 std::unordered_map<std::string, std::shared_ptr<JobArena>> JobArena::_arenas;
 std::unordered_map<std::string, unsigned> JobArena::_arenaSizes;
-std::string JobArena::_defaultArenaName = "oe.default";
+std::string JobArena::_defaultArenaName = "oe.general";
 JobArena::Metrics JobArena::_allMetrics;
 
 #define OE_ARENA_DEFAULT_SIZE 2u
@@ -561,7 +561,7 @@ JobArena::get(const std::string& name_)
         std::atexit(JobArena::shutdownAll);
     }
 
-    std::string name(name_.empty() ? "oe.default" : name_);
+    std::string name(name_.empty() ? "oe.general" : name_);
 
     std::shared_ptr<JobArena>& arena = _arenas[name];
     if (arena == nullptr)
@@ -579,7 +579,7 @@ JobArena::get(const Type& type_)
 {
     if (type_ == THREAD_POOL)
     {
-        return get("oe.default");
+        return get("oe.general");
     }
 
     ScopedMutexLock lock(_arenas_mutex);
@@ -803,7 +803,7 @@ JobArena::runJobs()
             // See if we no longer need this thread because the
             // target concurrency has been reduced
             ScopedMutexLock quitLock(_quitMutex);
-            if (_targetConcurrency < _metrics->concurrency)
+            if ((int)_targetConcurrency < _metrics->concurrency)
             {
                 _metrics->concurrency--;
                 break;
@@ -820,7 +820,7 @@ JobArena::startThreads()
     OE_INFO << LC << "Arena \"" << _name << "\" concurrency=" << _targetConcurrency << std::endl;
 
     // Not enough? Start up more
-    while(_metrics->concurrency < _targetConcurrency)
+    while(_metrics->concurrency < (int)_targetConcurrency)
     {
         _metrics->concurrency++;
 

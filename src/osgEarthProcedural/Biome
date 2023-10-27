@@ -35,28 +35,6 @@ namespace osgEarth
         using namespace osgEarth;
 
         /**
-         * AssetGroup organizes assets into a certain type that will
-         * determine how the system handles them. Right now there are
-         * only two types -- trees and undergrowth.
-         */
-        #define NUM_ASSET_GROUPS 2
-        struct OSGEARTHPROCEDURAL_EXPORT AssetGroup
-        {
-            enum Type
-            {
-                UNDEFINED = -1,
-                TREES = 0,
-                UNDERGROWTH = 1
-            };
-
-            //! Readable name of the asset group, given the type
-            static std::string name(Type type);
-
-            //! Type of the asset group, given the name.
-            static Type type(const std::string& name);
-        };
-
-        /**
          * Holds a collection of asset traits, which can 
          * "filter" assets into particular biomes.
          */
@@ -64,7 +42,10 @@ namespace osgEarth
         {
         public:
             static std::vector<std::string>
-                getPermutations(const std::vector<std::string>& traits);
+                getPermutationStrings(const std::vector<std::string>& traits);
+
+            static std::vector<std::vector<std::string>>
+                getPermutationVectors(const std::vector<std::string>& traits);
 
             static std::string
                 toString(const std::vector<std::string>& traits);
@@ -91,10 +72,10 @@ namespace osgEarth
             //! URI from which to load a top texture for an impostor
             OE_OPTION(URI, topBillboardURI);
 
-            //! When only billboards are available, width of each billboard
+            //! When only billboards are available, width of each billboard (meters)
             OE_OPTION(float, width);
 
-            //! When only billboards are availalbe, height of each billboard
+            //! When only billboards are availalbe, height of each billboard (meters)
             OE_OPTION(float, height);
 
             //! Static scale to apply to 3D model (no impact on width/height options)
@@ -114,11 +95,31 @@ namespace osgEarth
             //! Default is 0.
             OE_OPTION(float, stiffness);
 
+            //! Minimum lushness of this asset [0..1] - the asset becomes a 
+            //! candidate for placement if the lifemap's lush value is
+            //! greater than or equal to this value. Default is zero (0).
+            OE_OPTION(float, minLush);
+
+            //! Maximum lushness of this asset [0..1] - the asset becomes a 
+            //! candidate for placement if the lifemap's lush value is
+            //! less than or equal to this value. Default is one (1).
+            OE_OPTION(float, maxLush);
+
+            //! Height at which to position the top billboard when
+            //! rendering as an impostor (meters). By default it
+            //! is placed 1/3 up the height of the model.
+            OE_OPTION(float, topBillboardHeight);
+
             //! User-defined traits string (comma-delimited)
             OE_PROPERTY(std::vector<std::string>, traits);
 
+            //! If true, this asset will ONLY be used in a biome that
+            //! explicity inherits this asset's traits from land cover
+            //! data. Default = false.
+            OE_OPTION(bool, traitsRequired);
+
             //! Asset group to which this model belongs.
-            OE_PROPERTY(AssetGroup::Type, group);
+            OE_PROPERTY(std::string, group);
 
         public:
             //! Construct an empty model asset definition
@@ -165,9 +166,10 @@ namespace osgEarth
         class OSGEARTHPROCEDURAL_EXPORT AssetCatalog
         {
         public:
-            using Dimensions = std::array<unsigned, 2>;
-
+            //! Construct an empty asset catalog
             AssetCatalog() { }
+
+            //! Deserialize an asset catalog
             AssetCatalog(const Config& conf);
 
             //! Model asset associated with given name
@@ -196,14 +198,14 @@ namespace osgEarth
             Config getConfig() const;
 
         protected:
-            std::unordered_map<std::string, ModelAsset> _models;
+            // use std::map for consistent iteration
+            std::map<std::string, ModelAsset> _models;
             unsigned _lifemapMatrixWidth;
             std::vector<MaterialAsset> _materials;
         };
 
         /** 
-         * Collection of artwork assets that will be used in a particular
-         * geographic resion.
+         * Collection of artwork assets.
          * A biome may have a "parent" biome. This means that if the Biome
          * defines ZERO assets, it will use the parent biome's assets.
          */
@@ -224,13 +226,17 @@ namespace osgEarth
             OE_OPTION(std::string, parentId);
 
             // points to an asset, adding in some custom parameters.
-            struct ModelAssetToUse
+            struct OSGEARTHPROCEDURAL_EXPORT ModelAssetRef
             {
+                ModelAssetRef();
+
+                using Ptr = std::shared_ptr<ModelAssetRef>;
+
                 // points to the base asset in the catalog
-                using ModelAssetRef = const ModelAsset * ;
+                using ModelAssetPointer = const ModelAsset * ;
 
                 //! Reference to the asset being used
-                OE_PROPERTY(ModelAssetRef, asset);
+                OE_PROPERTY(ModelAssetPointer, asset);
 
                 //! Selection weight compared to other assets (default = 1.0)
                 OE_PROPERTY(float, weight);
@@ -238,29 +244,39 @@ namespace osgEarth
                 //! Coverage percentage when this asset it selected (default = 1.0)
                 OE_PROPERTY(float, coverage);
 
-                bool operator < (const ModelAssetToUse& rhs) const {
+                bool operator < (const ModelAssetRef& rhs) const {
                     return (std::uintptr_t)asset() < (std::uintptr_t)rhs.asset();
                 }
             };
 
-            using ModelAssetsToUse = std::vector<ModelAssetToUse>;
+            using ModelAssetRefs = std::vector<ModelAssetRef::Ptr>;
 
             // A collection of asset pointers for each existing AssetGroup
-            ModelAssetsToUse _assetsToUse[NUM_ASSET_GROUPS];
+            ModelAssetRefs _assetsToUse;
 
             //! Collection of this biome's asset pointers for the specified asset
             //! group, or the assets from the parent biome if this biome's asset
             //! list is empty.
-            const ModelAssetsToUse& getModelAssetsToUse(int group) const;
+            ModelAssetRefs getModelAssets(
+                const std::string& group) const;
+
+            //! Gets the collection of model assets associated with this biome
+            //! irrespective of group
+            const ModelAssetRefs& getModelAssets() const {
+                return _assetsToUse;
+            }
 
             //! The sequential biome index uses in encoded raster data
             //! Note: Starts at 1. Zero means "undefined."
             int index() const { return _index; }
+
+            //! True is this biome contains no asset references
+            bool empty() const;
             
         private:
             int _index;
-            const Biome* _parentBiome;
-            bool _implicit; // whether this biome really exists or was derived by filters
+            Biome* _parentBiome;
+            bool _implicit; // whether this biome really exists or was derived by traits
             friend class BiomeCatalog;
         };
 
@@ -290,11 +306,13 @@ namespace osgEarth
         public:
             Config getConfig() const;
 
+            Biome* getBiome(const std::string& id);
+
             int _biomeIndexGenerator;
             AssetCatalog _assets;
 
             std::map<int, Biome> _biomes_by_index; // keep ordered by index
-            std::unordered_map<std::string, Biome*> _biomes_by_id; // Fast 
+            std::map<std::string, Biome*> _biomes_by_id; // keep ordered for determinism
         };
 
 } } // namespace osgEarth::Procedural

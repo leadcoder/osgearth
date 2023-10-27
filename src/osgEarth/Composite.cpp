@@ -124,6 +124,8 @@ CompositeImageLayer::addedToMap(const Map* map)
 
     osg::ref_ptr<const Profile> profile = getProfile();
 
+    DataExtentList outputExtents;
+
     for (auto& layer : _layers)
     {
         if (layer->isOpen())
@@ -131,31 +133,31 @@ CompositeImageLayer::addedToMap(const Map* map)
             layer->addedToMap(map);
 
             // gather extents                        
-            const DataExtentList& extents = layer->getDataExtents();
+            DataExtentList inputExtents;
+            layer->getDataExtents(inputExtents);
 
             // If even one of the layers' data extents is unknown, the entire composite
             // must have unknown data extents:
-            if (extents.empty())
+            if (inputExtents.empty())
             {
                 dataExtentsValid = false;
-                dataExtents().clear();
             }
 
             if (dataExtentsValid)
             {
-                for (DataExtentList::const_iterator j = extents.begin(); j != extents.end(); ++j)
+                for (DataExtentList::const_iterator j = inputExtents.begin(); j != inputExtents.end(); ++j)
                 {
                     // Convert the data extent to the profile that is actually used by this TileSource
                     DataExtent dataExtent = *j;
                     GeoExtent ext = dataExtent.transform(profile->getSRS());
                     unsigned int minLevel = 0;
                     unsigned int maxLevel = profile->getEquivalentLOD(layer->getProfile(), *dataExtent.maxLevel());
-                    dataExtent = DataExtent(ext, minLevel, maxLevel);
-                    dataExtents().push_back(dataExtent);
+                    outputExtents.push_back(DataExtent(ext, minLevel, maxLevel));
                 }
             }
         }
     }
+    setDataExtents(outputExtents);
 }
 
 void
@@ -301,7 +303,6 @@ CompositeImageLayer::closeImplementation()
         _layerNodes->removeChildren(0, _layerNodes->getNumChildren());
     }
 
-    dataExtents().clear();
     return Status::OK();
 }
 
@@ -555,38 +556,40 @@ CompositeElevationLayer::addedToMap(const Map* map)
     bool dataExtentsValid = true;
     osg::ref_ptr<const Profile> profile = getProfile();
 
+    DataExtentList outputExtents;
+
     for (auto& layer : _layers)
     {
         if (layer->isOpen())
         {
             layer->addedToMap(map);
 
-            // gather extents                        
-            const DataExtentList& extents = layer->getDataExtents();
+            // gather extents     
+            DataExtentList inputExtents;
+            layer->getDataExtents(inputExtents);
 
             // If even one of the layers' data extents is unknown, the entire composite
             // must have unknown data extents:
-            if (extents.empty())
+            if (inputExtents.empty())
             {
                 dataExtentsValid = false;
-                dataExtents().clear();
             }
 
             if (dataExtentsValid)
             {
-                for (DataExtentList::const_iterator j = extents.begin(); j != extents.end(); ++j)
+                for (DataExtentList::const_iterator j = inputExtents.begin(); j != inputExtents.end(); ++j)
                 {
                     // Convert the data extent to the profile that is actually used by this TileSource
                     DataExtent dataExtent = *j;
                     GeoExtent ext = dataExtent.transform(profile->getSRS());
                     unsigned int minLevel = 0;
                     unsigned int maxLevel = profile->getEquivalentLOD(layer->getProfile(), *dataExtent.maxLevel());
-                    dataExtent = DataExtent(ext, minLevel, maxLevel);
-                    dataExtents().push_back(dataExtent);
+                    outputExtents.push_back(DataExtent(ext, minLevel, maxLevel));
                 }
             }
         }
     }
+    setDataExtents(outputExtents);
 }
 
 void
@@ -725,7 +728,6 @@ CompositeElevationLayer::closeImplementation()
         _layerNodes->removeChildren(0, _layerNodes->getNumChildren());
     }
 
-    dataExtents().clear();
     return Status::OK();
 }
 
@@ -824,6 +826,8 @@ CompositeLandCoverLayer::addedToMap(const Map* map)
 
     osg::ref_ptr<const Profile> profile = getProfile();
 
+    DataExtentList outputExtents;
+
     for (auto& layer : _layers)
     {
         if (layer->isOpen())
@@ -832,30 +836,31 @@ CompositeLandCoverLayer::addedToMap(const Map* map)
         }
 
         // gather extents                        
-        const DataExtentList& extents = layer->getDataExtents();
+        DataExtentList inputExtents;
+        layer->getDataExtents(inputExtents);
 
         // If even one of the layers' data extents is unknown, the entire composite
         // must have unknown data extents:
-        if (extents.empty())
+        if (inputExtents.empty())
         {
             dataExtentsValid = false;
-            dataExtents().clear();
         }
 
         if (dataExtentsValid)
         {
-            for (DataExtentList::const_iterator j = extents.begin(); j != extents.end(); ++j)
+            for (DataExtentList::const_iterator j = inputExtents.begin(); j != inputExtents.end(); ++j)
             {
                 // Convert the data extent to the profile that is actually used by this TileSource
                 DataExtent dataExtent = *j;
                 GeoExtent ext = dataExtent.transform(profile->getSRS());
                 unsigned int minLevel = 0;
                 unsigned int maxLevel = profile->getEquivalentLOD(layer->getProfile(), *dataExtent.maxLevel());
-                dataExtent = DataExtent(ext, minLevel, maxLevel);
-                dataExtents().push_back(dataExtent);
+                outputExtents.push_back(DataExtent(ext, minLevel, maxLevel));                
             }
         }
     }
+
+    setDataExtents(outputExtents);
 }
 
 void
@@ -1005,7 +1010,6 @@ CompositeLandCoverLayer::closeImplementation()
         _layerNodes->removeChildren(0, _layerNodes->getNumChildren());
     }
 
-    dataExtents().clear();
     return Status::OK();
 }
 

@@ -37,12 +37,14 @@ REGISTER_OSGEARTH_LAYER(biomes, BiomeLayer);
 void
 BiomeLayer::Options::fromConfig(const Config& conf)
 {
-    blendRadius().setDefault(0.0f);
+    blendRadius().setDefault(Distance(0.0f, Units::METERS));
+    blendPercentage().setDefault(0.0f);
 
     biomeCatalog() = std::make_shared<BiomeCatalog>(conf.child("biomecatalog"));
     landCoverLayer().get(conf, "landcover_layer");
     biomeBaseLayer().get(conf, "biome_base_layer");
     conf.get("blend_radius", blendRadius());
+    conf.get("blend_percentage", blendPercentage());
 }
 
 Config
@@ -54,6 +56,7 @@ BiomeLayer::Options::getConfig() const
     biomeBaseLayer().set(conf, "biome_base_layer");
     //TODO - biomeCatalog
     conf.set("blend_radius", blendRadius());
+    conf.set("blend_percentage", blendPercentage());
     return conf;
 }
 
@@ -118,8 +121,6 @@ BiomeLayer::openImplementation()
         OE_WARN << LC << "No asset catalog found - could be trouble" << std::endl;
     }
 
-    
-
     return Status::OK();
 }
 
@@ -161,6 +162,25 @@ BiomeLayer::addedToMap(const Map* map)
     {
         _landCoverFactory = LandCoverSample::Factory::create(getLandCoverLayer());
     }
+
+    // Inherit data extents from the biome base layer and land cover layer...?
+    DataExtentList dataExtents;
+
+    if (getBiomeBaseLayer())
+    {
+        DataExtentList temp;
+        getBiomeBaseLayer()->getDataExtents(temp);
+        dataExtents.insert(dataExtents.end(), temp.begin(), temp.end());
+    }
+
+    if (getLandCoverLayer())
+    {
+        DataExtentList temp;
+        getLandCoverLayer()->getDataExtents(temp);
+        dataExtents.insert(dataExtents.end(), temp.begin(), temp.end());
+    }
+
+    setDataExtents(dataExtents);
 }
 
 void
@@ -205,6 +225,35 @@ BiomeLayer::getAutoBiomeManagement() const
     return _autoBiomeManagement;
 }
 
+void
+BiomeLayer::setBlendRadius(const Distance& value)
+{
+    options().blendRadius() = value;
+    bumpRevision();
+
+    ScopedMutexLock lock(_imageCache);
+    _imageCache.clear();
+}
+
+const Distance&
+BiomeLayer::getBlendRadius() const
+{
+    return options().blendRadius().get();
+}
+
+void
+BiomeLayer::setBlendPercentage(float value)
+{
+    options().blendPercentage() = clamp(value, 0.0f, 1.0f);
+    bumpRevision();
+}
+
+float
+BiomeLayer::getBlendPercentage() const
+{
+    return options().blendPercentage().get();
+}
+
 GeoImage
 BiomeLayer::createImageImplementation(
     const TileKey& key,
@@ -246,15 +295,17 @@ BiomeLayer::createImageImplementation(
     float noise = 1.0f;
 
     // pseudo-random number generator:
-    std::minstd_rand gen(key.hash());
-    std::uniform_real_distribution<double> prng;
+    // too slow. use Random instead.
+    //std::minstd_rand gen(key.hash());
+    //std::uniform_real_distribution<double> prng;
+    Random prng(key.hash());
 
-    double radius = options().blendRadius().get();
     std::set<int> biome_indices_seen;
     const GeoExtent& ex = key.getExtent();
     GeoImage temp(image.get(), ex);
     GeoImageIterator iter(temp);
     std::unordered_set<std::string> missing_biomes;
+    float radius = options().blendRadius()->as(ex.getSRS()->getUnits());
 
     // Use meta-tiling to read coverage data with access to the 
     // neighboring tiles - to support the blend radius.
@@ -282,6 +333,28 @@ BiomeLayer::createImageImplementation(
         biomeData.setCenterTileKey(key, progress);
     }
 
+    float biomeRadius = 0.0f;
+    if (getBiomeBaseLayer())
+    {
+        auto bak = getBiomeBaseLayer()->getBestAvailableTileKey(key);
+        if (bak.valid())
+        {
+            auto res = bak.getResolution(getTileSize());
+            biomeRadius = getBlendPercentage() * res.second * (float)getTileSize();
+        }
+    }
+
+    float landcoverRadius = 0.0f;
+    if (getLandCoverLayer())
+    {
+        auto bak = getLandCoverLayer()->getBestAvailableTileKey(key);
+        if (bak.valid())
+        {
+            auto res = bak.getResolution(getTileSize());
+            landcoverRadius = getBlendPercentage() * res.second * (float)getTileSize();
+        }
+    }
+
     iter.forEachPixelOnCenter([&]()
         {
             const Biome* biome = nullptr;
@@ -289,20 +362,20 @@ BiomeLayer::createImageImplementation(
             double x = iter.x();
             double y = iter.y();
 
-            // randomly permute the coordinates in order to blend across biomes
-            if (radius > temp.getUnitsPerPixel())
-            {
-                x += radius * (prng(gen) * 2.0 - 1.0);
-                y += radius * (prng(gen) * 2.0 - 1.0);
-            }
-
-            // convert the x,y to u,v
-            double u = (x - ex.xMin()) / ex.width();
-            double v = (y - ex.yMin()) / ex.height();
-
             // First try the biome base layer
             if (biomeData.valid())
             {
+                // randomly permute the coordinates in order to blend across biomes
+                if (biomeRadius > temp.getUnitsPerPixel())
+                {
+                    x += biomeRadius * (prng.next() * 2.0 - 1.0);
+                    y += biomeRadius * (prng.next() * 2.0 - 1.0);
+                }
+
+                // convert the x,y to u,v
+                double u = (x - ex.xMin()) / ex.width();
+                double v = (y - ex.yMin()) / ex.height();
+
                 const BiomeSample* sample = biomeData.read(u, v);
 
                 if (sample)
@@ -319,6 +392,17 @@ BiomeLayer::createImageImplementation(
             // with traits.
             if (landcoverData.valid())
             {
+                // randomly permute the coordinates in order to blend across biomes
+                if (landcoverRadius > temp.getUnitsPerPixel())
+                {
+                    x += landcoverRadius * (prng.next() * 2.0 - 1.0);
+                    y += landcoverRadius * (prng.next() * 2.0 - 1.0);
+                }
+
+                // convert the x,y to u,v
+                double u = (x - ex.xMin()) / ex.width();
+                double v = (y - ex.yMin()) / ex.height();
+
                 const LandCoverSample* sample = landcoverData.read(u, v);
                 if (sample)
                 {
@@ -335,13 +419,17 @@ BiomeLayer::createImageImplementation(
                         std::vector<std::string> sorted = sample->traits();
                         if (sorted.size() > 1)
                             std::sort(sorted.begin(), sorted.end());
-                        
-                        std::string implicit_biome_id = 
+
+                        std::string implicit_biome_id =
                             biome->id() + "." + AssetTraits::toString(sorted);
 
-                        biome = getBiomeCatalog()->getBiome(implicit_biome_id);
+                        const Biome* implicit_biome = getBiomeCatalog()->getBiome(implicit_biome_id);
 
-                        if (biome == nullptr)
+                        if (implicit_biome)
+                        {
+                            biome = implicit_biome;
+                        }
+                        else
                         {
                             missing_biomes.insert(implicit_biome_id);
                         }
@@ -372,7 +460,7 @@ BiomeLayer::createImageImplementation(
         buf << "Tile " << key.str() << " has biome(s) with no assets: ";
         for (auto i : missing_biomes)
             buf << i << ' ';
-        OE_WARN << LC << buf.str() << std::endl;
+        OE_DEBUG << LC << buf.str() << std::endl;
     }
 
 #if 1
@@ -479,4 +567,20 @@ BiomeLayer::objectDeleted(void* value)
             }
             _tracker.erase(token);
         });
+}
+
+void
+BiomeLayer::resizeGLObjectBuffers(unsigned maxsize)
+{
+    auto textures = _biomeMan.getTextures();
+    if (textures)
+        textures->resizeGLObjectBuffers(maxsize);
+}
+
+void
+BiomeLayer::releaseGLObjects(osg::State* state) const
+{
+    auto textures = _biomeMan.getTextures();
+    if (textures)
+        textures->releaseGLObjects(state);
 }

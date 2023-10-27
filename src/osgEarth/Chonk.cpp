@@ -84,27 +84,48 @@ namespace
         std::stack<osg::Matrix> _transformStack;
         std::unordered_map<osg::Texture*, Texture::Ptr> _textureLUT;
 
-        const unsigned ALBEDO = 0;
-        const unsigned NORMAL = 1;
+        const unsigned ALBEDO_UNIT = 0;
+        const unsigned NORMAL_UNIT = 1;
+        const unsigned PBR_UNIT = 2;
+
+        const unsigned MAT1_SLOT = 0;
+        const unsigned MAT2_SLOT = 1;
+
+        const unsigned FLEXOR_SLOT = 3;
+        const unsigned NORMAL_TECHNIQUE_SLOT = 6;
+        const unsigned EXTENDED_MATERIAL_SLOT = Chonk::MATERIAL_VERTEX_SLOT;
 
         ChonkMaterial::Ptr reuseOrCreateMaterial(
             Texture::Ptr albedo_tex,
-            Texture::Ptr normal_tex)
+            Texture::Ptr normal_tex,
+            Texture::Ptr pbr_tex,
+            Texture::Ptr mat1_tex,
+            Texture::Ptr mat2_tex)
         {
-            int albedo = _textures->find(albedo_tex);
-            int normal = _textures->find(normal_tex);
+            int albedo_index = _textures->find(albedo_tex);
+            int normal_index = _textures->find(normal_tex);
+            int pbr_index = _textures->find(pbr_tex);
+            int mat1_index = _textures->find(mat1_tex);
+            int mat2_index = _textures->find(mat2_tex);
 
             for (auto& m : _materialCache)
             {
-                if (m->albedo == albedo &&
-                    m->normal == normal)
+                if (m->albedo_index == albedo_index &&
+                    m->normal_index == normal_index &&
+                    m->pbr_index == pbr_index &&
+                    m->material1_index == mat1_index &&
+                    m->material2_index == mat2_index )
                 {
                     return m;
                 }
             }
+
             auto material = ChonkMaterial::create();
-            material->albedo = albedo;
-            material->normal = normal;
+            material->albedo_index = albedo_index;
+            material->normal_index = normal_index;
+            material->pbr_index = pbr_index;
+            material->material1_index = mat1_index;
+            material->material2_index = mat2_index;
 
             // If our arena is in auto-release mode, we need to 
             // store a pointer to each texture we use so they do not
@@ -113,6 +134,9 @@ namespace
             {
                 material->albedo_tex = albedo_tex;
                 material->normal_tex = normal_tex;
+                material->pbr_tex = pbr_tex;
+                material->material1_tex = mat1_tex;
+                material->material2_tex = mat2_tex;
             }
 
             _materialCache.push_back(material);
@@ -130,7 +154,7 @@ namespace
             setNodeMaskOverride(~0);
 
             _materialStack.push(reuseOrCreateMaterial(
-                nullptr, nullptr));
+                nullptr, nullptr, nullptr, nullptr, nullptr));
             _transformStack.push(osg::Matrix());
         }
 
@@ -163,7 +187,7 @@ namespace
                         arena_tex = Texture::create(tex);
                     }
 
-                    arena_tex->label() = "Chonk Texture";
+                    arena_tex->category() = "Chonk Texture";
 
                     int index = _textures->add(arena_tex);
                     if (index >= 0)
@@ -180,19 +204,42 @@ namespace
             return arena_tex;
         }
 
+        // find texture with CHONK_HINT_EXTENDED_MATERIAL_SLOT set to the target slot
+        Texture::Ptr findExternalTexture(unsigned slot, osg::StateSet* stateset)
+        {
+           const unsigned count = static_cast<unsigned>(stateset->getTextureAttributeList().size() );
+
+           for (unsigned index = 0; index < count; ++index)
+           {
+              osg::Texture* tex = dynamic_cast<osg::Texture*>(
+                 stateset->getTextureAttribute(index, osg::StateAttribute::TEXTURE));
+
+              int value = -1;
+              if (tex && tex->getUserValue(CHONK_HINT_EXTENDED_MATERIAL_SLOT, value) && value == slot )
+              {
+                 return addTexture(index, stateset);
+              }
+           }
+
+           return nullptr;
+        }
+
         // record materials, and return true if we pushed one.
         bool pushStateSet(osg::StateSet* stateset)
         {
             bool pushed = false;
             if (stateset)
             {
-                Texture::Ptr albedo_tex = addTexture(ALBEDO, stateset);
-                Texture::Ptr normal_tex = addTexture(NORMAL, stateset);
+                Texture::Ptr albedo_tex = addTexture(ALBEDO_UNIT, stateset);
+                Texture::Ptr normal_tex = addTexture(NORMAL_UNIT, stateset);
+                Texture::Ptr pbr_tex = addTexture(PBR_UNIT, stateset);
+                Texture::Ptr material_tex1 = findExternalTexture(MAT1_SLOT, stateset);
+                Texture::Ptr material_tex2 = findExternalTexture(MAT2_SLOT, stateset);
 
                 if (albedo_tex || normal_tex)
                 {
                     ChonkMaterial::Ptr material = reuseOrCreateMaterial(
-                        albedo_tex, normal_tex);
+                        albedo_tex, normal_tex, pbr_tex, material_tex1, material_tex2);
                     _materialStack.push(material);
                     pushed = true;
                 }
@@ -232,13 +279,16 @@ namespace
             auto verts = dynamic_cast<osg::Vec3Array*>(node.getVertexArray());
             auto colors = dynamic_cast<osg::Vec4Array*>(node.getColorArray());
             auto normals = dynamic_cast<osg::Vec3Array*>(node.getNormalArray());
-            auto flexers = dynamic_cast<osg::Vec3Array*>(node.getTexCoordArray(3));
+            auto normal_techniques = dynamic_cast<osg::UByteArray*>(node.getVertexAttribArray(NORMAL_TECHNIQUE_SLOT));
+            auto flexors = dynamic_cast<osg::Vec3Array*>(node.getTexCoordArray(FLEXOR_SLOT));
+            auto extended_material = dynamic_cast<osg::ShortArray*>(node.getVertexAttribArray(EXTENDED_MATERIAL_SLOT));
 
             // support either 2- or 3-component tex coords, but only read the xy components!
             auto uv2s = dynamic_cast<osg::Vec2Array*>(node.getTexCoordArray(0));
             auto uv3s = dynamic_cast<osg::Vec3Array*>(node.getTexCoordArray(0));
 
             auto& material = _materialStack.top();
+            osg::Vec3f n;
 
             for (unsigned i = 0; i < numVerts; ++i)
             {
@@ -251,10 +301,8 @@ namespace
                 
                 if (colors)
                 {
-                    if (colors->getBinding() == colors->BIND_PER_VERTEX)
-                        v.color = Color((*colors)[i]).asNormalizedRGBA();
-                    else
-                        v.color = Color((*colors)[0]).asNormalizedRGBA();
+                    int k = colors->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.color = Color((*colors)[k]).asNormalizedRGBA();
                 }
                 else
                 {
@@ -263,41 +311,62 @@ namespace
 
                 if (normals)
                 {
-                    if (normals->getBinding() == normals->BIND_PER_VERTEX)
-                        v.normal = (*normals)[i];
-                    else
-                        v.normal = (*normals)[0];
+                    int k = normals->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.normal = osg::Matrix::transform3x3((*normals)[k], _transformStack.top());
                 }
                 else
                 {
                     v.normal.set(0, 0, 1);
                 }
 
+                if (normal_techniques)
+                {
+                    int k = normal_techniques->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.normal_technique = (*normal_techniques)[k];
+                }
+                else
+                {
+                    v.normal_technique = 0;
+                }
+
                 if (uv2s)
                 {
-                    if (uv2s->getBinding() == normals->BIND_PER_VERTEX)
-                        v.uv = (*uv2s)[i];
-                    else
-                        v.uv = (*uv2s)[0];
+                    int k = uv2s->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.uv = (*uv2s)[k];
                 }
                 else if (uv3s)
                 {
-                    if (uv3s->getBinding() == normals->BIND_PER_VERTEX)
-                        v.uv.set((*uv3s)[i].x(), (*uv3s)[i].y());
-                    else
-                        v.uv.set((*uv3s)[0].x(), (*uv3s)[0].y());
+                    int k = uv3s->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.uv.set((*uv3s)[k].x(), (*uv3s)[k].y());
                 }
-
-                if (flexers)
+                else
                 {
-                    if (flexers->getBinding() == flexers->BIND_PER_VERTEX)
-                        v.flex = (*flexers)[i];
-                    else
-                        v.flex = (*flexers)[0];
+                    v.uv.set(0.0f, 0.0f);
                 }
 
-                v.albedo = material ? material->albedo : -1;
-                v.normalmap = material ? material->normal : -1;
+                if (flexors)
+                {
+                    int k = flexors->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                    v.flex = osg::Matrix::transform3x3((*flexors)[k], _transformStack.top());
+                }
+                else
+                {
+                    v.flex.set(0, 0, 1);
+                }
+
+                v.albedo_index = material ? material->albedo_index : -1;
+                v.normalmap_index = material ? material->normal_index : -1;
+                v.pbr_index = material ? material->pbr_index : -1;
+
+                // prioritize material textures over vertex material ids.
+                v.extended_materials = material ? osg::Vec2s(material->material1_index, material->material2_index) : osg::Vec2s(-1, -1);
+
+                // fallback is to use vertex stream to simulate material ids.
+                if (extended_material && v.extended_materials.x() == -1 && v.extended_materials.y() == -1)
+                {
+                   int k = extended_material->getBinding() == osg::Array::BIND_PER_VERTEX ? i : 0;
+                   v.extended_materials = osg::Vec2s( (*extended_material)[k], -1 );
+                }
 
                 _result._vbo_store.emplace_back(std::move(v));
 
@@ -306,21 +375,17 @@ namespace
             }
 
             // assemble the elements set
-            for (unsigned i = 0; i < node.getNumPrimitiveSets(); ++i)
+            auto copy_indices = [this, vbo_offset](
+                osg::Geometry& geom,
+                unsigned i0, unsigned i1, unsigned i2,
+                const osg::Matrix& l2w)
             {
-                osg::DrawElements* de = dynamic_cast<osg::DrawElements*>(node.getPrimitiveSet(i));
-                if (de)
-                {
-                    for (unsigned k = 0; k < de->getNumIndices(); ++k)
-                    {
-                        int index = de->getElement(k);
-                        // by using a "model-local" offset here, we can use UShort even
-                        // if our vertex array size exceeds 65535 by storing the 
-                        // baseVertex in our DrawElements structure
-                        _result._ebo_store.push_back(vbo_offset + index);
-                    }
-                }
-            }
+                _result._ebo_store.push_back(vbo_offset + i0);
+                _result._ebo_store.push_back(vbo_offset + i1);
+                _result._ebo_store.push_back(vbo_offset + i2);
+            };
+            TriangleVisitor copy_visitor(copy_indices);
+            node.accept(copy_visitor);
 
             if (pushed) popStateSet();
         }
@@ -332,12 +397,20 @@ namespace std {
     template<> struct hash<ChonkMaterial> {
         inline size_t operator()(const ChonkMaterial& value) const {
             return hash_value_unsigned(
-                value.albedo,
-                value.normal);
+                value.albedo_index,
+                value.normal_index,
+                value.pbr_index,
+                value.material1_index,
+                value.material2_index);
         }
     };
 }
 
+GLubyte Chonk::NORMAL_TECHNIQUE_DEFAULT = 0;
+GLubyte Chonk::NORMAL_TECHNIQUE_ZAXIS = 1;
+GLubyte Chonk::NORMAL_TECHNIQUE_HEMISPHERE = 2;
+
+unsigned Chonk::MATERIAL_VERTEX_SLOT = 7;
 
 Chonk::Ptr
 Chonk::create()
@@ -356,7 +429,7 @@ Chonk::add(
     ChonkFactory& factory)
 {
     OE_SOFT_ASSERT_AND_RETURN(node != nullptr, false);
-    OE_HARD_ASSERT(_lods.size() < 4);
+    OE_HARD_ASSERT(_lods.size() < 3);
 
     factory.load(node, *this);
     _lods.push_back({ 0u, _ebo_store.size(), 0.0f, FLT_MAX });
@@ -374,7 +447,7 @@ Chonk::add(
     ChonkFactory& factory)
 {
     OE_SOFT_ASSERT_AND_RETURN(node != nullptr, false);
-    OE_HARD_ASSERT(_lods.size() < 4);
+    OE_HARD_ASSERT(_lods.size() < 3);
 
     unsigned offset = _ebo_store.size();
     factory.load(node, *this);
@@ -401,7 +474,7 @@ Chonk::getOrCreateCommands(osg::State& state) const
     {
         gs.vbo = GLBuffer::create(GL_ARRAY_BUFFER_ARB, state);
         gs.vbo->bind();
-        gs.vbo->debugLabel("Chonk");
+        gs.vbo->debugLabel("Chonk", "VBO");
         gs.vbo->bufferStorage(
             _vbo_store.size() * sizeof(VertexGPU),
             _vbo_store.data(),
@@ -409,7 +482,7 @@ Chonk::getOrCreateCommands(osg::State& state) const
 
         gs.ebo = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER_ARB, state);
         gs.ebo->bind();
-        gs.ebo->debugLabel("Chonk");
+        gs.ebo->debugLabel("Chonk", "EBO");
         gs.ebo->bufferStorage(
             _ebo_store.size() * sizeof(element_t),
             _ebo_store.data(),
@@ -420,17 +493,20 @@ Chonk::getOrCreateCommands(osg::State& state) const
         // for each variant:
         for (auto& lod : _lods)
         {
-            DrawCommand command;
+            if (gs.ebo->address() != 0 && gs.vbo->address() != 0)
+            {
+                DrawCommand command;
 
-            command.cmd.count = lod.length;
-            command.cmd.firstIndex = lod.offset;
-            command.cmd.instanceCount = 1;
-            command.indexBuffer.address = gs.ebo->address();
-            command.indexBuffer.length = gs.ebo->size();
-            command.vertexBuffer.address = gs.vbo->address();
-            command.vertexBuffer.length = gs.vbo->size();
+                command.cmd.count = lod.length;
+                command.cmd.firstIndex = lod.offset;
+                command.cmd.instanceCount = 1;
+                command.indexBuffer.address = gs.ebo->address();
+                command.indexBuffer.length = gs.ebo->size();
+                command.vertexBuffer.address = gs.vbo->address();
+                command.vertexBuffer.length = gs.vbo->size();
 
-            gs.commands.push_back(std::move(command));
+                gs.commands.push_back(std::move(command));
+            }
         }
 
         gs.vbo->unbind();
@@ -474,7 +550,7 @@ ChonkFactory::load(
 {
     OE_PROFILING_ZONE;
 
-    // convert all primitive sets to GL_TRIANGLES
+    // convert all primitive sets to indexed primitives
     osgUtil::Optimizer o;
     o.optimize(node, o.INDEX_MESH);
     
@@ -513,10 +589,14 @@ namespace
     };
 }
 
-ChonkDrawable::ChonkDrawable() :
+ChonkDrawable::ChonkDrawable(int renderBinNumber) :
     osg::Drawable(),
     _proxy_dirty(true),
-    _gpucull(true)
+    _gpucull(true),
+    _fadeNear(0.0f),
+    _fadeFar(0.0f),
+    _birthday(-1.0f),
+    _renderBinNumber(renderBinNumber)
 {
     setName(typeid(*this).name());
     setUseDisplayList(false);
@@ -532,37 +612,94 @@ ChonkDrawable::~ChonkDrawable()
 }
 
 void
+ChonkDrawable::setRenderBinNumber(int value)
+{
+    _renderBinNumber = value;
+    installRenderBin(this);
+}
+
+int
+ChonkDrawable::getRenderBinNumber() const
+{
+    return _renderBinNumber;
+}
+
+void
+ChonkDrawable::setBirthday(double value)
+{
+    _birthday = value;
+    dirtyGLObjects();
+}
+
+double
+ChonkDrawable::getBirthday() const
+{
+    return _birthday;
+}
+
+void
+ChonkDrawable::setFadeNearFar(float nearRange, float farRange)
+{
+    _fadeNear = nearRange;
+    _fadeFar = farRange;
+    dirtyGLObjects();
+}
+
+void
+ChonkDrawable::setAlphaCutoff(float value)
+{
+    _alphaCutoff = value;
+    dirtyGLObjects();
+}
+
+void
 ChonkDrawable::installRenderBin(ChonkDrawable* d)
 {
-    static osg::ref_ptr<osg::StateSet> s_ss;
-    static osg::ref_ptr<VirtualProgram> s_vp;
-    static Mutex s_mutex;
+    // map of render bin number to stateset
+    static vector_map<int, osg::ref_ptr<osg::StateSet>> s_stateSets;
 
-    if (!s_vp.valid())
+    // globally shared VP
+    static osg::ref_ptr<VirtualProgram> s_vp;
+
+    static Mutex s_mutex;
+    ScopedMutexLock lock(s_mutex);
+
+    auto& ss = s_stateSets[d->getRenderBinNumber()];
+    if (!ss.valid())
     {
-        ScopedMutexLock lock(s_mutex);
+        ss = new osg::StateSet();
+        ss->setDataVariance(ss->STATIC);
+        ss->setRenderBinDetails(d->getRenderBinNumber(), "ChonkBin",
+            (osg::StateSet::RenderBinMode)(ss->USE_RENDERBIN_DETAILS | ss->PROTECTED_RENDERBIN_DETAILS));
+        
+        // create the (shared) shader program if necessary:
         if (!s_vp.valid())
         {
-            s_ss = new osg::StateSet();
-            s_ss->setDataVariance(s_ss->STATIC);
-            s_ss->setRenderBinDetails(818, "ChonkBin", (osg::StateSet::RenderBinMode)
-                (osg::StateSet::USE_RENDERBIN_DETAILS | osg::StateSet::PROTECTED_RENDERBIN_DETAILS));
-
-            s_vp = VirtualProgram::getOrCreate(s_ss.get());
+            s_vp = new VirtualProgram();
+            s_vp->setInheritShaders(true);
             s_vp->setName("ChonkDrawable");
-
             Shaders pkg;
             pkg.load(s_vp.get(), pkg.Chonk);
         }
+
+        ss->setAttribute(s_vp);
     }
 
-    d->setStateSet(s_ss.get());    
+    d->setStateSet(ss);
 }
 
 void
 ChonkDrawable::setUseGPUCulling(bool value)
 {
     _gpucull = value;
+}
+
+void
+ChonkDrawable::dirtyGLObjects()
+{
+    // flag all graphics states as requiring an update:
+    for (unsigned i = 0; i < _globjects.size(); ++i)
+        _globjects[i]._dirty = true;
 }
 
 void
@@ -599,47 +736,18 @@ ChonkDrawable::add(
         instance.lod = 0;
         instance.visibility[0] = 0;
         instance.visibility[1] = 0;
-        instance.visibility[2] = 0;
-        instance.visibility[3] = 0;
+        instance.radius = 0.0f;
+        instance.alphaCutoff = 0.0f;
         instance.first_lod_cmd_index = 0;
         _batches[chonk].push_back(std::move(instance));
 
         // flag all graphics states as requiring an update:
-        for (unsigned i = 0; i < _globjects.size(); ++i)
-            _globjects[i]._dirty = true;
+        dirtyGLObjects();
 
         // flag the bounds for recompute
         dirtyBound();
     }
 }
-
-void
-ChonkDrawable::setModelViewMatrix(const osg::Matrix& value)
-{
-    _mvm = value;
-}
-
-struct StateEx : public osg::State
-{
-    void applyUniforms()
-    {
-        OE_HARD_ASSERT(_lastAppliedProgramObject != nullptr);
-
-        for (auto iter : _uniformMap)
-        {
-            auto& stack = iter.second;
-            if (!stack.uniformVec.empty())
-            {
-                auto& pair = stack.uniformVec.back();
-                _lastAppliedProgramObject->apply(*pair.first);
-                //OE_INFO << "...applied " << iter.first << std::endl;
-            }
-            else {
-               // OE_INFO << "...empty stack for " << iter.first << std::endl;
-            }
-        }
-    }
-};
 
 void
 ChonkDrawable::drawImplementation(osg::RenderInfo& ri) const
@@ -652,15 +760,12 @@ ChonkDrawable::update_and_cull_batches(osg::State& state) const
 {
     auto& globjects = GLObjects::get(_globjects, state);
 
+    // if something changed, we need to refresh the GPU tables.
     if (globjects._dirty)
     {
         ScopedMutexLock lock(_m);
-        globjects.update(_batches, this, state);
-    }
-
-    if (!_mvm.isIdentity())
-    {
-        state.applyModelViewMatrix(_mvm);
+        globjects._gpucull = _gpucull;
+        globjects.update(_batches, this, _fadeNear, _fadeFar, _birthday, _alphaCutoff, state);
     }
 
     if (_gpucull)
@@ -673,11 +778,6 @@ void
 ChonkDrawable::draw_batches(osg::State& state) const
 {
     auto& globjects = GLObjects::get(_globjects, state);
-
-    if (!_mvm.isIdentity())
-    {
-        state.applyModelViewMatrix(_mvm);
-    }
 
     globjects.draw(state);
 }
@@ -779,6 +879,12 @@ ChonkDrawable::accept(osg::PrimitiveFunctor& f) const
     }
 }
 
+ChonkDrawable::GLObjects::GLObjects() :
+    _dirty(true),
+    _gpucull(true)
+{
+    // nop
+}
 
 void
 ChonkDrawable::GLObjects::initialize(
@@ -799,27 +905,27 @@ ChonkDrawable::GLObjects::initialize(
     // DrawElementsCommand buffer:
     _commandBuf = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
     _commandBuf->bind();
-    _commandBuf->debugLabel("Chonk", host->getName());
+    _commandBuf->debugLabel("Chonk", "Cmd buf " + host->getName());
     _commandBuf->unbind();
 
     // Per-culling instances:
     _instanceInputBuf = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
     _instanceInputBuf->bind();
-    _instanceInputBuf->debugLabel("Chonk", host->getName());
+    _instanceInputBuf->debugLabel("Chonk", "In buf " +host->getName());
     _instanceInputBuf->unbind();
 
-    if (_cull)
+    if (_gpucull)
     {
         // Culled instances (GPU only)
         _instanceOutputBuf = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
         _instanceOutputBuf->bind();
-        _instanceOutputBuf->debugLabel("Chonk", host->getName());
+        _instanceOutputBuf->debugLabel("Chonk", "Out buf " + host->getName());
         _instanceOutputBuf->unbind();
 
         // Chonk data
         _chonkBuf = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
         _chonkBuf->bind();
-        _chonkBuf->debugLabel("Chonk", host->getName());
+        _chonkBuf->debugLabel("Chonk", "Chonk buf " + host->getName());
         _chonkBuf->unbind();
     }
 
@@ -840,30 +946,42 @@ ChonkDrawable::GLObjects::initialize(
     _vao->bind();
 
     // must call AFTER bind
-    _vao->debugLabel("Chonk", host->getName());
+    _vao->debugLabel("Chonk", "VAO " + host->getName());
 
     // required in order to use BindlessNV extension
     glEnableClientState_(GL_VERTEX_ATTRIB_ARRAY_UNIFIED_NV);
     glEnableClientState_(GL_ELEMENT_ARRAY_UNIFIED_NV);
 
-    const VADef formats[7] = {
+    const VADef formats[10] = {
         {3, GL_FLOAT,         GL_FALSE, offsetof(Chonk::VertexGPU, position)},
         {3, GL_FLOAT,         GL_FALSE, offsetof(Chonk::VertexGPU, normal)},
+        {1, GL_UNSIGNED_BYTE, GL_FALSE, offsetof(Chonk::VertexGPU, normal_technique)},
         {4, GL_UNSIGNED_BYTE, GL_TRUE,  offsetof(Chonk::VertexGPU, color)},
         {2, GL_FLOAT,         GL_FALSE, offsetof(Chonk::VertexGPU, uv)},
         {3, GL_FLOAT,         GL_FALSE, offsetof(Chonk::VertexGPU, flex)},
-        {1, GL_INT,           GL_FALSE, offsetof(Chonk::VertexGPU, albedo)},
-        {1, GL_INT,           GL_FALSE, offsetof(Chonk::VertexGPU, normalmap)}
+        {1, GL_SHORT,         GL_FALSE, offsetof(Chonk::VertexGPU, albedo_index)},
+        {1, GL_SHORT,         GL_FALSE, offsetof(Chonk::VertexGPU, normalmap_index)},
+        {1, GL_SHORT,         GL_FALSE, offsetof(Chonk::VertexGPU, pbr_index)},
+        {2, GL_SHORT,         GL_FALSE, offsetof(Chonk::VertexGPU, extended_materials)}
     };
 
     // configure the format of each vertex attribute in our structure.
-    for (unsigned location = 0; location < 7; ++location)
+    for (unsigned location = 0; location < 10; ++location)
     {
         const VADef& d = formats[location];
-        if (d.type == GL_INT || d.type == GL_INT)
+        if ((d.type == GL_INT) ||
+            (d.type == GL_UNSIGNED_INT) ||
+            (d.type == GL_SHORT) ||
+            (d.type == GL_UNSIGNED_SHORT) ||
+            (d.type == GL_BYTE && d.normalize == GL_FALSE) ||
+            (d.type == GL_UNSIGNED_BYTE && d.normalize == GL_FALSE))
+        {
             gl_VertexAttribIFormat(location, d.size, d.type, d.offset);
+        }
         else
+        {
             gl_VertexAttribFormat(location, d.size, d.type, d.normalize, d.offset);
+        }
         _ext->glVertexAttribBinding(location, 0);
         _ext->glEnableVertexAttribArray(location);
     }
@@ -881,6 +999,10 @@ void
 ChonkDrawable::GLObjects::update(
     const Batches& batches,
     const osg::Object* host,
+    float fadeNear,
+    float fadeFar,
+    double birthday,
+    float alphaCutoff,
     osg::State& state)
 {
     OE_GL_ZONE_NAMED("update");
@@ -916,7 +1038,7 @@ ChonkDrawable::GLObjects::update(
         {
             _commands.emplace_back(lod_commands[i]);
 
-            if (_cull)
+            if (_gpucull)
             {
                 // record the bounding box of this chonk:
                 auto& bs = chonk->getBound();
@@ -926,6 +1048,10 @@ ChonkDrawable::GLObjects::update(
                 v.far_pixel_scale = chonk->_lods[i].far_pixel_scale;
                 v.near_pixel_scale = chonk->_lods[i].near_pixel_scale;
                 v.num_lods = chonk->_lods.size();
+                v.alpha_cutoff = alphaCutoff;
+                v.birthday = birthday;
+                v.fade_near = fadeNear;
+                v.fade_far = fadeFar;
                 _chonk_lods.push_back(std::move(v));
             }
         }
@@ -948,19 +1074,23 @@ ChonkDrawable::GLObjects::update(
         lod.total_num_commands = _commands.size();
     }
 
-    // no need to do this since it gets sent in cull()
-    //_commandBuf->uploadData(_commands);
-
     // Send to the GPU:
     _instanceInputBuf->uploadData(_all_instances, GL_STATIC_DRAW);
 
-    if (_cull)
+    if (_gpucull)
     {
         _chonkBuf->uploadData(_chonk_lods, GL_STATIC_DRAW);
         
-        // just reserve space if necessary.
-        // this is a NOP if the buffer is already sized properly
-        _instanceOutputBuf->uploadData(_instanceInputBuf->size(), nullptr);
+        // just reserve space if necessary - make sure there's enough space
+        // for 2 LODs for each instance so we can do transitioning!
+        // If someday, we draw more than 2 LODs at a time, we'll need to
+        // up this buffer size!!
+        _instanceOutputBuf->uploadData(_instanceInputBuf->size() * 2, nullptr);
+    }
+    else
+    {
+        // no need to do this since it gets sent in cull()
+        _commandBuf->uploadData(_commands);
     }
 
     _numInstances = _all_instances.size();
@@ -1036,7 +1166,7 @@ ChonkDrawable::GLObjects::draw(osg::State& state)
 
     // make the instance LUT visible in the shader
     // (use gl_InstanceID + gl_BaseInstance to access)
-    if (_cull)
+    if (_gpucull)
         _instanceOutputBuf->bindBufferBase(0);
     else
         _instanceInputBuf->bindBufferBase(0);
@@ -1057,6 +1187,7 @@ ChonkDrawable::GLObjects::draw(osg::State& state)
 void
 ChonkDrawable::GLObjects::release()
 {
+    _ext = nullptr;
     _vao = nullptr;
     _commandBuf = nullptr;
     _instanceInputBuf = nullptr;
@@ -1108,37 +1239,6 @@ ChonkRenderBin::ChonkRenderBin(const ChonkRenderBin& rhs, const osg::CopyOp& op)
     _cull_sg->_stateset = _cullSS.get();
 }
 
-namespace
-{
-    void apply_state_with_roberts_blessing(
-        osg::State& state,
-        osgUtil::StateGraph* new_rg,
-        osgUtil::StateGraph* prev_rg)
-    {
-        // mysterious state-fu adapted from osgUtil::RenderLeaf
-        if (prev_rg)
-        {
-            osgUtil::StateGraph* prev_rg_parent = prev_rg->_parent;
-            osgUtil::StateGraph* rg = new_rg;
-            if (prev_rg_parent != rg->_parent)
-            {
-                osgUtil::StateGraph::moveStateGraph(state, prev_rg_parent, rg->_parent);
-                state.apply(rg->getStateSet());
-
-            }
-            else if (rg != prev_rg)
-            {
-                state.apply(rg->getStateSet());
-            }
-        }
-        else
-        {
-            osgUtil::StateGraph::moveStateGraph(state, nullptr, new_rg->_parent);
-            state.apply(new_rg->getStateSet());
-        }
-    }
-}
-
 
 ChonkRenderBin::CullLeaf::CullLeaf(osgUtil::RenderLeaf* leaf) :
     CustomRenderLeaf(leaf)
@@ -1181,7 +1281,6 @@ ChonkRenderBin::DrawLeaf::draw(osg::State& state)
         auto& gl = ChonkDrawable::GLObjects::get(drawable->_globjects, state);
         gl._vao->unbind();
     }
-
 }
 
 void
@@ -1227,4 +1326,12 @@ ChonkRenderBin::drawImplementation(
 
     // dispatch.
     osgUtil::RenderBin::drawImplementation(ri, previous);
+}
+
+void
+ChonkRenderBin::releaseSharedGLObjects(osg::State* state)
+{
+    auto proto = static_cast<ChonkRenderBin*>(osgUtil::RenderBin::getRenderBinPrototype("ChonkBin"));
+    if (proto->_cullSS.valid())
+        proto->_cullSS->releaseGLObjects(state);
 }

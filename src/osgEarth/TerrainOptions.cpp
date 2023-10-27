@@ -44,7 +44,9 @@ TerrainOptions::getConfig() const
     conf.set( "blending", _enableBlending );
     conf.set( "compress_normal_maps", _compressNormalMaps);
     conf.set( "min_normal_map_lod", _minNormalMapLOD );
-    conf.set( "gpu_tessellation", _gpuTessellation );
+    conf.set( "tessellation", _gpuTessellation );
+    conf.set( "tessellation_level", tessellationLevel());
+    conf.set( "tessellation_range", tessellationRange());
     conf.set( "debug", _debug );
     conf.set( "bin_number", _renderBinNumber );
     conf.set( "min_expiry_time", _minExpiryTime);
@@ -53,8 +55,10 @@ TerrainOptions::getConfig() const
     conf.set( "max_tiles_to_unload_per_frame", _maxTilesToUnloadPerFrame);
     conf.set( "cast_shadows", _castShadows);
     conf.set( "tile_pixel_size", _tilePixelSize);
-    conf.set( "range_mode", "PIXEL_SIZE_ON_SCREEN", _rangeMode, osg::LOD::PIXEL_SIZE_ON_SCREEN);
-    conf.set( "range_mode", "DISTANCE_FROM_EYE_POINT", _rangeMode, osg::LOD::DISTANCE_FROM_EYE_POINT);
+    conf.set( "lod_method", "screen_space", _lodMethod, TerrainLODMethod::SCREEN_SPACE);
+    conf.set( "lod_method", "camera_distance", _lodMethod, TerrainLODMethod::CAMERA_DISTANCE);
+    conf.set( "range_mode", "PIXEL_SIZE_ON_SCREEN", _lodMethod, TerrainLODMethod::SCREEN_SPACE); // backwards compatible
+    conf.set( "range_mode", "DISTANCE_FROM_EYE_POINT", _lodMethod, TerrainLODMethod::CAMERA_DISTANCE); // backwards compatible
     conf.set( "skirt_ratio", heightFieldSkirtRatio() );
     conf.set( "color", color() );
     conf.set( "progressive", progressive() );
@@ -68,6 +72,8 @@ TerrainOptions::getConfig() const
     conf.set( "texture_compression", textureCompression());
     conf.set( "concurrency", concurrency());
     conf.set( "use_land_cover", useLandCover() );
+    //conf.set("screen_space_error", screenSpaceError()); // don't serialize me, i'm set by the MapNode
+    conf.set("max_texture_size", maxTextureSize());
 
     conf.set("expiration_range", minExpiryRange()); // legacy
     conf.set("expiration_threshold", minResidentTiles()); // legacy
@@ -89,11 +95,13 @@ TerrainOptions::fromConfig(const Config& conf)
     compressNormalMaps().setDefault(false);
     minNormalMapLOD().setDefault(0);
     gpuTessellation().setDefault(false);
+    tessellationLevel().setDefault(2.5f);
+    tessellationRange().setDefault(75.0f);
     debug().setDefault(false);
     renderBinNumber().setDefault(0);
     castShadows().setDefault(false);
-    rangeMode().setDefault(osg::LOD::DISTANCE_FROM_EYE_POINT);
-    tilePixelSize().setDefault(256);
+    lodMethod().setDefault(TerrainLODMethod::CAMERA_DISTANCE);
+    tilePixelSize().setDefault(512);
     minExpiryFrames().setDefault(0);
     minExpiryTime().setDefault(0.0);
     minExpiryRange().setDefault(0.0f);
@@ -111,6 +119,8 @@ TerrainOptions::fromConfig(const Config& conf)
     textureCompression().setDefault("");
     concurrency().setDefault(4u);
     useLandCover().setDefault(true);
+    screenSpaceError().setDefault(0.0f);
+    maxTextureSize().setDefault(65536);
 
     conf.get( "tile_size", _tileSize );
     conf.get( "min_tile_range_factor", _minTileRangeFactor );   
@@ -123,7 +133,10 @@ TerrainOptions::fromConfig(const Config& conf)
     conf.get( "blending", _enableBlending );
     conf.get( "compress_normal_maps", _compressNormalMaps);
     conf.get( "min_normal_map_lod", _minNormalMapLOD );
-    conf.get( "gpu_tessellation", _gpuTessellation );
+    conf.get( "tessellation", _gpuTessellation );
+    conf.get( "gpu_tessellation", _gpuTessellation); //bc
+    conf.get("tessellation_level", tessellationLevel());
+    conf.get("tessellation_range", tessellationRange());
     conf.get( "debug", _debug );
     conf.get( "bin_number", _renderBinNumber );
     conf.get( "min_expiry_time", _minExpiryTime);
@@ -132,10 +145,10 @@ TerrainOptions::fromConfig(const Config& conf)
     conf.get( "max_tiles_to_unload_per_frame", _maxTilesToUnloadPerFrame);
     conf.get( "cast_shadows", _castShadows);
     conf.get( "tile_pixel_size", _tilePixelSize);
-    conf.get( "range_mode", "PIXEL_SIZE_ON_SCREEN", rangeMode(), osg::LOD::PIXEL_SIZE_ON_SCREEN);
-    conf.get( "range_mode", "pixel_size", rangeMode(), osg::LOD::PIXEL_SIZE_ON_SCREEN);
-    conf.get( "range_mode", "DISTANCE_FROM_EYE_POINT", rangeMode(), osg::LOD::DISTANCE_FROM_EYE_POINT);
-    conf.get( "range_mode", "distance", rangeMode(), osg::LOD::DISTANCE_FROM_EYE_POINT);
+    conf.get( "lod_method", "screen_space", _lodMethod, TerrainLODMethod::SCREEN_SPACE);
+    conf.get( "lod_method", "camera_distance", _lodMethod, TerrainLODMethod::CAMERA_DISTANCE);
+    conf.get( "range_mode", "PIXEL_SIZE_ON_SCREEN", _lodMethod, TerrainLODMethod::SCREEN_SPACE); // backwards compatible
+    conf.get( "range_mode", "DISTANCE_FROM_EYE_POINT", _lodMethod, TerrainLODMethod::CAMERA_DISTANCE); // backwards compatible
     conf.get( "skirt_ratio", heightFieldSkirtRatio() );
     conf.get( "color", color() );
     conf.get( "progressive", progressive() );
@@ -149,6 +162,8 @@ TerrainOptions::fromConfig(const Config& conf)
     conf.get( "texture_compression", textureCompression());
     conf.get( "concurrency", concurrency());
     conf.get( "use_land_cover", useLandCover());
+    //conf.get("screen_space_error", screenSpaceError()); // don't serialize me, i'm set by the MapNode
+    conf.get("max_texture_size", maxTextureSize());
 
     conf.get("expiration_range", minExpiryRange()); // legacy
     conf.get("expiration_threshold", minResidentTiles()); // legacy
@@ -171,45 +186,65 @@ TerrainOptions::fromConfig(const Config& conf)
 
 //...................................................................
 
-TerrainOptionsAPI::TerrainOptionsAPI(TerrainOptions* optionsPtr) :
-_ptr(optionsPtr)
+namespace
+{
+    static TerrainOptions __default_to;
+}
+
+TerrainOptionsAPI::TerrainOptionsAPI() :
+    _ptr(&__default_to)
 {
     //nop
 }
+TerrainOptionsAPI::TerrainOptionsAPI(TerrainOptions* optionsPtr) :
+    _ptr(optionsPtr)
+{
+    OE_HARD_ASSERT(_ptr != nullptr);
+}
 
-OE_PROPERTY_IMPL(TerrainOptionsAPI, int, TileSize, tileSize);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, float, MinTileRangeFactor, minTileRangeFactor);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MaxLOD, maxLOD);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MinLOD, minLOD);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, FirstLOD, firstLOD);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, EnableLighting, enableLighting);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, ClusterCulling, clusterCulling);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, EnableBlending, enableBlending);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, CompressNormalMaps, compressNormalMaps);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MinNormalMapLOD, minNormalMapLOD);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, GPUTessellation, gpuTessellation);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, Debug, debug);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, int, RenderBinNumber, renderBinNumber);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, CastShadows, castShadows);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, osg::LOD::RangeMode, RangeMode, rangeMode);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, float, TilePixelSize, tilePixelSize);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MinExpiryFrames, minExpiryFrames);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, double, MinExpiryTime, minExpiryTime);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, float, MinExpiryRange, minExpiryRange);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MaxTilesToUnloadPerFrame, maxTilesToUnloadPerFrame);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MinResidentTiles, minResidentTiles);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, float, HeightFieldSkirtRatio, heightFieldSkirtRatio);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, Color, Color, color);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, Progressive, progressive);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, UseNormalMaps, useNormalMaps);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, UseLandCover, useLandCover);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, NormalizeEdges, normalizeEdges);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, MorphTerrain, morphTerrain);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, bool, MorphImagery, morphImagery);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, MergesPerFrame, mergesPerFrame);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, float, PriorityScale, priorityScale);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, std::string, TextureCompressionMethod, textureCompression);
-OE_PROPERTY_IMPL(TerrainOptionsAPI, unsigned, Concurrency, concurrency);
+TerrainOptionsAPI::TerrainOptionsAPI(const TerrainOptionsAPI& rhs) :
+    _ptr(rhs._ptr)
+{
+    OE_HARD_ASSERT(_ptr != nullptr);
+}
+
+OE_OPTION_IMPL(TerrainOptionsAPI, int, TileSize, tileSize);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, MinTileRangeFactor, minTileRangeFactor);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MaxLOD, maxLOD);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MinLOD, minLOD);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, FirstLOD, firstLOD);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, EnableLighting, enableLighting);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, ClusterCulling, clusterCulling);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, EnableBlending, enableBlending);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, CompressNormalMaps, compressNormalMaps);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MinNormalMapLOD, minNormalMapLOD);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, GPUTessellation, gpuTessellation);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, TessellationLevel, tessellationLevel);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, TessellationRange, tessellationRange);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, Debug, debug);
+OE_OPTION_IMPL(TerrainOptionsAPI, int, RenderBinNumber, renderBinNumber);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, CastShadows, castShadows);
+OE_OPTION_IMPL(TerrainOptionsAPI, TerrainLODMethod, LODMethod, lodMethod)
+OE_OPTION_IMPL(TerrainOptionsAPI, float, TilePixelSize, tilePixelSize);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MinExpiryFrames, minExpiryFrames);
+OE_OPTION_IMPL(TerrainOptionsAPI, double, MinExpiryTime, minExpiryTime);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, MinExpiryRange, minExpiryRange);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MaxTilesToUnloadPerFrame, maxTilesToUnloadPerFrame);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MinResidentTiles, minResidentTiles);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, HeightFieldSkirtRatio, heightFieldSkirtRatio);
+OE_OPTION_IMPL(TerrainOptionsAPI, Color, Color, color);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, Progressive, progressive);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, UseNormalMaps, useNormalMaps);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, UseLandCover, useLandCover);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, NormalizeEdges, normalizeEdges);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, MorphTerrain, morphTerrain);
+OE_OPTION_IMPL(TerrainOptionsAPI, bool, MorphImagery, morphImagery);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MergesPerFrame, mergesPerFrame);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, PriorityScale, priorityScale);
+OE_OPTION_IMPL(TerrainOptionsAPI, std::string, TextureCompressionMethod, textureCompression);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, Concurrency, concurrency);
+OE_OPTION_IMPL(TerrainOptionsAPI, float, ScreenSpaceError, screenSpaceError);
+OE_OPTION_IMPL(TerrainOptionsAPI, unsigned, MaxTextureSize, maxTextureSize);
 
 void
 TerrainOptionsAPI::setDriver(const std::string& value)

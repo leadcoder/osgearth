@@ -72,7 +72,7 @@ void oeui_render_fb_normals(inout vec4 color) {
 #pragma vp_function oeui_render_winding_fs, fragment_lighting, last
 void oeui_render_winding_fs(inout vec4 color) {
     color.rgb = gl_FrontFacing ? vec3(0,0.75,0) : vec3(1,0,0);
-    float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*32.0;
+    float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*48.0;
     color = vec4(mix(vec3(1), color.rgb, clamp(b,0,1)), 1.0);
 }
 )";
@@ -82,8 +82,36 @@ void oeui_render_winding_fs(inout vec4 color) {
 #extension GL_NV_fragment_shader_barycentric : enable
 #pragma vp_function oeui_render_outlines, fragment_lighting, last
 void oeui_render_outlines(inout vec4 color) {
-    float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*32.0;
-    color = vec4(mix(1.0-color.rgb, color.rgb, clamp(b,0,1)), color.a);
+    float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*48.0;        
+    vec3 line_color = clamp(color.rgb*1.5, 0.0, 1.0);
+    color = vec4(mix(line_color, color.rgb, clamp(b,0,1)), color.a);
+}
+)";
+
+    const char* render_ao = R"(
+#version 450
+#pragma vp_function oeui_render_ao, fragment_lighting, last
+struct OE_PBR { float roughness, ao, metal, brightness, contrast; } oe_pbr;
+void oeui_render_ao(inout vec4 color) {
+    color = vec4(oe_pbr.ao, oe_pbr.ao, oe_pbr.ao, 1);
+}
+)";
+
+    const char* render_roughness = R"(
+#version 450
+#pragma vp_function oeui_render_roughness, fragment_lighting, last
+struct OE_PBR { float roughness, ao, metal, brightness, contrast; } oe_pbr;
+void oeui_render_roughness(inout vec4 color) {
+    color = vec4(oe_pbr.roughness, oe_pbr.roughness, oe_pbr.roughness, 1);
+}
+)";
+
+    const char* render_metal = R"(
+#version 450
+#pragma vp_function oeui_render_metal, fragment_lighting, last
+struct OE_PBR { float roughness, ao, metal, brightness, contrast; } oe_pbr;
+void oeui_render_metal(inout vec4 color) {
+    color = vec4(oe_pbr.metal, oe_pbr.metal, oe_pbr.metal, 1);
 }
 )";
 
@@ -99,7 +127,6 @@ namespace osgEarth
         class RenderingGUI : public BaseGUI
         {
         private:
-            float _sse;
             osg::observer_ptr<MapNode> _mapNode;
             using time_point = std::chrono::time_point<std::chrono::steady_clock>;
             time_point _lastFrame;
@@ -115,19 +142,16 @@ namespace osgEarth
 
         public:
             RenderingGUI() : BaseGUI("Rendering"),
-                _sse(0.0f),
                 _frameCounter(0), _time_accum(0),
                 _renderViewNormals(false), _renderModelNormals(false),
                 _renderWinding(false), _renderOutlines(false) { }
 
             void load(const Config& conf) override
             {
-                conf.get("SSE", _sse);
             }
 
             void save(Config& conf) override
             {
-                conf.set("SSE", _sse);
             }                
 
             void setRenderMode(const std::string& mode, osg::RenderInfo& ri)
@@ -153,7 +177,7 @@ namespace osgEarth
                     time_point now = std::chrono::steady_clock::now();
                     int us = std::chrono::duration_cast<std::chrono::microseconds>(now - _lastFrame).count();
                     _lastFrame = now;
-                    constexpr int interval = 60;
+                    constexpr int interval = 15;
                     _times.push(us);
                     _time_accum += us;
                     if (_times.size() > interval) {
@@ -198,13 +222,17 @@ namespace osgEarth
                     }
                     ImGui::Separator();
 
-                    if (_sse == 0.0f)
-                        _sse = _mapNode->getScreenSpaceError();
-
-                    if (ImGui::SliderFloat("SSE", &_sse, 1.0f, 200.0f))
+                    if (ImGuiLTable::Begin("LOD"))
                     {
-                        _mapNode->setScreenSpaceError(_sse);
-                        dirtySettings();
+                        float sse = _mapNode->getScreenSpaceError();
+                        if (ImGuiLTable::SliderFloat("SSE", &sse, 1.0f, 200.0f))
+                            _mapNode->setScreenSpaceError(sse);
+
+                        float lod_scale = camera(ri)->getLODScale();
+                        if (ImGuiLTable::SliderFloat("LOD Scale", &lod_scale, 0.1f, 4.0f))
+                            camera(ri)->setLODScale(lod_scale);
+
+                        ImGuiLTable::End();
                     }
 
                     ImGui::Separator();
@@ -231,6 +259,15 @@ namespace osgEarth
                     if (ImGui::RadioButton("Normals (model space)", &s_renderMode, m++)) {
                         setRenderMode(render_model_normals, ri);
                     }
+                    if (ImGui::RadioButton("Metal (PBR)", &s_renderMode, m++)) {
+                        setRenderMode(render_metal, ri);
+                    }
+                    if (ImGui::RadioButton("Roughness (PBR)", &s_renderMode, m++)) {
+                        setRenderMode(render_roughness, ri);
+                    }
+                    if (ImGui::RadioButton("AO (PBR)", &s_renderMode, m++)) {
+                        setRenderMode(render_ao, ri);
+                    }
 
                     if (GLUtils::useNVGL())
                     {
@@ -243,10 +280,6 @@ namespace osgEarth
                                 stateset(ri)->setDefine("OE_GPUCULL_DEBUG", "0");
                         }
                     }
-
-                    float lod_scale = camera(ri)->getLODScale();
-                    if (ImGui::SliderFloat("LOD Scale", &lod_scale, 0.1f, 4.0f))
-                        camera(ri)->setLODScale(lod_scale);
                 }
                 ImGui::End();
             }
@@ -281,35 +314,53 @@ namespace osgEarth
                     }
                     else
                     {
-                        auto glpool = GLObjectPool::get(*ri.getState());
-                        auto globjects = glpool->objects();
-
-                        ImGui::Text("Recycling: %u%%",
-                            int(100 * float(glpool->recycleHits()) / std::max(1.0f, float(glpool->recycleHits() + glpool->recycleMisses()))));
-                        int avarice = glpool->getAvarice();
-                        ImGui::Text("Fast"); ImGui::SameLine();
-                        if (ImGui::SliderInt("Slow", &avarice, 10, 0))
-                            glpool->setAvarice(avarice);
-
-                        ImGui::Separator();
-
-                        double glmem = (double)glpool->totalBytes() / 1048576.;
-                        ImGui::TextColored(ImVec4(1, 1, 0, 1), "GL Memory: %.1lf MB", glmem);
-                        std::map<std::string, std::vector<unsigned>> counts;
-                        for (auto& obj : globjects) {
-                            counts[obj->label()].push_back(obj->size());
-                        }
-                        if (ImGui::BeginTable("globjects", 2))
+                        auto pools = GLObjectPool::getAll();
+                        for (auto& iter : pools)
                         {
-                            for (auto& bo : counts) {
-                                unsigned total = 0;
-                                for (auto& c : bo.second) total += c;
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%s", bo.first.c_str());
-                                ImGui::TableNextColumn();
-                                ImGui::Text("(%d) (%.1lf MB)", bo.second.size(), (double)total / (double)1048576.);
+                            auto cxid = iter.first;
+                            auto glpool = iter.second;
+                            auto globjects = glpool->objects();
+
+                            if (pools.size() > 1)
+                                ImGui::Text("Context %d", cxid);
+
+                            double glmem = (double)glpool->totalBytes() / 1048576.;
+                            ImGui::TextColored(ImVec4(1, 1, 0, 1), "NVGL Memory: %.1lf MB", glmem);
+                            std::map<std::string, std::list<GLObject::Ptr>> categories;
+                            for (auto& obj : globjects) {
+                                categories[obj->category()].emplace_back(obj);
                             }
-                            ImGui::EndTable();
+
+                            for (auto& cat : categories)
+                            {
+                                unsigned total = 0;
+                                for (auto& obj : cat.second)
+                                    total += obj->size();
+
+                                char header[128];
+                                sprintf(header, "%s (%d @ %.1lf MB)", cat.first.c_str(), (int)cat.second.size(), (double)total / 1048576.);
+
+                                if (ImGui::TreeNode(header))
+                                {
+                                    if (ImGui::BeginTable("globj", 3, ImGuiTableFlags_SizingFixedFit))
+                                    {
+                                        for (auto& obj : cat.second)
+                                        {
+                                            ImGui::TableNextColumn();
+                                            ImGui::Text("(%d)", obj->name());
+                                            ImGui::TableNextColumn();
+                                            ImGui::Text("%s", obj->uid().c_str());
+                                            ImGui::TableNextColumn();
+                                            ImGui::Text("(%.2lf MB)", (double)obj->size() / (double)1048576.);
+                                        }
+                                        ImGui::EndTable();
+                                    }
+
+                                    ImGui::TreePop();
+                                }
+                            }
+                            if (pools.size() > 1)
+                                ImGui::Separator();
                         }
                     }
                 }

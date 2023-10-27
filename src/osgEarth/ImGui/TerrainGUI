@@ -28,6 +28,7 @@
 #include <osgEarth/LabelNode>
 #include <osgEarth/SelectExtentTool>
 #include <osgEarth/TerrainEngineNode>
+#include <osgEarth/GLUtils>
 #include <chrono>
 #include <list>
 
@@ -42,32 +43,22 @@ namespace osgEarth
         {
         private:
             osg::observer_ptr<MapNode> _mapNode;
-            bool _installed;
-            float _x, _y;
-            float _ax, _ay;
             std::unique_ptr<AsyncElevationSampler> _sampler;
             Future<ElevationSample> _sample;
-            bool _measuring;
             osg::ref_ptr<FeatureNode> _measureCursor;
             osg::ref_ptr<Feature> _measureFeature;
             osg::ref_ptr<LabelNode> _measureLabel;
-            bool _clamp_measure;
-            float _measureDist;
-            float _tess;
-            osg::ref_ptr<osg::Uniform> _tess_u;
-            float _tess_range;
-            osg::ref_ptr<osg::Uniform> _tess_range_u;
             osg::ref_ptr<Contrib::SelectExtentTool> _invalidateTool;
-            bool _invalidating;
+            float _x = 0.0f, _y = 0.0f;
+            float _ax = 0.0f, _ay = 0.0f;
+            float _measureDist = 0.0f;
+            bool _installed = false;
+            bool _measuring = false;
+            bool _clamp_measure = true;
+            bool _invalidating = false;
 
         public:
-            TerrainGUI() : BaseGUI("Terrain"), 
-                _installed(false),
-                _tess(1.0f),
-                _tess_range(150.0f),
-                _measuring(false),
-                _invalidating(false),
-                _clamp_measure(true) { }
+            TerrainGUI() : BaseGUI("Terrain") { }
 
             void load(const Config& conf) override
             {
@@ -87,21 +78,94 @@ namespace osgEarth
 
                 ImGui::Begin(name(), visible());
                 {
-                    ImGui::Text("Resident Tiles: %u", _mapNode->getTerrainEngine()->getNumResidentTiles());
-
-                    if (_mapNode->getTerrainOptions().getGPUTessellation())
+                    if (!_mapNode->getTerrainEngine())
                     {
-                        //if (ImGui::SliderFloat("Tessellation SSE", &_sse, 5.0f, 50.0f))
-                        ImGui::SliderFloat("Tessellation", &_tess, 1.0f, 8.0f);
-                        _tess_u->set(_tess);
-                        ImGui::SliderFloat("Tess Range", &_tess_range, 75.0f, 500.0f);
-                        _tess_range_u->set(_tess_range);
-                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1, 0, 0, 1), "No terrain engine");
+                        ImGui::End();
+                        return;
+                    }
+
+                    auto options = _mapNode->getTerrainOptions();
+
+                    if (ImGuiLTable::Begin("terraingui"))
+                    {
+                        ImGuiLTable::Text("Resident Tiles", "%u", _mapNode->getTerrainEngine()->getNumResidentTiles());
+
+                        static int max_max_lod = -1;
+                        static unsigned u32_one = 1;
+                        unsigned max_lod = options.getMaxLOD();
+                        if (max_max_lod < 0) max_max_lod = max_lod;
+                        if (ImGuiLTable::InputScalar("Max LOD", ImGuiDataType_U32, &max_lod, &u32_one, nullptr, "%u"))
+                        {
+                            max_lod = clamp(max_lod, 0u, (unsigned)max_max_lod);
+                            options.setMaxLOD(max_lod);
+                        }
+
+                        TerrainLODMethod method = options.getLODMethod();
+                        bool method_b = (method == TerrainLODMethod::SCREEN_SPACE);
+                        if (ImGuiLTable::Checkbox("Screen space LOD", &method_b))
+                        {
+                            options.setLODMethod(method_b ? TerrainLODMethod::SCREEN_SPACE : TerrainLODMethod::CAMERA_DISTANCE);
+                        }
+
+                        if (options.getLODMethod() == TerrainLODMethod::SCREEN_SPACE)
+                        {
+                            float tilePixelSize = options.getTilePixelSize();
+                            if (ImGuiLTable::SliderFloat("  Pixels/tile:", &tilePixelSize, 64.0f, 1024.0f))
+                            {
+                                options.setTilePixelSize(tilePixelSize);
+                            }
+                        }
+
+                        if (GLUtils::useNVGL())
+                        {
+                            unsigned maxTex = options.getMaxTextureSize();
+                            const char* maxTexItems[] = { "16", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384" };
+                            unsigned maxTexIndex = 0;
+                            for (maxTexIndex = 0; maxTex > (unsigned)::atoi(maxTexItems[maxTexIndex]) && maxTexIndex < IM_ARRAYSIZE(maxTexItems) - 1; ++maxTexIndex);
+                            if (ImGuiLTable::BeginCombo("Max tex size", maxTexItems[maxTexIndex])) {
+                                for (int n = 0; n < IM_ARRAYSIZE(maxTexItems); n++) {
+                                    const bool is_selected = (maxTexIndex == n);
+                                    if (ImGui::Selectable(maxTexItems[n], is_selected)) {
+                                        maxTexIndex = n;
+                                        options.setMaxTextureSize(atoi(maxTexItems[maxTexIndex]));
+                                        _mapNode->getTerrainEngine()->dirtyTerrainOptions();
+                                    }
+                                    if (is_selected)
+                                        ImGui::SetItemDefaultFocus();
+                                }
+                                ImGuiLTable::EndCombo();
+                            }
+                        }
+
+                        if (options.getGPUTessellation())
+                        {
+                            ImGui::Separator();
+                            ImGuiLTable::Section("Tessellation");
+
+                            float level = options.getTessellationLevel();
+                            if (ImGuiLTable::SliderFloat("Level", &level, 1.0f, 8.0f))
+                                options.setTessellationLevel(level);
+
+                            float range = options.getTessellationRange();
+                            if (ImGuiLTable::SliderFloat("Range", &range, 50.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+                                options.setTessellationRange(range);
+                        }
+
+                        unsigned threads = options.getConcurrency();
+                        if (ImGuiLTable::SliderInt("Load threads", (int*)&threads, 1, 16))
+                        {
+                            options.setConcurrency(threads);
+                            _mapNode->getTerrainEngine()->dirtyTerrainOptions();
+                        }
+
+                        ImGuiLTable::End();
                     }
 
                     GeoPoint mp;
                     if (_mapNode->getGeoPointUnderMouse(view(ri), _x, _y, mp))
                     {
+                        ImGui::Separator();
                         if (mp.getSRS()->isGeographic())
                         {
                             osg::Vec3d world;
@@ -126,7 +190,7 @@ namespace osgEarth
 
                         if (_sample.isAvailable())
                         {
-                            if (_sample.get().elevation().getValue() == NO_DATA_VALUE)
+                            if (_sample->elevation().getValue() == NO_DATA_VALUE)
                             {
                                 ImGui::Text("Elevation: 0.0m");
                                 ImGui::Text("Resolution: n/a (NO DATA)");
@@ -212,7 +276,6 @@ namespace osgEarth
                         }
                         char buf[64];
                         sprintf(buf, "%.1f m", dist_m);
-                        //ImGui::TextColored(ImVec4(1,1,0,1), " %.2f m", dist_m);    
                         _measureLabel->setText(buf);
                         GeoPoint labelPos = _measureFeature->getExtent().getCentroid();
                         labelPos.altitudeMode() = ALTMODE_RELATIVE;
@@ -235,8 +298,8 @@ namespace osgEarth
             void install(osg::RenderInfo& ri)
             {
                 EventRouter::get(view(ri))
-                    .onMove([&](osg::View* v, float x, float y) { onMove(v, x, y); })
-                    .onClick([&](osg::View* v, float x, float y) { onClick(v, x, y); });
+                    .onMove([&](osg::View* v, float x, float y) { onMove(v, x, y); }, false)
+                    .onClick([&](osg::View* v, float x, float y) { onClick(v, x, y); }, false);
 
                 _sampler = std::unique_ptr<AsyncElevationSampler>(new AsyncElevationSampler(_mapNode->getMap()));
 
@@ -265,14 +328,6 @@ namespace osgEarth
                 _measureLabel->setStyle(labelStyle);
                 _measureLabel->setNodeMask(0);
                 _mapNode->addChild(_measureLabel);
-
-                if (_mapNode->getTerrainOptions().getGPUTessellation())
-                {
-                    _tess_u = new osg::Uniform("oe_terrain_tess", _tess);
-                    _mapNode->getOrCreateStateSet()->addUniform(_tess_u.get(), osg::StateAttribute::OVERRIDE);
-                    _tess_range_u = new osg::Uniform("oe_terrain_tess_range", _tess_range);
-                    _mapNode->getOrCreateStateSet()->addUniform(_tess_range_u.get(), osg::StateAttribute::OVERRIDE);
-                }
 
                 // Tool to invalidate a map extent
                 _invalidateTool = new Contrib::SelectExtentTool(_mapNode.get());

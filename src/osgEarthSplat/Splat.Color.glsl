@@ -19,10 +19,12 @@ void oe_splat_color_vertex(inout vec4 VertexVIEW)
 
 #pragma include Splat.Color.common.glsl
 
-vec4 oe_getGroundColor();
-vec4 oe_getGroundColorAtDistance(float distance);
+vec4 oe_getGroundColor(in vec4 tex_coord);
+vec4 oe_getGroundColorAtDistance(in vec4 tex_coord,float distance);
 in float oe_lod_cam_dist;
+in vec4 oe_layer_tilec;
+
 void oe_splat_color_fragment(inout vec4 color)
 {
-    color.rgb = oe_getGroundColorAtDistance(oe_lod_cam_dist).rgb;
+    color.rgb = oe_getGroundColorAtDistance(oe_layer_tilec,oe_lod_cam_dist).rgb;
 }

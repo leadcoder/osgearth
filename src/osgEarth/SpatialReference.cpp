@@ -498,14 +498,14 @@ SpatialReference::isVertEquivalentTo( const SpatialReference* rhs ) const
 bool
 SpatialReference::_isEquivalentTo( const SpatialReference* rhs, bool considerVDatum ) const
 {
+    if (this == rhs)
+        return true;
+
     if (!valid())
         return false;
 
     if (rhs == nullptr || !rhs->valid())
         return false;
-
-    if ( this == rhs )
-        return true;
 
     if (isGeographic()  != rhs->isGeographic()  ||
         isMercator()    != rhs->isMercator()    ||
@@ -687,7 +687,7 @@ SpatialReference::createTransMercFromLongitude( const Angle& lon ) const
     std::string horiz = Stringify()
         << "+proj=tmerc +lat_0=0"
         << " +lon_0=" << lon.as(Units::DEGREES)
-        << " +datum=" << (!datum.empty() ? "WGS84" : datum);
+        << " +datum=" << (datum.empty() ? "WGS84" : datum);
 
     return SpatialReference::create( horiz, getVertInitString() );
 }
@@ -704,7 +704,7 @@ SpatialReference::createUTMFromLonLat(const Angle& lon, const Angle& lat) const
     std::string horiz = Stringify()
         << "+proj=utm +zone=" << zone
         << (lat.as(Units::DEGREES) < 0 ? " +south" : "")
-        << " +datum=" << (!datum.empty() ? "WGS84" : datum);
+        << " +datum=" << (datum.empty() ? "WGS84" : datum);
 
     return SpatialReference::create(horiz, getVertInitString());
 }

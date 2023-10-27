@@ -33,9 +33,9 @@ using namespace osgEarth;
 #undef LC
 #define LC "[KMLReader] "
 
-KMLReader::KMLReader( MapNode* mapNode, const KMLOptions* options ) :
-_mapNode( mapNode ),
-_options( options )
+KMLReader::KMLReader(MapNode* mapNode, const KMLOptions* options) :
+    _mapNode(mapNode),
+    _options(options)
 {
     //nop
 }
@@ -43,7 +43,6 @@ _options( options )
 osg::Node*
 KMLReader::read( std::istream& in, const osgDB::Options* dbOptions )
 {
-    OE_INFO << LC << "Loading KML.." << std::endl;
     // pull the URI context out of the DB options:
     URIContext context(dbOptions);
 
@@ -76,12 +75,11 @@ KMLReader::read( xml_document<>& doc, const osgDB::Options* dbOptions )
 	root->setName( context.referrer() );
 
     KMLContext cx;
-    cx._mapNode   = _mapNode;
     cx._sheet     = new StyleSheet();
     cx._options   = _options;
     //cx._srs      = SpatialReference::create( "wgs84", "egm96" );
     // Use the geographic srs of the map so that clamping will occur against the correct vertical datum.
-    cx._srs = _mapNode->getMapSRS()->getGeographicSRS();
+    cx._srs = _mapNode ? _mapNode->getMapSRS()->getGeographicSRS() : SpatialReference::create("wgs84");
     cx._referrer = context.referrer();
     cx._groupStack.push( root );
 

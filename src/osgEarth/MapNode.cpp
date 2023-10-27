@@ -33,6 +33,7 @@
 #include <osgEarth/MapNodeObserver>
 #include <osgEarth/Utils>
 #include <osgEarth/Shaders>
+#include <osgEarth/Chonk>
 #include <osgUtil/Optimizer>
 #include <osgDB/DatabasePager>
 #include <osgEarth/HTTPClient>
@@ -196,6 +197,7 @@ MapNode::Options::getConfig() const
     conf.set( "proxy",                    proxySettings() );
     conf.set( "lighting",                 enableLighting() );
     conf.set( "overlay_blending",         overlayBlending() );
+    conf.set( "overlay_blending_source",  overlayBlendingSource());
     conf.set( "overlay_texture_size",     overlayTextureSize() );
     conf.set( "overlay_mipmapping",       overlayMipMapping() );
     conf.set( "overlay_resolution_ratio", overlayResolutionRatio() );
@@ -215,6 +217,7 @@ MapNode::Options::fromConfig(const Config& conf)
     proxySettings().init(ProxySettings());
     enableLighting().init(true);
     overlayBlending().init(true);
+    overlayBlendingSource().init("alpha");
     overlayMipMapping().init(false);
     overlayTextureSize().init(4096);
     overlayResolutionRatio().init(3.0f);
@@ -226,6 +229,7 @@ MapNode::Options::fromConfig(const Config& conf)
     conf.get( "proxy",                    proxySettings() );
     conf.get( "lighting",                 enableLighting() );
     conf.get( "overlay_blending",         overlayBlending() );
+    conf.get( "overlay_blending_source",  overlayBlendingSource());
     conf.get( "overlay_texture_size",     overlayTextureSize() );
     conf.get( "overlay_mipmapping",       overlayMipMapping() );
     conf.get( "overlay_resolution_ratio", overlayResolutionRatio() );
@@ -240,31 +244,27 @@ MapNode::Options::fromConfig(const Config& conf)
 //....................................................................
 
 MapNode::MapNode() :
-_map( new Map() ),
-_terrainOptionsAPI(&_optionsConcrete.terrain().mutable_value())
+_map( new Map() )
 {
     init();
 }
 
 MapNode::MapNode( Map* map ) :
-_map( map ? map : new Map() ),
-_terrainOptionsAPI(&_optionsConcrete.terrain().mutable_value())
+_map( map ? map : new Map() )
 {
     init();
 }
 
 MapNode::MapNode(const MapNode::Options& options ) :
 _map( new Map() ),
-_optionsConcrete(options),
-_terrainOptionsAPI(&_optionsConcrete.terrain().mutable_value())
+_optionsConcrete(options)
 {
     init();
 }
 
 MapNode::MapNode(Map* map, const MapNode::Options& options) :
 _map( map? map : new Map() ),
-_optionsConcrete(options),
-_terrainOptionsAPI(&_optionsConcrete.terrain().mutable_value())
+_optionsConcrete(options)
 {
     init();
 }
@@ -303,7 +303,7 @@ MapNode::init()
     _registry = Registry::instance();
 
     // the default SSE for all supporting geometries
-    _sseU = new osg::Uniform("oe_sse", 50.0f);
+    _sseU = new osg::Uniform("oe_sse", options().screenSpaceError().get());
 
     _readyForUpdate = true;
 }
@@ -330,29 +330,28 @@ MapNode::open()
         HTTPClient::setProxySettings( options().proxySettings().get() );
     }
 
-    // load and attach the terrain engine.
-    _terrainEngine = TerrainEngineNode::create(options().terrain().get());
-
-    // Callback listens for changes in the Map:
+    // Install a callback that lets this MapNode know about any changes
+    // to the map, and invoke it manually now so they start out in sync.
     _mapCallback = new MapNodeMapCallbackProxy(this);
     _map->addMapCallback( _mapCallback.get() );
+    _mapCallback->invokeOnLayerAdded(_map.get());
 
-    // Give the terrain engine a map to render.
+    // load and attach the terrain engine.
+    _terrainEngine = TerrainEngineNode::create(options().terrain().get());
     if ( _terrainEngine )
     {
         _terrainEngine->setMap(_map.get(), options().terrain().get());
-
-        // Define PBR lighting on the terrain engine
-        //_terrainEngine->getNode()->getOrCreateStateSet()->setDefine("OE_USE_PBR");
     }
     else
     {
         OE_WARN << "FAILED to create a terrain engine for this map" << std::endl;
     }
 
-    // Invoke the callback manually to add all existing layers to this node.
-    // This needs to happen AFTER calling _terrainEngine->setMap().
-    _mapCallback->invokeOnLayerAdded(_map.get());
+    // now that the terrain engine exists, we can invoke the rendering callback
+    LayerVector layers;
+    _map->getLayers(layers, [&](const Layer* layer) { return layer->isOpen(); });
+    for (auto& layer : layers)
+        layer->invoke_prepareForRendering(getTerrainEngine());
 
     // initialize terrain-level lighting:
     if ( options().terrain()->enableLighting().isSet() )
@@ -362,58 +361,66 @@ MapNode::open()
             options().terrain()->enableLighting().get() ? 1 : 0 );
     }
 
-    // a decorator for overlay models:
-    OverlayDecorator* overlayDecorator = new OverlayDecorator();
-    _terrainGroup->addChild(overlayDecorator);
-
-    // install the Clamping technique for overlays:
-    ClampingTechnique* clamping = new ClampingTechnique();
-    overlayDecorator->addTechnique(clamping);
-    _clampingManager = &clamping->getClampingManager();
-
-    bool envUseCascadedDraping = (::getenv("OSGEARTH_USE_CASCADE_DRAPING") != 0L);
-    if (envUseCascadedDraping || options().useCascadeDraping() == true)
+    if (_terrainEngine.valid())
     {
-        CascadeDrapingDecorator* cascadeDrapingDecorator = new CascadeDrapingDecorator(getMapSRS(), _terrainEngine->getResources());
-        overlayDecorator->addChild(cascadeDrapingDecorator);
-        _drapingManager = cascadeDrapingDecorator->getDrapingManager();
-        cascadeDrapingDecorator->addChild(_terrainEngine);
+        // a decorator for draped geometry (projected texturing)
+        OverlayDecorator* overlayDecorator = new OverlayDecorator();
+        _terrainGroup->addChild(overlayDecorator);
+
+        // install the Clamping technique for overlays:
+        ClampingTechnique* clamping = new ClampingTechnique();
+        overlayDecorator->addTechnique(clamping);
+        _clampingManager = &clamping->getClampingManager();
+
+        bool envUseCascadedDraping = (::getenv("OSGEARTH_USE_CASCADE_DRAPING") != 0L);
+        if (envUseCascadedDraping || options().useCascadeDraping() == true)
+        {
+            CascadeDrapingDecorator* cascadeDrapingDecorator = new CascadeDrapingDecorator(getMapSRS(), _terrainEngine->getResources());
+            overlayDecorator->addChild(cascadeDrapingDecorator);
+            _drapingManager = cascadeDrapingDecorator->getDrapingManager();
+            cascadeDrapingDecorator->addChild(_terrainEngine);
+        }
+
+        else
+        {
+            // simple draping - faster but less accurate
+
+            DrapingTechnique* draping = new DrapingTechnique();
+
+            const char* envOverlayTextureSize = ::getenv("OSGEARTH_OVERLAY_TEXTURE_SIZE");
+
+            if (options().overlayBlending().isSet())
+                draping->setOverlayBlending(options().overlayBlending().get());
+
+            if (options().overlayBlendingSource().isSetTo("color"))
+                draping->setOverlayBlendingParams(GL_SRC_COLOR, GL_ONE_MINUS_SRC_COLOR);
+            else if (options().overlayBlendingSource().isSetTo("alpha"))
+                draping->setOverlayBlendingParams(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            if (envOverlayTextureSize)
+                draping->setTextureSize(as<int>(envOverlayTextureSize, 1024));
+
+            else if (options().overlayTextureSize().isSet())
+                draping->setTextureSize(options().overlayTextureSize().get());
+
+            if (options().overlayMipMapping().isSet())
+                draping->setMipMapping(options().overlayMipMapping().get());
+
+            if (options().overlayResolutionRatio().isSet())
+                draping->setResolutionRatio(options().overlayResolutionRatio().get());
+
+            draping->reestablish(_terrainEngine);
+            overlayDecorator->addTechnique(draping);
+            _drapingManager = draping->getDrapingManager();
+
+            if (options().drapingRenderBinNumber().isSet())
+                _drapingManager->setRenderBinNumber(options().drapingRenderBinNumber().get());
+
+            overlayDecorator->addChild(_terrainEngine);
+        }
+
+        overlayDecorator->setTerrainEngine(_terrainEngine);
     }
-
-    else
-    {
-        // simple draping - faster but less accurate
-
-        DrapingTechnique* draping = new DrapingTechnique();
-
-        const char* envOverlayTextureSize = ::getenv("OSGEARTH_OVERLAY_TEXTURE_SIZE");
-
-        if ( options().overlayBlending().isSet() )
-            draping->setOverlayBlending( options().overlayBlending().get() );
-
-        if ( envOverlayTextureSize )
-            draping->setTextureSize( as<int>(envOverlayTextureSize, 1024) );
-
-        else if ( options().overlayTextureSize().isSet() )
-            draping->setTextureSize( options().overlayTextureSize().get() );
-
-        if ( options().overlayMipMapping().isSet() )
-            draping->setMipMapping( options().overlayMipMapping().get() );
-
-        if ( options().overlayResolutionRatio().isSet() )
-            draping->setResolutionRatio( options().overlayResolutionRatio().get() );
-
-        draping->reestablish( _terrainEngine );
-        overlayDecorator->addTechnique( draping );
-        _drapingManager = draping->getDrapingManager();
-
-        if ( options().drapingRenderBinNumber().isSet() )
-            _drapingManager->setRenderBinNumber( options().drapingRenderBinNumber().get() );
-
-        overlayDecorator->addChild(_terrainEngine);
-    }    
-
-    overlayDecorator->setTerrainEngine(_terrainEngine);
 
     osg::StateSet* stateset = getOrCreateStateSet();
     stateset->setName("MapNode");
@@ -442,9 +449,12 @@ MapNode::open()
     VirtualProgram* vp = VirtualProgram::getOrCreate(stateset);
     vp->setName(className());
     Shaders shaders;
+
     shaders.load(vp, shaders.PBR);
     stateset->setDefine("OE_USE_PBR");
 
+    shaders.load(vp, shaders.HexTilingLib);
+    stateset->setDefine("OE_HAVE_HEX_TILING");
 
     dirtyBound();
 
@@ -600,16 +610,13 @@ MapNode::getMapSRS() const
         0L;
 }
 
-TerrainOptionsAPI&
+TerrainOptionsAPI
 MapNode::getTerrainOptions()
 {
-    return _terrainOptionsAPI;
-}
-
-const TerrainOptionsAPI&
-MapNode::getTerrainOptions() const
-{
-    return _terrainOptionsAPI;
+    if (_terrainEngine.valid())
+        return _terrainEngine->getOptions();
+    else
+        return TerrainOptionsAPI(&_optionsConcrete.terrain().mutable_value());
 }
 
 Terrain*
@@ -637,7 +644,13 @@ MapNode::getTerrainEngine() const
 void
 MapNode::setScreenSpaceError(float value)
 {
+    // global option:
     options().screenSpaceError() = value;
+
+    // update the corresponding terrain option:
+    getTerrainOptions().setScreenSpaceError(value);
+
+    // update the uniform:
     _sseU->set(value);
 }
 
@@ -757,9 +770,9 @@ MapNode::onLayerAdded(Layer* layer, unsigned index)
 {
     if (!layer || !layer->isOpen())
         return;
-    
-    // Communicate terrain resources to the layer:
-    layer->invoke_prepareForRendering(getTerrainEngine());
+
+    if (getTerrainEngine())
+        layer->invoke_prepareForRendering(getTerrainEngine());
 
     // Create the layer's node, if it has one:
     osg::Node* node = layer->getNode();
@@ -969,11 +982,7 @@ MapNode::releaseGLObjects(osg::State* state) const
     for(const osg::Callback* ec = getEventCallback(); ec; ec = ec->getNestedCallback())
         ec->releaseGLObjects(state);
 
-    // inform the GL object pools for this context
-    if (state)
-    {
-        GLObjectPool::releaseGLObjects(state);
-    }
+    ChonkRenderBin::releaseSharedGLObjects(state);
 
     osg::Group::releaseGLObjects(state);
 }

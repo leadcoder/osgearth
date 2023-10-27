@@ -787,15 +787,15 @@ ResourceLibrary* MapBoxGL::StyleSheet::loadSpriteLibrary(const URI& sprite)
         ImageUtils::PixelReader imageReader(image.get());
         ImageUtils::PixelWriter imageWriter(image.get());
 
-        for (unsigned int t = 0; t < image->t(); ++t)
+        for (int t = 0; t < image->t(); ++t)
         {
-            for (unsigned int s = 0; s < image->s(); ++s)
+            for (int s = 0; s < image->s(); ++s)
             {
                 osg::Vec4 color = imageReader(s, t);
                 osg::Vec4 pma(color.b() * color.a(),
                     color.g() * color.a(),
                     color.r() * color.a(),
-                    color.a());                
+                    color.a());
                 imageWriter(pma, s, t);
             }
         }
@@ -881,6 +881,28 @@ MapBoxGLImageLayer::openImplementation()
     if (!_styleSheet.glyphs().empty())
     {
         _glyphManager = new MapboxGLGlyphManager(_styleSheet.glyphs().full(), getKey(), getReadOptions());
+    }
+    // Compute the data extents
+    if (!_styleSheet.layers().empty())
+    {
+        unsigned int minZoom = UINT_MAX;
+        unsigned int maxZoom = 0;
+        for (auto& l : _styleSheet.layers())
+        {
+            if (l.minZoom() < minZoom)
+            {
+                minZoom = l.minZoom();
+            }
+
+            if (l.maxZoom() > maxZoom)
+            {
+                maxZoom = l.maxZoom();
+            }
+        }
+
+        DataExtentList dataExtents;
+        dataExtents.push_back(DataExtent(getProfile()->getExtent(), minZoom, maxZoom));
+        setDataExtents(dataExtents);        
     }
 
     return Status::NoError;

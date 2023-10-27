@@ -32,6 +32,9 @@
 #include <unordered_set>
 #include <unordered_map>
 
+// Usage hint to signal which textures are external materials. Currently only two slots are supported [0, 1]
+#define CHONK_HINT_EXTENDED_MATERIAL_SLOT "osgEarth.Chonk.ExtendedMaterial.Slot"
+
 namespace osgEarth
 {
     class OSGEARTH_EXPORT ChonkMaterial
@@ -43,17 +46,28 @@ namespace osgEarth
         }
 
         // texturearena indexes of material textures
-        int albedo;
-        int normal;
+        int albedo_index;
+        int normal_index;
+        int pbr_index;
+        int material1_index;
+        int material2_index;
 
         // store refs to the original textures when the
         // factory objects's texture arena is using auto-release.
         // otherwise they are null.
         Texture::Ptr albedo_tex;
         Texture::Ptr normal_tex;
+        Texture::Ptr pbr_tex;
+        Texture::Ptr material1_tex;
+        Texture::Ptr material2_tex;
 
     private:
-        ChonkMaterial() : albedo(-1), normal(-1) { }
+        ChonkMaterial() :
+            albedo_index(-1),
+            normal_index(-1),
+            pbr_index(-1),
+            material1_index(-1),
+            material2_index(-1){}
     };
 
     class ChonkFactory;
@@ -89,16 +103,31 @@ namespace osgEarth
         {
             osg::Vec3f position;
             osg::Vec3f normal;
+            char normal_technique;
             osg::Vec4ub color;
             osg::Vec2f uv;
             osg::Vec3f flex;
 
-            // TODO: upgrade to material index
-            GLint albedo;
-            GLint normalmap;
+            // texturearena indexes of materials
+            // TODO: use a material index instead?
+            GLshort albedo_index;
+            GLshort normalmap_index;
+            GLshort pbr_index;
+            osg::Vec2s extended_materials;
 
-            VertexGPU() : albedo(-1), normalmap(-1) {}
+            VertexGPU() : 
+                normal_technique(0),
+                albedo_index(-1),
+                normalmap_index(-1),
+                pbr_index(-1),
+                extended_materials(-1,-1){}
         };
+
+        static GLubyte NORMAL_TECHNIQUE_DEFAULT;
+        static GLubyte NORMAL_TECHNIQUE_ZAXIS;
+        static GLubyte NORMAL_TECHNIQUE_HEMISPHERE;
+
+        static unsigned MATERIAL_VERTEX_SLOT;
 
         //! Geometry variant for a given pixel size range
         struct LOD
@@ -116,7 +145,7 @@ namespace osgEarth
         //! Creates a new empty chonk.
         static Ptr create();
 
-        std::vector<ChonkMaterial::Ptr> _materials; // todo: upgrade to material index
+        std::vector<ChonkMaterial::Ptr> _materials;
         std::vector<VertexGPU> _vbo_store;
         std::vector<element_t> _ebo_store;
         std::vector<LOD> _lods;
@@ -128,7 +157,7 @@ namespace osgEarth
 
         //! GL objects that can be used across shared GCs
         //! (because they are static and they are bindless)
-        struct GLObjects : public ShareableGLObjects
+        struct GLObjects : public BindlessShareableGLObjects
         {
             GLBuffer::Ptr vbo;
             GLBuffer::Ptr ebo;
@@ -186,7 +215,9 @@ namespace osgEarth
         using Vector = std::vector<osg::ref_ptr<ChonkDrawable>>;
 
     public:
-        ChonkDrawable();
+        //! Construct a default drawable
+        //! @param renderBinNumber OSG render bin number for the drawable
+        ChonkDrawable(int render_bin_number = 3);
 
         //! Adds one instance of a chonk to the drawable.
         void add(Chonk::Ptr value);
@@ -204,15 +235,26 @@ namespace osgEarth
             const osg::Matrixf& xform,
             const osg::Vec2f& local_uv);
 
-        //! Model view matrix to apply before rendering
-        //! this drawable. Optional
-        void setModelViewMatrix(const osg::Matrix& mvm);
+        //! The timestamp at which this drawable was first created.
+        //! Used for new data fade-in.
+        void setBirthday(double value);
+        double getBirthday() const;
+
+        //! Set the camera distances for distance-based fading.
+        void setFadeNearFar(float nearDist, float farDist);
+
+        //! Sets the cutoff value for transparency
+        void setAlphaCutoff(float value);
 
         //! Whether to GPU cull on the per-chonk basis.
         //! Default is true.
         void setUseGPUCulling(bool value);
 
-        //! Installs a basic chonk-rendering shader on a stateset.
+        //! Render bin number to use for this drawable
+        void setRenderBinNumber(int value);
+        int getRenderBinNumber() const;
+
+        //! Installs a basic chonk-rendering shader on a drawable.
         static void installRenderBin(ChonkDrawable*);
 
     public:
@@ -231,19 +273,25 @@ namespace osgEarth
         // Keep me 16-byte aligned
         struct Instance
         {
-            osg::Matrixf xform;  // local xform
+            osg::Matrixf xform; // local xform
             osg::Vec2f uv; // tile-local UV
             GLuint lod;
-            float visibility[4]; // per LOD
+            float visibility[2]; // per LOD
+            float radius; // per chonk
+            float alphaCutoff;
             GLuint first_lod_cmd_index;
         };
         using Instances = std::vector<Instance>;
         using Batches = std::unordered_map<Chonk::Ptr, Instances>;
         Batches _batches;
         bool _gpucull;
+        float _fadeNear, _fadeFar;
+        double _birthday;
+        float _alphaCutoff;
+        int _renderBinNumber;
 
         //! GL objects (and supporting data structures) that must
-        //! be stored and managed for each unique GL state/context,
+        //! be stored and managed for each unique OSG state,
         //! since they will differ for each view based on the camera
         //! location and will potentially change every frame.
         struct GLObjects : public PerStateGLObjects
@@ -255,6 +303,10 @@ namespace osgEarth
                 GLfloat radius;
                 GLfloat far_pixel_scale;
                 GLfloat near_pixel_scale;
+                GLfloat alpha_cutoff;
+                GLfloat birthday;
+                GLfloat fade_near;
+                GLfloat fade_far;
                 GLuint num_lods; // chonk-global
                 GLuint total_num_commands; // global
             };
@@ -273,7 +325,8 @@ namespace osgEarth
             GLBuffer::Ptr _instanceOutputBuf;
             GLBuffer::Ptr _chonkBuf;
             bool _dirty;
-            bool _cull;
+            bool _gpucull;
+
             void(GL_APIENTRY * _glMultiDrawElementsIndirectBindlessNV)
                 (GLenum, GLenum, const GLvoid*, GLsizei, GLsizei, GLint);
 
@@ -283,18 +336,25 @@ namespace osgEarth
             };
             mutable std::unordered_map<const void*, PCPState> _pcps;
 
-            GLObjects() : _dirty(true), _cull(true) { }
-            void initialize(const osg::Object* host, osg::State& state);
-            void update(const Batches&, const osg::Object* host, osg::State&);
+            GLObjects();
+            void initialize(
+                const osg::Object* host, osg::State& state);
+            void update(
+                const Batches&, const osg::Object* host,
+                float fadeNear, float fadeFar,
+                double birthday, float alphaCutoff,
+                osg::State&);
             void cull(osg::State& state);
             void draw(osg::State& state);
             void release();
         };
         mutable osg::buffered_object<GLObjects> _globjects;
-        osg::Matrix _mvm;
 
         void update_and_cull_batches(osg::State& state) const;
+
         void draw_batches(osg::State& state) const;
+
+        void dirtyGLObjects();
 
     public:
         // support intersectors and stats visitors
@@ -330,6 +390,8 @@ namespace osgEarth
         virtual bool isSameKindAs(const osg::Object* obj) const override { return dynamic_cast<const ChonkRenderBin*>(obj) != 0L; }
         virtual const char* libraryName() const override { return "osgEarth"; }
         virtual const char* className() const override { return "ChonkRenderBin"; }
+
+        static void releaseSharedGLObjects(osg::State* state);
 
     private:
         osg::ref_ptr<osg::StateSet> _cullSS;
