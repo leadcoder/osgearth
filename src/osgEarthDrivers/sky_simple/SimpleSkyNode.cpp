@@ -613,6 +613,9 @@ SimpleSkyNode::makeSceneLighting()
 
     stateset->getOrCreateUniform("oe_sky_exposure", osg::Uniform::FLOAT)->set(
         _options.exposure().value());
+
+    stateset->getOrCreateUniform("oe_sky_contrast", osg::Uniform::FLOAT)->set(
+        _options.contrast().value());
 }
 
 void
