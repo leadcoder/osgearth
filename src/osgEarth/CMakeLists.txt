@@ -865,7 +865,7 @@ set(TARGET_SRC
 )
 
 # MSVC 2017 and 2019 need /bigobj on debug build
-if(MSVC AND MSVC_VERSION LESS 1930)
+if(MSVC)# AND MSVC_VERSION LESS 1930)
     add_compile_options("$<$<CONFIG:Debug>:/bigobj>")    
 endif()
 
