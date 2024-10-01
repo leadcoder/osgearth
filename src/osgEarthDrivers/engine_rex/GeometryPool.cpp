@@ -31,9 +31,7 @@ using namespace osgEarth::REX;
 
 GeometryPool::GeometryPool() :
     _enabled(true),
-    _debug(false),
-    _geometryMapMutex("GeometryPool(OE)"),
-    _keygate("GeometryPool(OE).keygate")
+    _debug(false)
 {
     ADJUST_UPDATE_TRAV_COUNT(this, +1);
 
@@ -64,7 +62,7 @@ GeometryPool::getPooledGeometry(
 
     // make our globally shared EBO if we need it
     {
-        Threading::ScopedMutexLock lock(_geometryMapMutex);
+        std::lock_guard<std::mutex> lock(_geometryMapMutex);
         if (!_defaultPrimSet.valid())
         {
             // convert the mesher's indices to a SharedDrawElements
@@ -120,7 +118,7 @@ GeometryPool::getPooledGeometry(
         // first check the sharing cache (note: tiles with edits are not cached)
         if (edits.empty())
         {
-            Threading::ScopedMutexLock lock(_geometryMapMutex);
+            std::lock_guard<std::mutex> lock(_geometryMapMutex);
             GeometryMap::iterator i = _geometryMap.find(geomKey);
             if (i != _geometryMap.end())
             {
@@ -137,7 +135,7 @@ GeometryPool::getPooledGeometry(
             // only store as a shared geometry if there are no constraints.
             if (out.valid() && !out->hasConstraints())
             {
-                Threading::ScopedMutexLock lock(_geometryMapMutex);
+                std::lock_guard<std::mutex> lock(_geometryMapMutex);
                 _geometryMap[geomKey] = out.get();
             }
         }
@@ -224,7 +222,7 @@ GeometryPool::traverse(osg::NodeVisitor& nv)
 {
     if (nv.getVisitorType() == nv.UPDATE_VISITOR && _enabled)
     {
-        Threading::ScopedMutexLock lock(_geometryMapMutex);
+        std::lock_guard<std::mutex> lock(_geometryMapMutex);
 
         std::vector<GeometryKey> keys;
 
@@ -233,8 +231,6 @@ GeometryPool::traverse(osg::NodeVisitor& nv)
             if (iter.second.get()->referenceCount() == 1)
             {
                 keys.push_back(iter.first);
-                //iter.second->releaseGLObjects(nullptr);
-                OE_DEBUG << "Releasing: " << iter.second.get() << std::endl;
             }
         }
 
@@ -251,7 +247,7 @@ void
 GeometryPool::clear()
 {
     releaseGLObjects(nullptr);
-    Threading::ScopedMutexLock lock(_geometryMapMutex);
+    std::lock_guard<std::mutex> lock(_geometryMapMutex);
     _geometryMap.clear();
 }
 
@@ -262,7 +258,7 @@ GeometryPool::resizeGLObjectBuffers(unsigned maxsize)
         return;
 
     // collect all objects in a thread safe manner
-    Threading::ScopedMutexLock lock(_geometryMapMutex);
+    std::lock_guard<std::mutex> lock(_geometryMapMutex);
 
     for (GeometryMap::const_iterator i = _geometryMap.begin(); i != _geometryMap.end(); ++i)
     {
@@ -283,7 +279,7 @@ GeometryPool::releaseGLObjects(osg::State* state) const
         return;
 
     // collect all objects in a thread safe manner
-    Threading::ScopedMutexLock lock(_geometryMapMutex);
+    std::lock_guard<std::mutex> lock(_geometryMapMutex);
 
     for (auto& entry : _geometryMap)
     {
@@ -335,6 +331,9 @@ SharedGeometry::~SharedGeometry()
 const DrawElementsIndirectBindlessCommandNV&
 SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
 {
+    OE_SOFT_ASSERT(_verts.size() > 0);
+    OE_SOFT_ASSERT(_drawElements->size() > 0);
+
     bool dirty = false;
 
     // first the drawelements
@@ -342,9 +341,9 @@ SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
 
     if (de._ebo == nullptr || !de._ebo->valid())
     {
-        de._ebo = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER_ARB, state);
+        de._ebo = GLBuffer::create_shared(GL_ELEMENT_ARRAY_BUFFER_ARB, state);
         de._ebo->bind();
-        de._ebo->debugLabel("REX geometry", "Shared EBO");
+        de._ebo->debugLabel("Terrain geometry", "Shared EBO");
         de._ebo->bufferStorage(_drawElements->getTotalDataSize(), _drawElements->getDataPointer(), 0);
         de._ebo->unbind();
 
@@ -358,12 +357,12 @@ SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
         // supply a "size hint" for unconstrained tiles to the GLBuffer so it can try to re-use
         GLsizei size = _verts.size() * sizeof(GL4Vertex);
         if (_hasConstraints)
-            gs._vbo = GLBuffer::create(GL_ARRAY_BUFFER_ARB, state);
+            gs._vbo = GLBuffer::create_shared(GL_ARRAY_BUFFER_ARB, state);
         else
-            gs._vbo = GLBuffer::create(GL_ARRAY_BUFFER_ARB, state, size);
+            gs._vbo = GLBuffer::create_shared(GL_ARRAY_BUFFER_ARB, state, size);
 
         gs._vbo->bind();
-        gs._vbo->debugLabel("REX geometry", "Shared VBO");
+        gs._vbo->debugLabel("Terrain geometry", "Shared VBO");
         gs._vbo->bufferStorage(size, _verts.data());
         gs._vbo->unbind();
 
@@ -373,6 +372,12 @@ SharedGeometry::getOrCreateNVGLCommand(osg::State& state)
     // make them resident in each context separately
     de._ebo->makeResident(state);
     gs._vbo->makeResident(state);
+
+    OE_SOFT_ASSERT(de._ebo->address() != 0);
+    OE_SOFT_ASSERT(de._ebo->size() > 0);
+
+    OE_SOFT_ASSERT(gs._vbo->address() != 0);
+    OE_SOFT_ASSERT(gs._vbo->size() > 0);
 
     if (dirty)
     {
@@ -402,8 +407,7 @@ bool
 SharedGeometry::empty() const
 {
     return
-        (_drawElements.valid() == false || _drawElements->getNumIndices() == 0); //&&
-        //(_maskElements.valid() == false || _maskElements->getNumIndices() == 0);
+        (_drawElements.valid() == false || _drawElements->getNumIndices() == 0);
 }
 
 #if OSG_MIN_VERSION_REQUIRED(3,5,9)

@@ -75,8 +75,8 @@ namespace
 
     protected:
         std::string _rootPath;
-        std::shared_ptr<JobArena> _jobArena;
         FileSystemCacheOptions _options;
+        jobs::jobpool* _pool = nullptr;
     };
 
     struct WriteCacheRecord {
@@ -96,7 +96,7 @@ namespace
             const std::string& name,
             const std::string& rootPath,
             const FileSystemCacheOptions& options,
-            std::shared_ptr<JobArena>& jobArena);
+            jobs::jobpool* pool);
 
         static bool _s_debug;
 
@@ -136,7 +136,7 @@ namespace
         FileSystemCacheOptions _options;
 
         // pool for asynchronous writes
-        std::shared_ptr<JobArena> _jobArena;
+        jobs::jobpool* _pool = nullptr;
 
     public:
         // cache for objects waiting to be written; this supports reading from
@@ -193,7 +193,8 @@ namespace
 {
     FileSystemCache::FileSystemCache(const CacheOptions& options) :
         Cache(options),
-        _options(options)
+        _options(options),
+        _pool(nullptr)
     {
         // read the root path from ENV is necessary:
         if ( !_options.rootPath().isSet())
@@ -211,7 +212,7 @@ namespace
                 << "Failed to create or access folder \"" << _rootPath << "\"");
             return;
         }
-        OE_INFO << LC << "Opened a filesystem cache at \"" << _rootPath << "\"\n";
+        OE_INFO << LC << "Opened a filesystem cache at \"" << _rootPath << "\"" << std::endl;
 
         // create a thread pool dedicated to asynchronous cache writes
         setNumThreads(_options.threads().get());
@@ -222,11 +223,13 @@ namespace
     {
         if (num > 0u)
         {
-            _jobArena = std::make_shared<JobArena>("oe.fscache", osg::clampBetween(num, 1u, 8u));
+            _pool = jobs::get_pool("oe.fscache");
+            _pool->set_can_steal_work(false);
+            _pool->set_concurrency(osg::clampBetween(num, 1u, 8u));
         }
         else
         {
-            _jobArena = nullptr;
+            _pool = nullptr;
         }
     }
 
@@ -236,7 +239,7 @@ namespace
         if (getStatus().isError())
             return NULL;
 
-        return _bins.getOrCreate(name, new FileSystemCacheBin(name, _rootPath, _options, _jobArena));
+        return _bins.getOrCreate(name, new FileSystemCacheBin(name, _rootPath, _options, _pool));
     }
 
     CacheBin*
@@ -245,13 +248,13 @@ namespace
         if (getStatus().isError())
             return NULL;
 
-        static Mutex s_defaultBinMutex(OE_MUTEX_NAME);
+        static Mutex s_defaultBinMutex;
         if ( !_defaultBin.valid() )
         {
-            ScopedMutexLock lock( s_defaultBinMutex );
+            std::lock_guard<std::mutex> lock( s_defaultBinMutex );
             if ( !_defaultBin.valid() ) // double-check
             {
-                _defaultBin = new FileSystemCacheBin("__default", _rootPath, _options, _jobArena);
+                _defaultBin = new FileSystemCacheBin("__default", _rootPath, _options, _pool);
             }
         }
         return _defaultBin.get();
@@ -323,15 +326,13 @@ namespace
         const std::string& binID,
         const std::string& rootPath,
         const FileSystemCacheOptions& options,
-        std::shared_ptr<JobArena>& jobArena) :
+        jobs::jobpool* pool) :
 
         CacheBin(binID, options.enableNodeCaching().get()),
-        _jobArena(jobArena),
+        _pool(pool),
         _binPathExists(false),
         _options(options),
-        _ok(true),
-        _fileGate("CacheBinFileGate(OE)"),
-        _writeCacheRWM("CacheBinWriteL2(OE)")
+        _ok(true)
     {
         _binPath = osgDB::concatPaths(rootPath, binID);
         _metaPath = osgDB::concatPaths(_binPath, "osgearth_cacheinfo.json");
@@ -390,19 +391,12 @@ namespace
         //std::string path = fileURI.full() + OSG_EXT;
         std::string path = fileURI.full() + "." + _options.format().get();
 
-        if ( !osgDB::fileExists(path) )
-            return ReadResult( ReadResult::RESULT_NOT_FOUND );
-
-        osgEarth::TimeStamp timeStamp = osgEarth::getLastModifiedTime(path);
-
-        osg::ref_ptr<const osgDB::Options> dbo = mergeOptions(readOptions);
-
-        unsigned long handle = NetworkMonitor::begin(path, "pending", "Cache");
+        osg::ref_ptr<const osgDB::Options> dbo = mergeOptions(readOptions);        
 
         // lock the file:
         ScopedGate<std::string> lockFile(_fileGate, fileURI.full());
 
-        if (_jobArena)
+        if (_pool)
         {
             // first check the write-pending cache. The record will be there
             // if the object is queued for asynchronous writing but hasn't
@@ -412,18 +406,26 @@ namespace
 
             auto i = _writeCache.find(fileURI.full());
             if (i != _writeCache.end())
-            {
+            {                
                 ReadResult rr(
                     const_cast<osg::Image*>(dynamic_cast<const osg::Image*>(i->second.object.get())),
                     i->second.meta);
 
-                rr.setLastModifiedTime(timeStamp);
-
-                NetworkMonitor::end(handle, "OK");
+                rr.setLastModifiedTime(DateTime().asTimeStamp());        
 
                 return rr;
             }
+        }        
+
+        // Not in the pool, now check the file system
+        if (!osgDB::fileExists(path))
+        {
+            return ReadResult(ReadResult::RESULT_NOT_FOUND);
         }
+
+        unsigned long handle = NetworkMonitor::begin(path, "pending", "Cache");
+
+        osgEarth::TimeStamp timeStamp = osgEarth::getLastModifiedTime(path);
 
         osg::ref_ptr<osgDB::ReaderWriter> image_rw = 
             osgDB::Registry::instance()->getReaderWriterForExtension(_options.format().get());
@@ -448,7 +450,7 @@ namespace
         std::string metafile = fileURI.full() + ".meta";
         if (osgDB::fileExists(metafile))
             readMeta(metafile, meta);
-
+        
         ReadResult rr(r.getImage(), meta);
         rr.setLastModifiedTime(timeStamp);
 
@@ -475,19 +477,12 @@ namespace
         URI fileURI( key, _metaPath );
         std::string path = fileURI.full() + OSG_EXT;
 
-        if ( !osgDB::fileExists(path) )
-            return ReadResult( ReadResult::RESULT_NOT_FOUND );
-
-        osgEarth::TimeStamp timeStamp = osgEarth::getLastModifiedTime(path);
-
-        osg::ref_ptr<const osgDB::Options> dbo = mergeOptions(readOptions);
-
-        unsigned long handle = NetworkMonitor::begin(path, "pending", "Cache");
+        osg::ref_ptr<const osgDB::Options> dbo = mergeOptions(readOptions);        
 
         // lock the file:
         ScopedGate<std::string> lockFile(_fileGate, fileURI.full());
 
-        if (_jobArena)
+        if (_pool)
         {
             // first check the write-pending cache. The record will be there
             // if the object is queued for asynchronous writing but hasn't
@@ -502,14 +497,21 @@ namespace
                     const_cast<osg::Object*>(i->second.object.get()),
                     i->second.meta);
 
-                rr.setLastModifiedTime(timeStamp);
-
-                NetworkMonitor::end(handle, "OK");
+                rr.setLastModifiedTime(DateTime().asTimeStamp());
 
                 return rr;
             }
         }
 
+        // Not in the pool, now check the file system
+        if (!osgDB::fileExists(path))
+        {            
+            return ReadResult(ReadResult::RESULT_NOT_FOUND);
+        }
+
+        unsigned long handle = NetworkMonitor::begin(path, "pending", "Cache");
+
+        osgEarth::TimeStamp timeStamp = osgEarth::getLastModifiedTime(path);
         osgDB::ReaderWriter::ReadResult r = _rw->readObject(path, dbo.get());
         if (!r.success())
         {
@@ -592,7 +594,7 @@ namespace
         osg::ref_ptr<const osg::Object> object(raw_object);
         osg::ref_ptr<const osgDB::Options> writeOptions(dbo);
 
-        auto write_op = [=](Cancelable*)
+        auto write_op = [=]()
         {
             OE_PROFILING_ZONE_NAMED("OE FS Cache Write");
 
@@ -660,25 +662,25 @@ namespace
             }
         };
 
-        if (_jobArena != nullptr)
+        if (_pool != nullptr)
         {
             // Store in the write-cache until it's actually written.
             // Will override any existing entry and that's OK since the
             // most recent one is the valid one.
-            _writeCacheRWM.write_lock();
+            _writeCacheRWM.lock();
             WriteCacheRecord& record = _writeCache[fileURI.full()];
             record.meta = meta;
             record.object = object;
-            _writeCacheRWM.write_unlock();
+            _writeCacheRWM.unlock();
 
             // asynchronous write
-            Job(_jobArena.get()).dispatch(write_op);
+            jobs::dispatch(write_op, jobs::context{ fileURI.full(), _pool });
         }
 
         else
         {
             // synchronous write
-            write_op(nullptr);
+            write_op();
         }
 
         return true;

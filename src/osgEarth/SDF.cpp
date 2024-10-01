@@ -163,9 +163,9 @@ SDFGenerator::createNearestNeighborField(
     // Render features to a temporary image
     Style style;
     if (features.front()->getGeometry()->isLinear())
-        style.getOrCreate<LineSymbol>()->stroke()->color() = Color::Black;
+        style.getOrCreate<LineSymbol>()->stroke().mutable_value().color() = Color::Black;
     else
-        style.getOrCreate<PolygonSymbol>()->fill()->color() = Color::Black;
+        style.getOrCreate<PolygonSymbol>()->fill().mutable_value().color() = Color::Black;
 
     FeatureRasterizer rasterizer(nnfieldSize, nnfieldSize, extent, Color(1, 1, 1, 0));
     rasterizer.render(features, style);
@@ -445,7 +445,8 @@ SDFGenerator::compute_nnf_on_cpu(osg::Image* buf) const
 
 #define INF 1E20
 
-//! Compute the 1d distance transform
+    
+//! https://www.theoryofcomputing.org/articles/v008a019/v008a019.pdf
 //! @param f Array of values to compute the distance transform function
 //! @param d Temporary work array of size at least n
 //! @param v Temporary work array of size at least n
@@ -477,6 +478,7 @@ static void edt1d(const float* f, float* d, int* v, float* z, unsigned int n) {
     }
 }
 
+//! https://www.theoryofcomputing.org/articles/v008a019/v008a019.pdf
 //! Compute the 2d distance transform of a grid of floats
 //! @param grid A 2d grid of floats
 //! @param width The width of the grid

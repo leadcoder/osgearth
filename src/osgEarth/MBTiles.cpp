@@ -332,8 +332,7 @@ MBTiles::Driver::Driver() :
     _minLevel(0),
     _maxLevel(19),
     _forceRGB(false),
-    _database(nullptr),
-    _mutex("MBTiles Driver(OE)")
+    _database(nullptr)
 {
     //nop
 }
@@ -395,7 +394,7 @@ MBTiles::Driver::open(
                 "Cannot create database; required format property is missing");
         }
 
-        OE_INFO << LC << "Database does not exist; attempting to create it." << std::endl;
+        OE_INFO << LC << fullFilename << ": db does not exist; attempting to create it." << std::endl;
     }
 
     // Try to open (or create) the database. We use SQLITE_OPEN_NOMUTEX to do
@@ -462,7 +461,7 @@ MBTiles::Driver::open(
     else // !isNewDatabase
     {
         computeLevels();
-        OE_INFO << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
+        OE_INFO << LC << fullFilename << ": got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
 
         std::string profileStr;
         getMetaData("profile", profileStr);
@@ -490,6 +489,7 @@ MBTiles::Driver::open(
             if (format.isSet() && format.get() != _tileFormat)
             {
                 OE_WARN << LC
+                    << fullFilename << ": "
                     << "Database tile format (" << _tileFormat << ") will override the layer options format ("
                     << format.get() << ")" << std::endl;
             }
@@ -518,7 +518,7 @@ MBTiles::Driver::open(
             if (!_compressor.valid())
                 return Status(Status::ServiceUnavailable, "Cannot find compressor \"" + compression + "\"");
             else
-                OE_INFO << LC << "Data is compressed (" << compression << ")" << std::endl;
+                OE_INFO << LC << fullFilename << ": data is compressed (" << compression << ")" << std::endl;
         }
 
         // Set the profile
@@ -527,10 +527,14 @@ MBTiles::Driver::open(
         {
             if (!profileStr.empty())
             {
-                // try to parse it as a JSON config
-                Config pconf;
-                pconf.fromJSON(profileStr);
-                profile = Profile::create(ProfileOptions(pconf));
+                // See if the profile string is JSON
+                if (profileStr.find("{") != std::string::npos)
+                {                 
+                    // try to parse it as a JSON config
+                    Config pconf;
+                    pconf.fromJSON(profileStr);
+                    profile = Profile::create(ProfileOptions(pconf));
+                }
 
                 // if that didn't work, try parsing it directly
                 if (!profile)
@@ -542,14 +546,14 @@ MBTiles::Driver::open(
             if (!profile)
             {
                 if (profileStr.empty() == false)
-                    OE_WARN << LC << "Profile \"" << profileStr << "\" not recognized; defaulting to spherical-mercator\n";
+                    OE_WARN << LC << fullFilename << ": profile \"" << profileStr << "\" not recognized; defaulting to spherical-mercator\n";
 
                 profile = Profile::create(Profile::SPHERICAL_MERCATOR);
             }
 
             inout_profile = profile;
-            OE_INFO << LC << "Profile = " << profile->toString() << std::endl;
-            OE_INFO << LC << "Min=" << _minLevel << ", Max=" << _maxLevel
+            OE_INFO << LC << fullFilename << ": profile = " << profile->toString() << std::endl;
+            OE_INFO << LC << fullFilename << ": min=" << _minLevel << ", max=" << _maxLevel
                 << ", format=" << _tileFormat  << std::endl;
         }
 
@@ -577,11 +581,11 @@ MBTiles::Driver::open(
                     // Using 0 for the minLevel is not technically correct, but we use it instead of the proper minLevel to force osgEarth to subdivide
                     // since we don't really handle DataExtents with minLevels > 0 just yet.
                     out_dataExtents.push_back(DataExtent(extent, 0, _maxLevel));
-                    OE_INFO << LC << "Bounds = " << extent.toString() << std::endl;
+                    OE_INFO << LC << fullFilename << ": bounds = " << extent.toString() << std::endl;
                 }
                 else
                 {
-                    OE_WARN << LC << "MBTiles has invalid bounds " << extent.toString() << std::endl;
+                    OE_WARN << LC << fullFilename << ": MBTiles has invalid bounds " << extent.toString() << std::endl;
                 }
             }
         }
@@ -646,7 +650,7 @@ MBTiles::Driver::read(
     ProgressCallback* progress,
     const osgDB::Options* readOptions) const
 {
-    Threading::ScopedMutexLock exclusiveLock(_mutex);
+    std::lock_guard<std::mutex> exclusiveLock(_mutex);
 
     int z = key.getLevelOfDetail();
     int x = key.getTileX();
@@ -744,7 +748,7 @@ MBTiles::Driver::write(
     if (!key.valid() || !image)
         return Status::AssertionFailure;
 
-    Threading::ScopedMutexLock exclusiveLock(_mutex);
+    std::lock_guard<std::mutex> exclusiveLock(_mutex);
 
     // encode the data stream:
     std::stringstream buf;
@@ -844,7 +848,7 @@ MBTiles::Driver::write(
 bool
 MBTiles::Driver::getMetaData(const std::string& key, std::string& value)
 {
-    Threading::ScopedMutexLock exclusiveLock(_mutex);
+    std::lock_guard<std::mutex> exclusiveLock(_mutex);
 
     sqlite3* database = (sqlite3*)_database;
 
@@ -886,7 +890,7 @@ MBTiles::Driver::getMetaData(const std::string& key, std::string& value)
 bool
 MBTiles::Driver::putMetaData(const std::string& key, const std::string& value)
 {
-    Threading::ScopedMutexLock exclusiveLock(_mutex);
+    std::lock_guard<std::mutex> exclusiveLock(_mutex);
 
     sqlite3* database = (sqlite3*)_database;
 

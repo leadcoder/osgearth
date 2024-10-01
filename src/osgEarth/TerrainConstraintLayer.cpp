@@ -35,8 +35,6 @@ REGISTER_OSGEARTH_LAYER(mask, TerrainConstraintLayer);
 void
 TerrainConstraintLayer::Options::fromConfig(const Config& conf)
 {
-    minLevel().setDefault(8u);
-
     // backwards compatability
     if (ciEquals(conf.key(), "featuremask"))
     {
@@ -81,14 +79,34 @@ TerrainConstraintLayer::Options::getConfig() const
 
 namespace
 {
-    void addNode(osg::Node* node, const SpatialReference* map_srs, MeshConstraint& constraint)
+    using triangle_t = std::tuple<osg::Vec3d, osg::Vec3d, osg::Vec3d>;
+    using triangle_set_t = std::set<triangle_t>;
+
+    void addNode(osg::Node* node, const SpatialReference* map_srs, triangle_set_t& tris, MeshConstraint& constraint)
     {
-        const osg::Vec3d zup(0, 0, 1);
+        OE_SOFT_ASSERT_AND_RETURN(node != nullptr, void());
+
+        if (node->getUserDataContainer())
+        {
+            auto wrapper = dynamic_cast<WrapperObject<osg::ref_ptr<Feature>>*>(
+                node->getUserDataContainer()->getUserObject("features"));
+
+            if (wrapper)
+            {
+                constraint.features.push_back(wrapper->value.get());
+            }
+
+            return;
+        }
+
+
+        OE_SOFT_ASSERT_AND_RETURN(map_srs != nullptr, void());
+
         const SpatialReference* ecef = map_srs->getGeocentricSRS();
+        auto* working_srs = SpatialReference::get("spherical-mercator");
 
         auto multipolygon = new MultiGeometry();
         auto feature = new Feature(multipolygon, map_srs);
-        constraint.features.emplace_back(feature);
 
         auto functor = [&](osg::Geometry& geom, unsigned i0, unsigned i1, unsigned i2, const osg::Matrix& xform)
             {
@@ -99,21 +117,32 @@ namespace
                 {
                     v[i] = v[i] * xform; // to ECEF
                     ecef->transform(v[i], map_srs, v[i]); // to Map SRS
-
+                    
                     // zero out elevation if necessary
                     if (constraint.hasElevation == false)
                         v[i].z() = 0.0;
                 }
 
-                osg::ref_ptr<osgEarth::Polygon> poly = new osgEarth::Polygon();
-                poly->push_back(v[0]);
-                poly->push_back(v[1]);
-                poly->push_back(v[2]);
-                multipolygon->getComponents().push_back(poly);
+                auto triangle = std::make_tuple(v[0], v[1], v[2]);
+                if (tris.find(triangle) == tris.end())
+                {
+                    tris.insert(triangle);
+
+                    osg::ref_ptr<osgEarth::Polygon> poly = new osgEarth::Polygon();
+                    poly->push_back(v[0]);
+                    poly->push_back(v[1]);
+                    poly->push_back(v[2]);
+                    multipolygon->getComponents().push_back(poly);
+                }
             };
 
         TriangleVisitor visitor(functor);
         node->accept(visitor);
+
+        if (!multipolygon->getComponents().empty())
+        {
+            constraint.features.emplace_back(feature);
+        }
     }
 }
 
@@ -188,9 +217,7 @@ TerrainConstraintLayer::openImplementation()
             return modelStatus;
     }
 
-    _filterchain = FeatureFilterChain::create(
-        options().filters(),
-        getReadOptions());
+    _filterChain = FeatureFilterChain::create(options().filters(), getReadOptions());
 
     return Status::NoError;
 }
@@ -206,20 +233,9 @@ TerrainConstraintLayer::getExtent() const
         return Layer::getExtent();
 }
 
-//void
-//TerrainConstraintLayer::setVisible(bool value)
-//{
-//    //VisibleLayer::setVisible(value); // do NOT call base class
-//    if (value && !isOpen())
-//        open();
-//    else if (!value && isOpen())
-//        close();
-//}
-
 void
 TerrainConstraintLayer::addedToMap(const Map* map)
 {
-    OE_DEBUG << LC << "addedToMap\n";
     VisibleLayer::addedToMap(map);
     options().featureSource().addedToMap(map);
     options().model().addedToMap(map);
@@ -244,7 +260,7 @@ TerrainConstraintLayer::create()
     {
         if (!fs->getFeatureProfile())
         {
-            setStatus(Status(Status::ConfigurationError, "Feature source cannot report profile (is it open?)"));
+            setStatus(Status::ConfigurationError, "Feature source cannot report profile (is it open?)");
         }
         return;
     }
@@ -285,11 +301,7 @@ TerrainConstraintLayer::setMinLevel(unsigned value)
 void
 TerrainConstraintLayer::getFeatureConstraint(const TileKey& key, FilterContext* context, MeshConstraint& constraint, ProgressCallback* progress) const
 {
-    osg::ref_ptr<FeatureCursor> cursor = getFeatureSource()->createFeatureCursor(
-        key,
-        getFilters(),
-        context,
-        progress);
+    auto cursor = getFeatureSource()->createFeatureCursor(key, _filterChain, context, progress);
 
     if (cursor.valid() && cursor->hasMore())
     {
@@ -320,11 +332,28 @@ TerrainConstraintLayer::getModelConstraint(const TileKey& key, MeshConstraint& c
     auto layer_profile = layer->getProfile();
     OE_SOFT_ASSERT_AND_RETURN(layer_profile, void());
 
+    triangle_set_t triangles;
+
+#if 0
     osg::ref_ptr<osg::Node> node = layer->createTile(key, progress);
     if (node.valid())
     {
-        addNode(node.get(),key.getProfile()->getSRS(), constraint);
+        addNode(node.get(), key.getProfile()->getSRS(), triangles, constraint);
     }
+#else 
+    for (int i = -1; i <= 1; ++i)
+    {
+        for (int j = -1; j <= 1; ++j)
+        {
+            auto part_key = key.createNeighborKey(i, j);
+            osg::ref_ptr<osg::Node> node = layer->createTile(part_key, progress);
+            if (node.valid())
+            {
+                addNode(node.get(), key.getProfile()->getSRS(), triangles, constraint);
+            }
+        }
+    }
+#endif
 }
 
 
@@ -343,6 +372,15 @@ TerrainConstraintLayer::getConstraint(const TileKey& key, FilterContext* context
     result.hasElevation = getHasElevation();
     result.removeExterior = getRemoveExterior();
     result.removeInterior = getRemoveInterior();
+
+#if 0
+    // testing :)
+    result.hasElevation = true;
+    result.removeExterior = false;
+    result.removeInterior = true;
+    result.cutMesh = false;
+    result.flattenMesh = true;
+#endif
 
     if (options().model().getLayer())
     {
@@ -366,14 +404,12 @@ TerrainConstraintQuery::setup(const Map* map)
     if (map)
     {
         map->getOpenLayers(layers);
+        session = new Session(map);
     }
 }
 
 bool
-TerrainConstraintQuery::getConstraints(
-    const TileKey& key,
-    MeshConstraints& output,
-    ProgressCallback* progress) const
+TerrainConstraintQuery::getConstraints(const TileKey& key, MeshConstraints& output, ProgressCallback* progress) const
 {
     output.clear();
 
@@ -381,9 +417,11 @@ TerrainConstraintQuery::getConstraints(
     {
         const GeoExtent& keyExtent = key.getExtent();
 
+        FilterContext context(session.get());
+
         for (auto& layer : layers)
         {
-            auto constraint = layer->getConstraint(key, nullptr, progress);
+            auto constraint = layer->getConstraint(key, &context, progress);
             if (!constraint.features.empty())
             {
                 output.push_back(std::move(constraint));

@@ -79,7 +79,7 @@ public: // FeatureFilter
         query.bounds() = localExtent.bounds();
         if (localExtent.intersects( _featureSource->getFeatureProfile()->getExtent()))
         {
-            osg::ref_ptr< FeatureCursor > cursor = _featureSource->createFeatureCursor(query, progress);
+            osg::ref_ptr< FeatureCursor > cursor = _featureSource->createFeatureCursor(query, {}, nullptr, progress);
             if (cursor)
             {
                 cursor->fill( features );
@@ -164,8 +164,6 @@ public: // FeatureFilter
                     }
                 }
             }
-
-            OE_DEBUG << LC << "Allowed " << output.size() << " out of " << input.size() << " features\n";
 
             input = output;
         }

@@ -24,8 +24,9 @@
 #include "TerrainEngineNode"
 #include "GLUtils"
 #include "Chonk"
-#include "Memory"
+#include "MemoryUtils"
 
+#include <osg/ArgumentParser>
 #include <osgText/Font>
 #include <osgDB/Registry>
 
@@ -33,37 +34,25 @@
 #include <cpl_conv.h>
 #include <cstdlib>
 
-// Fails to build on the GitHub Linux Action runner, so leaving out for now -gw
-//#ifndef OSG_GL3_AVAILABLE
-//#error osgEarth requires OpenSceneGraph built with OSG_GL3_AVAILABLE.
-//#endif
-
 using namespace osgEarth;
 
 #define LC "[Registry] "
 
 void osgEarth::initialize()
 {
-    OE_INFO << "Hello, world." << std::endl;
+    // Create the registry singleton.
+    Registry::instance()->getCapabilities();
+    
+    // Tell the weetjobs library how to set a thread name
+    jobs::set_thread_name_function([](const char* value) {
+        osgEarth::setThreadName(value);
+    });
+}
 
-    // creates a registry and initializes the system caps
-    osgEarth::Registry::instance()->getCapabilities();
-
-    if (::getenv("OSGEARTH_GL_DEBUG"))
-    {
-        GLUtils::enableGLDebugging();
-    }
-
-    if (::getenv("OSGEARTH_VP_DEBUG"))
-    {
-        GLUtils::enableGLDebugging();
-        VirtualProgram::enableGLDebugging();
-    }
-
-    if (::getenv("OSGEARTH_USE_NVGL") || ::getenv("OSGEARTH_USE_GL4"))
-    {
-        GLUtils::useNVGL(true);
-    }
+void osgEarth::initialize(osg::ArgumentParser& args)
+{
+    osg::DisplaySettings::instance()->readCommandLine(args);
+    initialize();
 }
 
 osgEarth::UID
@@ -79,34 +68,40 @@ std::int64_t osgEarth::g_startupPrivateBytes =
 
 namespace
 {
+    bool verbose_gdal_errors = false;
+
     void CPL_STDCALL myCPLErrorHandler(CPLErr errClass, int errNum, const char* msg)
     {
-        if (errClass == CE_Warning)
+        static std::once_flag flag;
+        std::call_once(flag, [&]() {
+            verbose_gdal_errors = ::getenv("OSGEARTH_VERBOSE_GDAL_ERRORS") != nullptr;
+        });
+
+        if (errClass == CE_Fatal)
         {
-            OE_INFO << "GDAL warning: " << msg << " (error " << errNum << ")" << std::endl;
+            OE_WARN << "GDAL fatal error: " << msg << " (error " << errNum << ")" << std::endl;
         }
-        else if (errClass > CE_Warning)
+        else if (verbose_gdal_errors)
         {
-            OE_WARN << "GDAL failure: " << msg << " (error " << errNum << ")" << std::endl;
+            OE_NOTICE << "GDAL says: " << msg << " (error " << errNum << ")" << std::endl;
+        }
+        else
+        {
+            OE_DEBUG << "GDAL says: " << msg << " (error " << errNum << ")" << std::endl;
         }
     }
 }
 
 Registry::Registry() :
-_caps               ( 0L ),
-_defaultFont        ( 0L ),
-_terrainEngineDriver( "rex" ),
-_cacheDriver        ( "filesystem" ),
-_overrideCachePolicyInitialized( false ),
-_devicePixelRatio(1.0f),
-_maxVertsPerDrawable(UINT_MAX),
-_regMutex("Registry(OE)"),
-_activityMutex("Reg.Activity(OE)"),
-_capsMutex("Reg.Caps(OE)"),
-_srsCache("Reg.SRSCache(OE)"),
-_blacklist("Reg.BlackList(OE)"),
-_maxImageDimension(INT_MAX)
+    _terrainEngineDriver("rex"),
+    _cacheDriver("filesystem"),
+    _overrideCachePolicyInitialized(false),
+    _devicePixelRatio(1.0f),
+    _maxVertsPerDrawable(UINT_MAX),
+    _maxImageDimension(INT_MAX)
 {
+    OE_INFO << "Hello, world." << std::endl;
+
     // set up GDAL and OGR.
     OGRRegisterAll();
     GDALAllRegister();
@@ -124,7 +119,8 @@ _maxImageDimension(INT_MAX)
 #endif
 
     // Redirect GDAL/OGR console errors to our own handler
-    CPLPushErrorHandler(myCPLErrorHandler);
+    //CPLPushErrorHandler(myCPLErrorHandler);
+    CPLSetErrorHandler(myCPLErrorHandler);
 
     // Set the GDAL shared block cache size. This defaults to 5% of
     // available memory which is too high.
@@ -133,9 +129,28 @@ _maxImageDimension(INT_MAX)
     // global initialization for CURL (not thread safe)
     HTTPClient::globalInit();
 
+    // GL debugging environment variables
+    if (::getenv("OSGEARTH_GL_DEBUG"))
+    {
+        GLUtils::enableGLDebugging();
+    }
+
+    if (::getenv("OSGEARTH_VP_DEBUG"))
+    {
+        GLUtils::enableGLDebugging();
+        VirtualProgram::enableGLDebugging();
+    }
+
+    if (::getenv("OSGEARTH_USE_NVGL") || ::getenv("OSGEARTH_USE_GL4"))
+    {
+        GLUtils::useNVGL(true);
+    }
+
     // warn if GDAL_DATA is not set
     if (::getenv("GDAL_DATA") == NULL)
+    {
         OE_INFO << LC << "Note: GDAL_DATA environment variable is not set" << std::endl;
+    }
 
     // shader generator used internally by osgEarth. Can be replaced.
     _shaderGen = new ShaderGenerator();
@@ -148,14 +163,14 @@ _maxImageDimension(INT_MAX)
     _unRefImageDataAfterApply = false;
 
     if (::getenv("OSGEARTH_DISABLE_UNREF_AFTER_APPLY"))
+    {
         _unRefImageDataAfterApply = false;
+    }
 
     // activate KMZ support
     osgDB::Registry::instance()->addArchiveExtension( "kmz" );
     osgDB::Registry::instance()->addArchiveExtension( "3tz");
     osgDB::Registry::instance()->addFileExtensionAlias( "3tz", "zip" );
-    //osgDB::Registry::instance()->addFileExtensionAlias( "kmz", "kml" );
-
     osgDB::Registry::instance()->addMimeTypeExtensionMapping( "application/vnd.google-earth.kml+xml", "kml" );
     osgDB::Registry::instance()->addMimeTypeExtensionMapping( "application/vnd.google-earth.kml+xml; charset=utf8", "kml");
     osgDB::Registry::instance()->addMimeTypeExtensionMapping( "application/vnd.google-earth.kmz",     "kmz" );
@@ -201,39 +216,31 @@ _maxImageDimension(INT_MAX)
     {
 #ifdef WIN32
         _defaultFont = osgText::readRefFontFile("arial.ttf");
-#else
-        _defaultFont = osgText::Font::getDefaultFont();
 #endif
-    }
 
-#if OSG_VERSION_LESS_THAN(3,5,8)
-    if ( _defaultFont.valid() )
-    {
-        // mitigates mipmapping issues that cause rendering artifacts
-        // for some fonts/placement
-        _defaultFont->setGlyphImageMargin( 2 );
+        if (!_defaultFont.valid())
+        {
+            _defaultFont = osgText::Font::getDefaultFont();
+        }
     }
-#endif
 
     const char* maxVerts = getenv("OSGEARTH_MAX_VERTS_PER_DRAWABLE");
     if (maxVerts)
     {
-        sscanf(maxVerts, "%u", &_maxVertsPerDrawable);
+        _maxVertsPerDrawable = std::atoi(maxVerts);
+
         if (_maxVertsPerDrawable < 1024)
             _maxVertsPerDrawable = 65536;
     }
 
-    // use the GDAL global mutex?
-    if (getenv("OSGEARTH_DISABLE_GDAL_MUTEX"))
+    // disable work stealing in the jobs system?
+    if (getenv("OSGEARTH_ENABLE_WORK_STEALING"))
     {
-        //getGDALMutex().disable();
+        jobs::set_allow_work_stealing(true);
     }
 
     // register the system stock Units.
     Units::registerAll( this );
-
-    // Default concurrency for async image layers
-    JobArena::setConcurrency("oe.layer.async", 4u);
 
     // register the chonk bin with OSG
     osgUtil::RenderBin::addRenderBinPrototype(
@@ -250,54 +257,67 @@ _maxImageDimension(INT_MAX)
 
 Registry::~Registry()
 {
-    OE_DEBUG << LC << "Registry shutting down...\n";
+    OE_DEBUG << LC << "Registry destructing" << std::endl;
+
     // A heavy hammer, but at this stage, which is usually application
     // shutdown, various osgEarth objects (e.g., VirtualPrograms) are
     // in the OSG cache and will cause a crash when they are deleted later.
     osgDB::Registry::instance()->clearObjectCache();
-    OE_DEBUG << LC << "Registry shutdown complete.\n";
 
     // pop the custom error handler
-    CPLPopErrorHandler();
-}
+    //CPLPopErrorHandler();
 
-static osg::ref_ptr<Registry> s_registry = NULL;
+    // Release any GL objects
+    release();
+
+    OE_INFO << "Goodbye." << std::endl;
+}
 
 // Destroy the registry explicitly: this is called in an atexit() hook.  See comment in
 // Registry::instance(bool reset).
-void destroyRegistry()
+namespace
 {
-   s_registry->release();
-   s_registry = NULL;
+    static bool g_registry_created = false;
+    static bool g_registry_destroyed = false;
+    static Registry* g_registry = nullptr;
+
+    void destroyRegistry()
+    {
+        if (g_registry)
+        {
+            g_registry->release();
+            delete g_registry;
+            g_registry = nullptr;
+            g_registry_destroyed = true;
+        }
+    }
 }
 
 Registry*
-Registry::instance(bool reset)
+Registry::instance()
 {
-    // Make sure the gdal mutex is created before the Registry so it will still be around when the registry is destroyed statically.
-    // This is to prevent crash on exit where the gdal mutex is deleted before the registry is.
-    osgEarth::getGDALMutex();
+    if (g_registry_destroyed)
+    {
+        return nullptr;
+    }
 
-    static bool s_registryInit = false;
+    if (g_registry_created == true && g_registry == nullptr)
+    {
+        OE_HARD_ASSERT(false, "Registry::instance() called recursively. Contact support.");
+    }
 
     // Create registry the first time through, explicitly rather than depending on static object
     // initialization order, which is undefined in c++ across separate compilation units.  An
     // explicit hook is registered to tear it down on exit.  atexit() hooks are run on exit in
     // the reverse order of their registration during setup.
-    if (!s_registryInit)
+    if (!g_registry && !g_registry_created)
     {
-        s_registryInit = true;
-        s_registry = new Registry;
+        g_registry_created = true;
+        g_registry = new Registry();
         std::atexit(destroyRegistry);
     }
 
-    if (reset)
-    {
-        s_registry->release();
-        s_registry = new Registry();
-    }
-
-    return s_registry.get();
+    return g_registry;
 }
 
 void
@@ -332,12 +352,6 @@ Registry::release()
 
     // Shared object index
     _objectIndex = nullptr;
-}
-
-Threading::RecursiveMutex& osgEarth::getGDALMutex()
-{
-    static osgEarth::Threading::RecursiveMutex _gdal_mutex("GDAL Mutex");
-    return _gdal_mutex;
 }
 
 const Profile*
@@ -375,7 +389,7 @@ Registry::getNamedProfile( const std::string& name ) const
 osg::ref_ptr<SpatialReference>
 Registry::getOrCreateSRS(const SpatialReference::Key& key)
 {
-    ScopedMutexLock lock(_srsCache);
+    std::lock_guard<std::mutex> lock(_srsCache.mutex());
     osg::ref_ptr<SpatialReference>& srs = _srsCache[key];
     if (!srs.valid())
     {
@@ -408,12 +422,12 @@ Registry::resolveCachePolicy(optional<CachePolicy>& cp) const
     // merge in any set properties from the caller's CP, since they override
     // the defaults:
     if ( cp.isSet() )
-        new_cp->mergeAndOverride( cp );
+        new_cp.mutable_value().mergeAndOverride( cp );
 
     // finally, merge in any set props from the OVERRIDE CP, which take
     // priority over everything else.
     if ( overrideCachePolicy().isSet() )
-        new_cp->mergeAndOverride( overrideCachePolicy() );
+        new_cp.mutable_value().mergeAndOverride( overrideCachePolicy() );
 
     // return the new composited cache policy.
     cp = new_cp;
@@ -425,7 +439,7 @@ Registry::getDefaultCacheDriverName() const
 {
     if (!_cacheDriver.isSet())
     {
-        Threading::ScopedMutexLock lock(_regMutex);
+        std::lock_guard<std::mutex> lock(_regMutex);
 
         if (!_cacheDriver.isSet())
         {
@@ -434,7 +448,7 @@ Registry::getDefaultCacheDriverName() const
             if ( value )
             {
                 _cacheDriver = value;
-                OE_DEBUG << LC << "Cache driver set from environment: " << value << std::endl;
+                OE_INFO << LC << "Cache driver set from environment: " << value << std::endl;
             }
         }
     }
@@ -452,7 +466,7 @@ Registry::overrideCachePolicy() const
 {
     if ( !_overrideCachePolicyInitialized )
     {
-        Threading::ScopedMutexLock lock(_regMutex);
+        std::lock_guard<std::mutex> lock(_regMutex);
 
         if ( !_overrideCachePolicyInitialized )
         {
@@ -467,7 +481,7 @@ Registry::overrideCachePolicy() const
                 // activate cache-only mode from the environment
                 if ( ::getenv(OSGEARTH_ENV_CACHE_ONLY) )
                 {
-                    _overrideCachePolicy->usage() = CachePolicy::USAGE_CACHE_ONLY;
+                    _overrideCachePolicy.mutable_value().usage() = CachePolicy::USAGE_CACHE_ONLY;
                     OE_INFO << LC << "CACHE-ONLY MODE set from environment" << std::endl;
                 }
 
@@ -476,7 +490,7 @@ Registry::overrideCachePolicy() const
                 if ( cacheMaxAge )
                 {
                     TimeSpan maxAge = osgEarth::Strings::as<long>( std::string(cacheMaxAge), INT_MAX );
-                    _overrideCachePolicy->maxAge() = maxAge;
+                    _overrideCachePolicy.mutable_value().maxAge() = maxAge;
                     OE_INFO << LC << "Cache max age set from environment: " << cacheMaxAge << std::endl;
                 }
             }
@@ -494,7 +508,7 @@ Registry::getDefaultCache() const
     {
         std::string driverName = getDefaultCacheDriverName();
 
-        Threading::ScopedMutexLock lock(_regMutex);
+        std::lock_guard<std::mutex> lock(_regMutex);
         if (!_defaultCache.valid())
         {
             const char* noCache = ::getenv(OSGEARTH_ENV_NO_CACHE);
@@ -529,7 +543,7 @@ Registry::setDefaultCache(Cache* cache)
 bool
 Registry::isBlacklisted(const std::string& filename)
 {
-    Threading::ScopedMutexLock sharedLock(_blacklist.mutex());
+    std::lock_guard<std::mutex> sharedLock(_blacklist.mutex());
     return _blacklist.find(filename) != _blacklist.end();
 }
 
@@ -538,7 +552,6 @@ Registry::blacklist(const std::string& filename)
 {
     _blacklist.lock();
     _blacklist.insert(filename);
-    OE_DEBUG << "Blacklist size = " << _blacklist.size() << std::endl;
     _blacklist.unlock();
 }
 
@@ -553,7 +566,7 @@ Registry::clearBlacklist()
 unsigned int
 Registry::getNumBlacklistedFilenames()
 {
-    Threading::ScopedMutexLock sharedLock(_blacklist.mutex());
+    std::lock_guard<std::mutex> sharedLock(_blacklist.mutex());
     return _blacklist.size();
 }
 
@@ -581,7 +594,7 @@ Registry::setCapabilities( Capabilities* caps )
 void
 Registry::initCapabilities()
 {
-    ScopedMutexLock lock( _capsMutex ); // double-check pattern (see getCapabilities)
+    std::lock_guard<std::mutex> lock( _capsMutex ); // double-check pattern (see getCapabilities)
     if ( !_caps.valid() )
         _caps = new Capabilities();
 }
@@ -591,7 +604,7 @@ Registry::getShaderFactory() const
 {
     if (!_shaderLib.valid())
     {
-        ScopedMutexLock lock(_regMutex);
+        std::lock_guard<std::mutex> lock(_regMutex);
         if (!_shaderLib.valid())
             const_cast<Registry*>(this)->_shaderLib = new ShaderFactory();
     }
@@ -633,14 +646,14 @@ Registry::getURIReadCallback() const
 void
 Registry::setDefaultFont( osgText::Font* font )
 {
-    Threading::ScopedMutexLock exclusive(_regMutex);
+    std::lock_guard<std::mutex> exclusive(_regMutex);
     _defaultFont = font;
 }
 
 osgText::Font*
 Registry::getDefaultFont()
 {
-    Threading::ScopedMutexLock shared(_regMutex);
+    std::lock_guard<std::mutex> shared(_regMutex);
     return _defaultFont.get();
 }
 
@@ -661,33 +674,25 @@ Registry::cloneOrCreateOptions(const osgDB::Options* input)
 }
 
 void
-Registry::registerUnits( const Units* units )
+Registry::registerUnits(const UnitsType& prototype)
 {
-    Threading::ScopedMutexLock lock(_regMutex);
-    _unitsVector.push_back(units);
+    std::lock_guard<std::mutex> lock(_regMutex);
+    _unitsVector.push_back(prototype);
 }
 
-const Units*
+UnitsType
 Registry::getUnits(const std::string& name) const
 {
-    Threading::ScopedMutexLock lock(_regMutex);
-    std::string lower = toLower(name);
-    for( UnitsVector::const_iterator i = _unitsVector.begin(); i != _unitsVector.end(); ++i )
+    std::lock_guard<std::mutex> lock(_regMutex);
+    for (auto& units : _unitsVector)
     {
-        if (toLower((*i)->getName()) == lower ||
-            toLower((*i)->getAbbr()) == lower)
+        if (ci_equals(name, units.getName()) || ci_equals(name, units.getAbbr()))
         {
-            return *i;
+            return units;
         }
     }
-    return 0L;
+    return { };
 }
-
-//void
-//Registry::setDefaultTerrainEngineDriverName(const std::string& name)
-//{
-//    _terrainEngineDriver = name;
-//}
 
 void
 Registry::setDefaultCacheDriverName(const std::string& name)
@@ -718,7 +723,7 @@ Registry::getObjectIndex() const
 {
     if (!_objectIndex.valid())
     {
-        ScopedMutexLock lock(_regMutex);
+        std::lock_guard<std::mutex> lock(_regMutex);
         if (!_objectIndex.valid())
         {
             _objectIndex = new ObjectIndex();
@@ -730,7 +735,7 @@ Registry::getObjectIndex() const
 void
 Registry::startActivity(const std::string& activity)
 {
-    Threading::ScopedMutexLock lock(_activityMutex);
+    std::lock_guard<std::mutex> lock(_activityMutex);
     _activities.insert(Activity(activity,std::string()));
 }
 
@@ -738,7 +743,7 @@ void
 Registry::startActivity(const std::string& activity,
     const std::string& value)
 {
-    Threading::ScopedMutexLock lock(_activityMutex);
+    std::lock_guard<std::mutex> lock(_activityMutex);
     _activities.erase(Activity(activity,std::string()));
     _activities.insert(Activity(activity,value));
 }
@@ -746,14 +751,14 @@ Registry::startActivity(const std::string& activity,
 void
 Registry::endActivity(const std::string& activity)
 {
-    Threading::ScopedMutexLock lock(_activityMutex);
+    std::lock_guard<std::mutex> lock(_activityMutex);
     _activities.erase(Activity(activity,std::string()));
 }
 
 void
 Registry::getActivities(std::set<std::string>& output)
 {
-    Threading::ScopedMutexLock lock(_activityMutex);
+    std::lock_guard<std::mutex> lock(_activityMutex);
     for(std::set<Activity,ActivityLess>::const_iterator i = _activities.begin();
         i != _activities.end();
         ++i)
@@ -800,14 +805,14 @@ Registry::getMimeTypeForExtension(const std::string& ext)
 void
 Registry::setTextureImageUnitOffLimits(int unit)
 {
-    Threading::ScopedMutexLock exclusive(_regMutex);
+    std::lock_guard<std::mutex> exclusive(_regMutex);
     _offLimitsTextureImageUnits.insert(unit);
 }
 
 const std::set<int>
 Registry::getOffLimitsTextureImageUnits() const
 {
-    Threading::ScopedMutexLock exclusive(_regMutex);
+    std::lock_guard<std::mutex> exclusive(_regMutex);
     return _offLimitsTextureImageUnits;
 }
 
@@ -846,21 +851,3 @@ Registry::setMaxTextureSize(int value)
 {
     _maxImageDimension = value;
 }
-
-namespace
-{
-    //Simple class used to add a file extension alias for the earth_tile to the earth plugin
-    class RegisterEarthTileExtension
-    {
-    public:
-        RegisterEarthTileExtension()
-        {
-#if OSG_VERSION_LESS_THAN(3,5,4)
-            // Method deprecated beyone 3.5.4 since all ref counting is thread-safe by default
-            osg::Referenced::setThreadSafeReferenceCounting( true );
-#endif
-            osgDB::Registry::instance()->addFileExtensionAlias("earth_tile", "earth");
-        }
-    };
-}
-static RegisterEarthTileExtension s_registerEarthTileExtension;

@@ -66,7 +66,7 @@ namespace osgEarth
          * Text label content
          */
         void setText( const std::string& text );
-        virtual const std::string& getText() const { return _text; }
+        const std::string& getText() const override { return _text; }
 
         /**
          * Style (for text and placement)
@@ -131,9 +131,6 @@ namespace osgEarth
         { }
 
     private:
-        static osg::observer_ptr<osg::StateSet> s_geodeStateSet;
-        static osg::observer_ptr<osg::StateSet> s_imageStateSet;
-
         osg::ref_ptr<osg::StateSet> _geodeStateSet, _imageStateSet;
     };
 

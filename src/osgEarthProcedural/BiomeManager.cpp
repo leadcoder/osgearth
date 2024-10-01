@@ -37,6 +37,8 @@ using namespace osgEarth::Procedural;
 #undef LC
 #define LC "[BiomeManager] "
 
+#define OE_TEST OE_NULL
+
 #define NORMAL_MAP_TEX_UNIT 1
 #define PBR_TEX_UNIT 2
 
@@ -124,8 +126,6 @@ namespace
 
 BiomeManager::BiomeManager() :
     _revision(0),
-    _refsAndRevision_mutex("BiomeManager.refsAndRevision(OE)"),
-    _residentData_mutex("BiomeManager.residentData(OE)"),
     _lodTransitionPixelScale(16.0f),
     _locked(false)
 {
@@ -139,21 +139,21 @@ BiomeManager::BiomeManager() :
 void
 BiomeManager::ref(const Biome* biome)
 {
-    ScopedMutexLock lock(_refsAndRevision_mutex);
+    std::lock_guard<std::mutex> lock(_refsAndRevision_mutex);
 
     auto item = _refs.emplace(biome, 0);
     ++item.first->second;
     if (item.first->second == 1) // ref count of 1 means it's new
     {
         ++_revision;
-        OE_DEBUG << LC << "Hello, " << biome->name().get() << " (" << biome->index() << ")" << std::endl;
+        OE_TEST << LC << "Hello, " << biome->name().get() << " (" << biome->index() << ")" << std::endl;
     }
 }
 
 void
 BiomeManager::unref(const Biome* biome)
 {
-    ScopedMutexLock lock(_refsAndRevision_mutex);
+    std::lock_guard<std::mutex> lock(_refsAndRevision_mutex);
 
     auto iter = _refs.find(biome);
     
@@ -173,7 +173,7 @@ BiomeManager::unref(const Biome* biome)
             // would also result in re-loading assets that are already
             // resident... think on this -gw
             //++_revision;
-            OE_DEBUG << LC << "Goodbye, " << biome->name().get() << "(" << biome->index() << ")" << std::endl;
+            OE_TEST << LC << "Goodbye, " << biome->name().get() << "(" << biome->index() << ")" << std::endl;
         }
     }
 }
@@ -212,12 +212,12 @@ BiomeManager::reset()
     // reset the reference counts, and bump the revision so the
     // next call to update will remove any resident data
     {
-        ScopedMutexLock lock(_refsAndRevision_mutex);
+        std::lock_guard<std::mutex> lock(_refsAndRevision_mutex);
 
         for (auto& iter : _refs)
         {
             const Biome* biome = iter.first;
-            OE_DEBUG << LC << "Goodbye, " << biome->name().get() << std::endl;
+            OE_TEST << LC << "Goodbye, " << biome->name().get() << std::endl;
             iter.second = 0;
         }
 
@@ -245,7 +245,7 @@ BiomeManager::recalculateResidentBiomes()
 
     // Figure out which biomes we need to load and which we can discard.
     {
-        ScopedMutexLock lock(_refsAndRevision_mutex);
+        std::lock_guard<std::mutex> lock(_refsAndRevision_mutex);
 
         for (auto& ref : _refs)
         {
@@ -265,7 +265,7 @@ BiomeManager::recalculateResidentBiomes()
 
     // Update the resident biome data structure:
     {
-        ScopedMutexLock lock(_residentData_mutex);
+        std::lock_guard<std::mutex> lock(_residentData_mutex);
 
         // add biomes that might need adding
         for (auto biome : biomes_to_add)
@@ -296,7 +296,7 @@ BiomeManager::recalculateResidentBiomes()
         for (auto& asset_name : to_delete)
         {
             _residentModelAssets.erase(asset_name);
-            OE_DEBUG << LC << "Unloaded asset " << asset_name << std::endl;
+            OE_TEST << LC << "Unloaded asset " << asset_name << std::endl;
         }
     }
 }
@@ -304,7 +304,7 @@ BiomeManager::recalculateResidentBiomes()
 std::vector<const Biome*>
 BiomeManager::getActiveBiomes() const
 {
-    ScopedMutexLock lock(_refsAndRevision_mutex);
+    std::lock_guard<std::mutex> lock(_refsAndRevision_mutex);
 
     std::vector<const Biome*> result;
 
@@ -321,7 +321,7 @@ BiomeManager::getResidentAssets() const
 {
     std::vector<const ModelAsset*> result;
 
-    ScopedMutexLock lock(_residentData_mutex);
+    std::lock_guard<std::mutex> lock(_residentData_mutex);
 
     result.reserve(_residentModelAssets.size());
 
@@ -418,13 +418,12 @@ namespace
 }
 
 void
-BiomeManager::materializeNewAssets(
-    const osgDB::Options* readOptions)
+BiomeManager::materializeNewAssets(const osgDB::Options* readOptions)
 {
     OE_PROFILING_ZONE;
 
     // exclusive access to the resident dataset
-    ScopedMutexLock lock(_residentData_mutex);
+    std::lock_guard<std::mutex> lock(_residentData_mutex);
 
     // Some caches to avoid duplicating data
     std::map<URI, ResidentModelAsset::Ptr> texcache;
@@ -432,11 +431,12 @@ BiomeManager::materializeNewAssets(
 
     // Factory for loading chonk data. It will use our texture arena.
     ChonkFactory factory(_textures.get());
+    factory.setGetOrCreateFunction(ChonkFactory::getWeakTextureCacheFunction(_texturesCache, _texturesCacheMutex));
 
     // Clear out each biome's instances so we can start fresh.
     // This is a low-cost operation since anything we can re-use
     // will already by in the _residentModelAssetData collection.
-    OE_DEBUG << LC << "Found " << _residentBiomes.size() << " resident biomes..." << std::endl;
+    OE_TEST << LC << "Found " << _residentBiomes.size() << " resident biomes..." << std::endl;
     for (auto& iter : _residentBiomes)
     {
         iter.second.instances.clear();
@@ -506,7 +506,7 @@ BiomeManager::materializeNewAssets(
             // First reference to this instance? Populate it:
             if (residentAsset == nullptr)
             {
-                OE_DEBUG << LC << "  Loading asset " << assetDef->name() << std::endl;
+                OE_TEST << LC << "  Loading asset " << assetDef->name() << std::endl;
 
                 residentAsset = ResidentModelAsset::create();
 
@@ -552,7 +552,7 @@ BiomeManager::materializeNewAssets(
                             residentAsset->boundingBox() = cbv.getBoundingBox();
                             modelcache[uri]._modelAABB = residentAsset->boundingBox();
 
-                            OE_INFO << LC << "Loaded model: " << uri.base() << 
+                            OE_TEST << LC << "Loaded model: " << uri.base() << 
                                 " with bbox " << residentAsset->boundingBox().xMin() << " "
                                 << residentAsset->boundingBox().yMin() << " "
                                 << residentAsset->boundingBox().xMax() << " "
@@ -606,7 +606,7 @@ BiomeManager::materializeNewAssets(
                         {
                             residentAsset->sideBillboardTex() = new osg::Texture2D(image.get());
 
-                            OE_DEBUG << LC << "Loaded side BB: " << uri.base() << std::endl;
+                            OE_TEST << LC << "Loaded side BB: " << uri.base() << std::endl;
                             texcache[uri] = residentAsset;
 
                             // normal map:
@@ -614,7 +614,7 @@ BiomeManager::materializeNewAssets(
                             osg::ref_ptr<osg::Image> normalMap = normalMapURI.getImage(readOptions);
                             if (normalMap.valid())
                             {
-                                OE_DEBUG << LC << "Loaded NML: " << normalMapURI.base() << std::endl;
+                                OE_TEST << LC << "Loaded NML: " << normalMapURI.base() << std::endl;
                                 residentAsset->sideBillboardNormalMap() = new osg::Texture2D(normalMap.get());
                             }
                             else
@@ -626,7 +626,7 @@ BiomeManager::materializeNewAssets(
                             osg::ref_ptr<osg::Image> pbrMap = pbrMapURI.getImage(readOptions);
                             if (pbrMap.valid())
                             {
-                                OE_DEBUG << LC << "Loaded PBR: " << pbrMapURI.base() << std::endl;
+                                OE_TEST << LC << "Loaded PBR: " << pbrMapURI.base() << std::endl;
                                 residentAsset->sideBillboardPBRMap() = new osg::Texture2D(pbrMap);
                             }
                             else
@@ -664,7 +664,7 @@ BiomeManager::materializeNewAssets(
                             {
                                 residentAsset->topBillboardTex() = new osg::Texture2D(image.get());
 
-                                OE_DEBUG << LC << "Loaded top BB: " << uri.base() << std::endl;
+                                OE_TEST << LC << "Loaded top BB: " << uri.base() << std::endl;
                                 texcache[uri] = residentAsset;
 
                                 // normal map:
@@ -672,7 +672,7 @@ BiomeManager::materializeNewAssets(
                                 osg::ref_ptr<osg::Image> normalMap = normalMapURI.getImage(readOptions);
                                 if (normalMap.valid())
                                 {
-                                    OE_DEBUG << LC << "Loaded NML: " << normalMapURI.base() << std::endl;
+                                    OE_TEST << LC << "Loaded NML: " << normalMapURI.base() << std::endl;
                                     residentAsset->topBillboardNormalMap() = new osg::Texture2D(normalMap.get());
                                 }
                                 else
@@ -685,7 +685,7 @@ BiomeManager::materializeNewAssets(
                                 osg::ref_ptr<osg::Image> pbrMap = pbrMapURI.getImage(readOptions);
                                 if (pbrMap.valid())
                                 {
-                                    OE_DEBUG << LC << "Loaded PBR: " << pbrMapURI.base() << std::endl;
+                                    OE_TEST << LC << "Loaded PBR: " << pbrMapURI.base() << std::endl;
                                     residentAsset->topBillboardPBRMap() = new osg::Texture2D(pbrMap);
                                 }
                                 else
@@ -770,7 +770,10 @@ BiomeManager::materializeNewAssets(
                     float near_pixel_scale = FLT_MAX;
 
                     if (residentAsset->chonk() == nullptr)
+                    {
                         residentAsset->chonk() = Chonk::create();
+                        residentAsset->chonk()->name() = residentAsset->assetDef()->name();
+                    }
 
 #if 0
                     // FOR DEBUGGING - ADD A CHONK THAT VISUALIZES THE NORMALS
@@ -808,7 +811,10 @@ BiomeManager::materializeNewAssets(
                         FLT_MAX;
 
                     if (residentAsset->chonk() == nullptr)
+                    {
                         residentAsset->chonk() = Chonk::create();
+                        residentAsset->chonk()->name() = residentAsset->assetDef()->name();
+                    }
 
                     residentAsset->chonk()->add(
                         residentAsset->impostor().get(),
@@ -837,7 +843,7 @@ BiomeManager::setCreateImpostorFunction(
     const std::string& group,
     BiomeManager::CreateImpostorFunction func)
 {
-    ScopedMutexLock lock(_residentData_mutex);
+    std::lock_guard<std::mutex> lock(_residentData_mutex);
     _createImpostorFunctions[group] = func;
 }
 

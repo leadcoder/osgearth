@@ -72,7 +72,7 @@ using namespace osgEarth::Threading;
 
 
 #ifdef USE_POLYSHADER_CACHE
-Mutex VirtualProgram::PolyShader::_cacheMutex("VP PolyShader Cache(OE)");
+std::mutex VirtualProgram::PolyShader::_cacheMutex;
 VirtualProgram::PolyShader::PolyShaderCache VirtualProgram::PolyShader::_polyShaderCache;
 #endif
 
@@ -109,7 +109,6 @@ namespace
 #define LC "[ProgramRepo] "
 
 ProgramRepo::ProgramRepo() :
-    Threading::Mutexed<osg::Referenced>("ProgramRepo(OE)"),
     _releaseUnusedPrograms(true)
 {
     const char* value = ::getenv("OSGEARTH_PROGRAM_BINARY_CACHE_PATH");
@@ -134,13 +133,17 @@ void
 ProgramRepo::setProgramBinaryCacheLocation(const std::string& folder)
 {
     lock();
-    if (osgDB::makeDirectory(folder) == true)
+    if (folder.empty())
+    {
+        _programBinaryCacheFolder.clear();
+    }
+    else if (osgDB::makeDirectory(folder) == true)
     {
         _programBinaryCacheFolder = folder;
     }
     else
     {
-        OE_WARN << LC << "Failed to access program binary cache location " << folder << std::endl;
+        OE_WARN << LC << "Failed to access/create program binary cache location " << folder << std::endl;
     }
     unlock();
 }
@@ -400,6 +403,22 @@ ProgramRepo::linkProgram(
     {
         program->compileGLObjects(state);
     }
+}
+
+osg::ref_ptr<VirtualProgram>
+ProgramRepo::getOrCreateVirtualProgram(const std::string& name, std::function<VirtualProgram*()> create)
+{
+    lock();
+
+    auto& vp = _virtualProgramLUT[name];
+    if (!vp.valid())
+    {
+        vp = create();
+    }
+
+    unlock();
+
+    return vp;
 }
 
 //------------------------------------------------------------------------
@@ -853,8 +872,7 @@ VirtualProgram::VirtualProgram(unsigned mask) :
     _logShaders(false),
     _logPath(""),
     _acceptCallbacksVaryPerFrame(false),
-    _isAbstract(false),
-    _dataModelMutex("OE.VirtualProgram")
+    _isAbstract(false)
 {
     // Note: we cannot set _active here. Wait until apply().
     // It will cause a conflict in the Registry.
@@ -890,6 +908,12 @@ VirtualProgram::VirtualProgram(unsigned mask) :
 #ifdef PREALLOCATE_APPLY_VARS
     _apply.resize(MAX_CONTEXTS);
 #endif
+
+#if 0 // Good, but needs more testing
+#ifdef OSGEARTH_SINGLE_THREADED_OSG
+    _useDataModelMutex = false;
+#endif
+#endif
 }
 
 
@@ -904,8 +928,7 @@ VirtualProgram::VirtualProgram(const VirtualProgram& rhs, const osg::CopyOp& cop
     _logPath(rhs._logPath),
     _template(osg::clone(rhs._template.get())),
     _acceptCallbacksVaryPerFrame(rhs._acceptCallbacksVaryPerFrame),
-    _isAbstract(rhs._isAbstract),
-    _dataModelMutex("OE.VirtualProgram")
+    _isAbstract(rhs._isAbstract)
 
 {
     _id = osgEarth::createUID();
@@ -958,14 +981,14 @@ VirtualProgram::compare(const osg::StateAttribute& sa) const
 void
 VirtualProgram::addBindAttribLocation(const std::string& name, GLuint index)
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     _attribBindingList[name] = index;
 }
 
 void
 VirtualProgram::removeBindAttribLocation(const std::string& name)
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     _attribBindingList.erase(name);
 }
 
@@ -1036,7 +1059,7 @@ VirtualProgram::releaseGLObjects(osg::State* state) const
 VirtualProgram::PolyShader*
 VirtualProgram::getPolyShader(const std::string& shaderID) const
 {
-    ScopedMutexLock readonly(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     ShaderMap::const_iterator i = _shaderMap.find(MAKE_SHADER_ID(shaderID));
     const ShaderEntry* entry = i != _shaderMap.end() ? &i->second : NULL;
     return entry ? entry->_shader.get() : 0L;
@@ -1068,8 +1091,7 @@ VirtualProgram::setShader(
 
     // lock the data model and insert the new shader.
     {
-        ScopedMutexLock lock(_dataModelMutex);
-
+        scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
         ShaderEntry& entry = _shaderMap[MAKE_SHADER_ID(shaderID)];
         entry._shader = pshader;
         entry._overrideValue = ov;
@@ -1105,7 +1127,7 @@ VirtualProgram::setShader(
 
     // lock the data model while changing it.
     {
-        ScopedMutexLock lock(_dataModelMutex);
+        scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
         checkSharing();
 
@@ -1145,7 +1167,7 @@ VirtualProgram::setFunction(
 
     // lock the functions map while iterating and then modifying it:
     {
-        ScopedMutexLock lock(_dataModelMutex);
+        scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
         checkSharing();
 
@@ -1191,7 +1213,7 @@ VirtualProgram::setFunction(
 bool
 VirtualProgram::addGLSLExtension(const std::string& extension)
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     std::pair<ExtensionsSet::const_iterator, bool> insertPair = _globalExtensions.insert(extension);
     return insertPair.second;
 }
@@ -1199,7 +1221,7 @@ VirtualProgram::addGLSLExtension(const std::string& extension)
 bool
 VirtualProgram::hasGLSLExtension(const std::string& extension) const
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     bool doesHave = _globalExtensions.find(extension) != _globalExtensions.end();
     return doesHave;
 }
@@ -1207,7 +1229,7 @@ VirtualProgram::hasGLSLExtension(const std::string& extension) const
 bool
 VirtualProgram::removeGLSLExtension(const std::string& extension)
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     ExtensionsSet::size_type erased = _globalExtensions.erase(extension);
     return erased > 0;
 }
@@ -1216,7 +1238,7 @@ void
 VirtualProgram::removeShader(const std::string& shaderID)
 {
     // lock te functions map while making changes:
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
     _shaderMap.erase(MAKE_SHADER_ID(shaderID));
 
@@ -1361,7 +1383,7 @@ VirtualProgram::apply(osg::State& state) const
 
         // Next, add the data from this VP.
         {
-            _dataModelMutex.lock();
+            scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
             for (auto& iter : _shaderMap)
             {
@@ -1375,8 +1397,6 @@ VirtualProgram::apply(osg::State& state) const
             local.accumAttribBindings.insert(abl.begin(), abl.end());
 
             local.accumExtensions.insert(_globalExtensions.begin(), _globalExtensions.end());
-
-            _dataModelMutex.unlock();
         }
 
         // next, assemble a list of the shaders in the map so we can use it as our
@@ -1466,7 +1486,7 @@ VirtualProgram::apply(osg::State& state) const
 #endif
         }
         Registry::programRepo().unlock();
-        key = local.programKey;
+        key.swap(local.programKey);
     }
 
     // finally, apply the program attribute.
@@ -1546,7 +1566,7 @@ VirtualProgram::getFunctions(
     VirtualProgram::FunctionLocationMap& out) const
 {
     // make a safe copy of the functions map.
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     out = _functions;
 }
 
@@ -1554,7 +1574,7 @@ void
 VirtualProgram::getShaderMap(ShaderMap& out) const
 {
     // make a safe copy of the functions map.
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
     out = _shaderMap;
 }
 
@@ -1638,7 +1658,7 @@ VirtualProgram::accumulateFunctions(
 
     // add the local ones too:
     {
-        ScopedMutexLock lock(_dataModelMutex);
+        scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
         for (auto& j : _functions)
         {
@@ -1735,10 +1755,11 @@ VirtualProgram::accumulateShaders(
 }
 
 void
-VirtualProgram::addShadersToAccumulationMap(VirtualProgram::ShaderMap& accumMap,
+VirtualProgram::addShadersToAccumulationMap(
+    VirtualProgram::ShaderMap& accumMap,
     const osg::State&          state) const
 {
-    ScopedLock lock( _dataModelMutex );
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
     for (auto& iter : _shaderMap)
     {
@@ -1827,7 +1848,7 @@ void VirtualProgram::setAcceptCallbacksVaryPerFrame(bool acceptCallbacksVaryPerF
 int
 VirtualProgram::compare_safe(const VirtualProgram& rhs) const
 {
-    ScopedMutexLock lock(_dataModelMutex);
+    scoped_lock_if lock(_dataModelMutex, _useDataModelMutex);
 
     // compare each parameter 
     COMPARE_StateAttribute_Parameter(_mask);
@@ -1911,18 +1932,16 @@ VirtualProgram::PolyShader::getShader(unsigned mask) const
         _location == VirtualProgram::LOCATION_VERTEX_CLIP ||
         _location == VirtualProgram::LOCATION_VERTEX_TRANSFORM_MODEL_TO_VIEW)
     {
-        OE_DEBUG << "getShader, mask = " << std::hex << mask << ", location = " << _location << "\n";
-
         // geometry stage has priority (runs last)
         if (mask & VirtualProgram::STAGE_GEOMETRY)
         {
-            OE_DEBUG << "Installing GS for VIEW/CLIP shader!\n";
+            //OE_DEBUG << "Installing GS for VIEW/CLIP shader!\n";
             return _geomShader.get();
         }
 
         else if (mask & VirtualProgram::STAGE_TESSEVALUATION)
         {
-            OE_DEBUG << "Installing TES for VIEW/CLIP shader!\n";
+            //OE_DEBUG << "Installing TES for VIEW/CLIP shader!\n";
             return _tessevalShader.get();
         }
     }
@@ -2048,7 +2067,7 @@ VirtualProgram::PolyShader::lookUpShader(
 
 #ifdef USE_POLYSHADER_CACHE
 
-    Threading::ScopedMutexLock lock(_cacheMutex);
+    std::lock_guard<std::mutex> lock(_cacheMutex);
 
     std::pair<std::string, std::string> hashKey(functionName, shaderSource);
 
@@ -2151,15 +2170,12 @@ namespace
         {
             std::string name;
             is >> name >> is.BEGIN_BRACKET;
-            OE_DEBUG << "Name = " << name << std::endl;
             {
                 unsigned location;
                 is >> is.PROPERTY("Location") >> location;
-                OE_DEBUG << "Location = " << location << std::endl;
 
                 float order;
                 is >> is.PROPERTY("Order") >> order;
-                OE_DEBUG << "Order = " << order << std::endl;
 
                 std::string source;
                 is >> is.PROPERTY("Source");
@@ -2173,7 +2189,6 @@ namespace
                         source.append(line); source.append(1, '\n');
                     }
                 }
-                OE_DEBUG << "Source = " << source << std::endl;
                 is >> is.END_BRACKET;
 
                 attr.setFunction(name, source, (osgEarth::VirtualProgram::FunctionLocation)location, order);

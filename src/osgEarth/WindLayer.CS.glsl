@@ -31,15 +31,15 @@ void main()
 {
     // coords is texture space:
     vec4 pixelNDC = vec4(
-        float(gl_WorkGroupID.x) / float(gl_NumWorkGroups.x-1),
-        float(gl_WorkGroupID.y) / float(gl_NumWorkGroups.y-1),
-        float(gl_WorkGroupID.z) / float(gl_NumWorkGroups.z-1),
-        1);
+        float(gl_WorkGroupID.x) / float(gl_NumWorkGroups.x - 1),
+        float(gl_WorkGroupID.y) / float(gl_NumWorkGroups.y - 1),
+        float(gl_WorkGroupID.z) / float(gl_NumWorkGroups.z - 1),
+        1.0);
 
     vec3 totalDirection = vec3(0);
 
     int i;
-    for(i=0; wind[i].speed >= 0.0 && i<SAFETY_BAILOUT; ++i)
+    for (i = 0; wind[i].speed >= 0.0 && i < SAFETY_BAILOUT; ++i)
     {
         if (wind[i].position.w == 1)
         {
@@ -70,8 +70,8 @@ void main()
     // A holds normalized wind speed
     pixel.a = min(totalSpeed, MAX_WIND_SPEED) / MAX_WIND_SPEED;
 
-    if (i==SAFETY_BAILOUT)
-        pixel = vec4(1,0,0,1);
+    if (i == SAFETY_BAILOUT)
+        pixel = vec4(1, 0, 0, 1);
 
     imageStore(oe_wind_tex, ivec3(gl_WorkGroupID), pixel);
 }

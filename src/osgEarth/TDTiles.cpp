@@ -128,12 +128,13 @@ BoundingVolume::fromJSON(const Json::Value& value)
         if (a.isArray() && a.size() == 6)
         {
             Json::Value::const_iterator i = a.begin();
-            region()->xMin() = (*i++).asDouble();
-            region()->yMin() = (*i++).asDouble();
-            region()->xMax() = (*i++).asDouble();
-            region()->yMax() = (*i++).asDouble();
-            region()->zMin() = (*i++).asDouble();
-            region()->zMax() = (*i++).asDouble();
+            auto& r = region().mutable_value();
+            r.xMin() = (*i++).asDouble();
+            r.yMin() = (*i++).asDouble();
+            r.xMax() = (*i++).asDouble();
+            r.yMax() = (*i++).asDouble();
+            r.zMin() = (*i++).asDouble();
+            r.zMax() = (*i++).asDouble();
         }
         else OE_WARN << "Invalid region array" << std::endl;
     }
@@ -144,10 +145,11 @@ BoundingVolume::fromJSON(const Json::Value& value)
         if (a.isArray() && a.size() == 4)
         {
             Json::Value::const_iterator i = a.begin();
-            sphere()->center().x() = (*i++).asDouble();
-            sphere()->center().y() = (*i++).asDouble();
-            sphere()->center().z() = (*i++).asDouble();
-            sphere()->radius()     = (*i++).asDouble();
+            auto& s = sphere().mutable_value();
+            s.center().x() = (*i++).asDouble();
+            s.center().y() = (*i++).asDouble();
+            s.center().z() = (*i++).asDouble();
+            s.radius()     = (*i++).asDouble();
 
         }
     }
@@ -169,12 +171,13 @@ BoundingVolume::fromJSON(const Json::Value& value)
             osg::Vec3d yvec(values[6], values[7], values[8]);
             osg::Vec3d zvec(values[9], values[10], values[11]);
 
-            box()->expandBy(center+xvec);
-            box()->expandBy(center-xvec);
-            box()->expandBy(center+yvec);
-            box()->expandBy(center-yvec);
-            box()->expandBy(center+zvec);
-            box()->expandBy(center-zvec);
+            auto& b = box().mutable_value();
+            b.expandBy(center+xvec);
+            b.expandBy(center-xvec);
+            b.expandBy(center+yvec);
+            b.expandBy(center-yvec);
+            b.expandBy(center+zvec);
+            b.expandBy(center-zvec);
         }
         else OE_WARN << "Invalid box array" << std::endl;
     }
@@ -489,7 +492,7 @@ namespace
         {
             NetworkMonitor::ScopedRequestLayer layerRequest(_requestLayer);
 
-            if (progress && progress->isCanceled())
+            if (progress && progress->canceled())
                 return nullptr;
 
             osg::ref_ptr<ThreeDTilesetContentNode> tilesetNode;
@@ -508,7 +511,7 @@ namespace
                 osg::ref_ptr<Tileset> tileset = Tileset::create(rr.getString(), _uri.full());
                 if (tileset.valid())
                 {
-                    if (progress && progress->isCanceled())
+                    if (progress && progress->canceled())
                         return nullptr;
 
                     tilesetNode = new ThreeDTilesetContentNode(parentTileset.get(), tileset.get(), _options.get());
@@ -546,13 +549,13 @@ namespace
         std::shared_ptr<LoadTilesetOperation> operation = std::make_shared<LoadTilesetOperation>(
             parentTileset, uri, options);
 
-        JobArena* arena = JobArena::get("oe.3dtiles");
-        return Job(arena).dispatch<ReadTileData>(
-            [operation, options](Cancelable* progress)
-            {
-                return operation->loadTileSet(progress);
-            }
-        );
+        auto job = [operation](Cancelable& progress)
+        {
+            return operation->loadTileSet(&progress);
+        };
+
+        return jobs::dispatch(job,
+            jobs::context{ uri.full(), jobs::get_pool("oe.3dtiles") });
     }
 
     osg::ref_ptr<osg::Node> readTileContentSync(
@@ -573,20 +576,22 @@ namespace
         const URI& uri,
         osg::ref_ptr<const osgDB::Options> options)
     {
-        JobArena* arena = JobArena::get("oe.3dtiles");
+        jobs::context context;
+        context.name = uri.full();
+        context.pool = jobs::get_pool("oe.3dtiles");
 
-        return Job(arena).dispatch<ReadTileData>(
-            [uri, options](Cancelable* progress)
+        return jobs::dispatch([uri, options](Cancelable& progress)
             {
                 osg::ref_ptr<osg::Node> node = uri.getNode(options.get(), nullptr);
                 if (node.valid())
                 {
                     ImageUtils::compressAndMipmapTextures(node.get());
                     GLObjectsCompiler compiler;
-                    compiler.compileNow(node.get(), options.get(), progress);
+                    compiler.compileNow(node.get(), options.get(), &progress);
                 }
                 return node;
-            }
+            },
+            context
         );
     }
 }
@@ -878,9 +883,9 @@ bool ThreeDTileNode::isContentReady()
 void ThreeDTileNode::resolveContent()
 {
     // Resolve the future
-    if (!_content.valid() && _requestedContent && _contentFuture.isAvailable())
+    if (!_content.valid() && _requestedContent && _contentFuture.available())
     {
-        _content = _contentFuture.get();
+        _content = _contentFuture.value();
 
         if (_content.valid())
         {
@@ -1362,7 +1367,7 @@ ThreeDTilesetNode::runPostMergeOperations(osg::Node* node)
 
 void ThreeDTilesetNode::touchTile(ThreeDTileNode* node)
 {
-    ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     if (node->_trackerItrValid)
     {
         _tracker.erase(node->_trackerItr);
@@ -1383,7 +1388,7 @@ void ThreeDTilesetNode::expireTiles(const osg::NodeVisitor& nv)
     osg::Timer_t startTime = osg::Timer::instance()->tick();
     osg::Timer_t endTime;
 
-    ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
     // Max time in ms to allocate to erasing tiles
     float maxTime = 2.0f;

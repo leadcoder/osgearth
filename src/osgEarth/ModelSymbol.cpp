@@ -86,7 +86,7 @@ ModelSymbol::getConfig() const
 
     conf.set( "orientation_from_feature", _orientationFromFeature);
 
-    conf.setNonSerializable( "ModelSymbol::node", _node.get() );
+    //conf.setNonSerializable( "ModelSymbol::node", _node.get() );
     return conf;
 }
 
@@ -112,7 +112,7 @@ ModelSymbol::mergeConfig( const Config& conf )
 
     conf.get( "orientation_from_feature", _orientationFromFeature );
 
-    _node = conf.getNonSerializable<osg::Node>( "ModelSymbol::node" );
+    //_node = conf.getNonSerializable<osg::Node>( "ModelSymbol::node" );
 }
 
 InstanceResource*
@@ -125,8 +125,7 @@ void
 ModelSymbol::parseSLD(const Config& c, Style& style)
 {
     if ( match(c.key(), "model") ) {
-        style.getOrCreate<ModelSymbol>()->url() = c.value();
-        style.getOrCreate<ModelSymbol>()->url()->setURIContext( c.referrer() );
+        style.getOrCreate<ModelSymbol>()->url() = StringExpression(c.value(), c.referrer());
     }    
     else if ( match(c.key(),"model-library") ) {
         style.getOrCreate<ModelSymbol>()->library() = StringExpression(c.value());

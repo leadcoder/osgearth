@@ -86,7 +86,7 @@ DetailTerrainEffect::onInstall(TerrainEngineNode* engine)
             package.load( vp, package.VertexView, engine->getMap()->getReadOptions() );
             package.load( vp, package.Fragment, engine->getMap()->getReadOptions());
             
-            OE_INFO << LC << "Detail texture installed!\n";
+            //OE_INFO << LC << "Detail texture installed!\n";
         }
         else
         {

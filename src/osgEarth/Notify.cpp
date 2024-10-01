@@ -24,7 +24,7 @@
 #include <iostream>
 #include <stdlib.h>
 
-#ifdef HAVE_SPDLOG
+#ifdef OSGEARTH_HAVE_SPDLOG
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #endif
@@ -137,11 +137,17 @@ protected:
 
 using namespace osgEarth;
 
+std::string NotifyPrefix::DEBUG_INFO  = "[osgEarth]  ";
+std::string NotifyPrefix::INFO   = "[osgEarth]  ";
+std::string NotifyPrefix::NOTICE = "[osgEarth]  ";
+std::string NotifyPrefix::WARN   = "[osgEarth]* ";
+std::string NotifyPrefix::ALWAYS = "[osgEarth]**";
+
 namespace
 {
     static osg::ApplicationUsageProxy Notify_e0(osg::ApplicationUsage::ENVIRONMENTAL_VARIABLE, "OSGEARTH_NOTIFY_LEVEL <mode>", "FATAL | WARN | NOTICE | DEBUG_INFO | DEBUG_FP | DEBUG | INFO | ALWAYS");
 
-#ifdef HAVE_SPDLOG
+#ifdef OSGEARTH_HAVE_SPDLOG
     struct SpdLogNotifyHandler : public osg::NotifyHandler
     {
         SpdLogNotifyHandler()
@@ -149,13 +155,19 @@ namespace
             _logger = spdlog::stdout_color_mt("osgearth");
             _logger->set_pattern("%^[%n %l]%$ %v");
             _logger->set_level(spdlog::level::debug);
+
+            NotifyPrefix::DEBUG_INFO = {};
+            NotifyPrefix::INFO = {};
+            NotifyPrefix::NOTICE = {};
+            NotifyPrefix::WARN = {};
+            NotifyPrefix::ALWAYS = {};
         }
 
         void notify(osg::NotifySeverity severity, const char *message)
         {
             std::string buf(message);
             std::vector<std::string> parts;
-            Util::StringTokenizer(buf, parts, "\n");
+            Util::StringTokenizer(buf, parts, "\n", {}, true, false);
 
             for (auto& part : parts)
             {
@@ -230,7 +242,7 @@ namespace
             NotifyStreamBuffer *buffer = dynamic_cast<NotifyStreamBuffer *>(_notifyStream.rdbuf());
             if (buffer && !buffer->getNotifyHandler())
             {
-#ifdef HAVE_SPDLOG
+#ifdef OSGEARTH_HAVE_SPDLOG
                 buffer->setNotifyHandler(new SpdLogNotifyHandler);
 #else
                 buffer->setNotifyHandler(new osg::StandardNotifyHandler);

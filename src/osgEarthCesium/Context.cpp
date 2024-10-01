@@ -31,15 +31,16 @@ Context::Context():
     taskProcessor(std::make_shared<TaskProcessor>()),
     asyncSystem(taskProcessor)
 {
-    Cesium3DTilesSelection::registerAllTileContentTypes();
+    Cesium3DTilesContent::registerAllTileContentTypes();
     assetAccessor = std::make_shared<AssetAccessor>();
     prepareRenderResources = std::make_shared< PrepareRendererResources >();
     logger = spdlog::default_logger();
-    creditSystem = std::make_shared<Cesium3DTilesSelection::CreditSystem>();    
+    creditSystem = std::make_shared<CesiumUtility::CreditSystem>();
 }
 
 Context::~Context()
 {
+    shutdown();
 }
 
 void Context::shutdown()
@@ -52,8 +53,3 @@ void Context::shutdown()
     asyncSystem.dispatchMainThreadTasks();
 }
 
-Context& Context::instance()
-{
-    static Context s_context;
-    return s_context;
-}

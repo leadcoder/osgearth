@@ -6,6 +6,7 @@
 #include <osgEarth/PagedNode>
 #include <osgEarth/ElevationLayer>
 #include <osgEarth/ElevationRanges>
+#include <osgEarth/NodeUtils>
 #include <osgDB/Registry>
 #include <osgDB/FileNameUtils>
 #include <osg/ShapeDrawable>
@@ -19,18 +20,9 @@ using namespace osgEarth::Util;
 #define LC "[SimplerPager] "
 
 
-SimplePager::SimplePager(const osgEarth::Map* map, const osgEarth::Profile* profile):
-_map(map),
-_profile( profile ),
-_rangeFactor( 6.0 ),
-_additive(false),
-_minLevel(0),
-_maxLevel(30),
-_priorityScale(1.0f),
-_priorityOffset(0.0f),
-_canCancel(true),
-_done(false),
-_mutex("SimplePager(OE)")
+SimplePager::SimplePager(const osgEarth::Map* map, const osgEarth::Profile* profile) :
+    _map(map),
+    _profile(profile)
 {
     if (map)
     {
@@ -52,9 +44,97 @@ bool SimplePager::getEnableCancelation() const
     return _canCancel;
 }
 
+void SimplePager::setClusterCullingEnabled(bool value)
+{
+    _clusterCullingEnabled = value;
+}
+
+bool SimplePager::getClusterCullingEnabled() const
+{
+    return _clusterCullingEnabled;
+}
+
+void SimplePager::setUsePayloadBoundsForChildren(bool value)
+{
+    _usePayloadBoundsForChildren = value;
+}
+
+bool SimplePager::getUsePayloadBoundsForChildren() const
+{
+    return _usePayloadBoundsForChildren;
+}
+
+void SimplePager::setRangeFactor(float value)
+{
+    _rangeFactor = value;
+    _useRange = true;
+
+    forEachNodeOfType<PagedNode2>(this, [&](auto* node)
+        {
+            // trick to switch over to range mode
+            node->setMaxRange(node->getMaxRange());
+        });
+}
+
+void SimplePager::setMaxRange(float value)
+{
+    _maxRange = value;
+    _useRange = true;
+
+    forEachNodeOfType<PagedNode2>(this, [&](auto* node)
+        {
+            node->setMaxRange(value);
+        });
+}
+
+void SimplePager::setMinPixels(float value)
+{
+    _minPixels = value;
+    _useRange = false;
+
+    forEachNodeOfType<PagedNode2>(this, [&](auto* node)
+        {
+            node->setMinPixels(value);
+        });
+}
+
+void SimplePager::setMaxPixels(float value)
+{
+    _maxPixels = value;
+    _useRange = false;
+
+    forEachNodeOfType<PagedNode2>(this, [&](auto* node)
+        {
+            node->setMaxPixels(value);
+        });
+}
+
+void SimplePager::setLODMethod(const LODMethod& value)
+{
+    if (value == LODMethod::CAMERA_DISTANCE && !_useRange)
+    {
+        setRangeFactor(_rangeFactor);
+    }
+    else if (value == LODMethod::SCREEN_SPACE && _useRange)
+    {
+        setMaxPixels(_maxPixels);
+    }
+}
+
 void SimplePager::setDone()
 {
     _done = true;
+}
+
+void SimplePager::traverse(osg::NodeVisitor& nv)
+{
+    if (!_done && nv.getVisitorType() == nv.CULL_VISITOR && getNumChildren() == 0)
+    {
+        OE_WARN << LC << "Not initialized - did you forget to call build()?" << std::endl;
+        setDone();
+    }
+
+    osg::Group::traverse(nv);
 }
 
 void SimplePager::build()
@@ -68,14 +148,6 @@ osg::BoundingSphered SimplePager::getBounds(const TileKey& key) const
     GeoExtent workingExtent;
 
     workingExtent = _mapProfile->clampAndTransformExtent(key.getExtent());
-    //if (key.getProfile()->getSRS()->isGeographic())
-    //{
-    //    workingExtent = key.getExtent();
-    //}
-    //else
-    //{
-    //    workingExtent = _mapProfile->clampAndTransformExtent(key.getExtent());
-    //}
 
     GeoPoint center = workingExtent.getCentroid();
     unsigned lod = _mapProfile->getLOD(workingExtent.height());
@@ -95,7 +167,14 @@ osg::BoundingSphered SimplePager::getBounds(const TileKey& key) const
             GeoPoint centerWGS84 = center.transform(ElevationRanges::getProfile()->getSRS());
             TileKey rangeKey = ElevationRanges::getProfile()->createTileKey(centerWGS84.x(), centerWGS84.y(), lod);
             short min, max;
-            ElevationRanges::getElevationRange(rangeKey.getLevelOfDetail(), rangeKey.getTileX(), rangeKey.getTileY(), min, max);
+            if (!*map->options().disableElevationRanges())
+            {
+                ElevationRanges::getElevationRange(rangeKey.getLevelOfDetail(), rangeKey.getTileX(), rangeKey.getTileY(), min, max);
+            }
+            else
+            {
+                ElevationRanges::getDefaultElevationRange(min, max);
+            }
             // Clamp the min value to avoid extreme underwater values.
             minElevation = osg::maximum(min, (short)-500);
             // Add a little bit extra of extra height to account for feature data.
@@ -115,7 +194,7 @@ osg::ref_ptr<osg::Node> SimplePager::buildRootNode()
     osg::ref_ptr<ProgressCallback> prog = new ObserverProgressCallback(this);
     for (unsigned int i = 0; i < keys.size(); i++)
     {
-        osg::ref_ptr<osg::Node> node = createPagedNode(keys[i], prog.get());
+        osg::ref_ptr<osg::Node> node = createChildNode(keys[i], prog.get());
         if ( node.valid() )
             root->addChild( node );
     }
@@ -123,187 +202,224 @@ osg::ref_ptr<osg::Node> SimplePager::buildRootNode()
     return root;
 }
 
-osg::ref_ptr<osg::Node> SimplePager::createNode(const TileKey& key, ProgressCallback* progress)
+osg::ref_ptr<osg::Node>
+SimplePager::createNode(const TileKey& key, ProgressCallback* progress)
 {
-    osg::BoundingSphered bounds = getBounds( key );
+    if (_createNodeFunction)
+    {
+        return _createNodeFunction(key, progress);       
+    }
+    else
+    {
+        osg::BoundingSphered bounds = getBounds(key);
 
-    osg::MatrixTransform* mt = new osg::MatrixTransform;
-    mt->setMatrix(osg::Matrixd::translate( bounds.center() ) );
-    osg::Geode* geode = new osg::Geode;
-    osg::ShapeDrawable* sd = new osg::ShapeDrawable( new osg::Sphere(osg::Vec3f(0,0,0), bounds.radius()) );
-    sd->setColor( osg::Vec4(1,0,0,1 ) );
-    geode->addDrawable( sd );
-    mt->addChild(geode);
-    return mt;
+        osg::MatrixTransform* mt = new osg::MatrixTransform;
+        mt->setMatrix(osg::Matrixd::translate(bounds.center()));
+        osg::Geode* geode = new osg::Geode;
+        osg::ShapeDrawable* sd = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3f(0, 0, 0), bounds.radius()));
+        sd->setColor(osg::Vec4(1, 0, 0, 1));
+        geode->addDrawable(sd);
+        mt->addChild(geode);
+        return mt;
+    }
 }
 
 osg::ref_ptr<osg::Node>
-SimplePager::createPagedNode(const TileKey& key, ProgressCallback* progress)
+SimplePager::createChildNode(const TileKey& key, ProgressCallback* progress)
 {
+    osg::ref_ptr<osg::Node> result;
+
     osg::BoundingSphered tileBounds = getBounds(key);
     double tileRadius = tileBounds.radius();
 
     // restrict subdivision to max level:
     bool hasChildren = key.getLOD() < _maxLevel;
+    bool mayHavePayload = key.getLOD() >= _minLevel;
 
-    // Create the actual data for this tile.
-    osg::ref_ptr<osg::Node> node;
+    // Create the actual drawable data for this tile.
+    osg::ref_ptr<osg::Node> payload;
 
     // only create real node if we are at least at the min LOD:
-    if (key.getLOD() >= _minLevel)
+    if (mayHavePayload)
     {
-        node = createNode(key, progress);
-    }
+        payload = createNode(key, progress);
 
-    osg::ref_ptr<PagedNode2> pagedNode = new PagedNode2();
-    pagedNode->setSceneGraphCallbacks(getSceneGraphCallbacks());
+        if (progress && progress->canceled())
+            return nullptr;
 
-    if (node.valid())
-    {
-        // Build kdtrees to increase intersection speed.
-        if (osgDB::Registry::instance()->getKdTreeBuilder())
+        if (payload.valid())
         {
-            osg::ref_ptr< osg::KdTreeBuilder > kdTreeBuilder = osgDB::Registry::instance()->getKdTreeBuilder()->clone();
-            node->accept(*kdTreeBuilder.get());
-        }
-
-        pagedNode->addChild(node);
-        fire_onCreateNode(key, node.get());
-    }
-
-    pagedNode->setCenter(tileBounds.center());
-    pagedNode->setRadius(tileRadius);
-
-    // Assume geocentric for now.
-    if (_mapProfile->getSRS()->isGeographic())
-    {
-        const GeoExtent& ccExtent = key.getExtent();
-        if (ccExtent.isValid())
-        {
-            // if the extent is more than 90 degrees, bail
-            GeoExtent geodeticExtent = ccExtent.transform(ccExtent.getSRS()->getGeographicSRS());
-            if (geodeticExtent.width() < 90.0 && geodeticExtent.height() < 90.0)
+            // Build kdtrees to increase intersection speed.
+            if (osgDB::Registry::instance()->getKdTreeBuilder())
             {
-                // get the geocentric tile center:
-                osg::Vec3d tileCenter;
-                ccExtent.getCentroid(tileCenter.x(), tileCenter.y());
-
-                osg::Vec3d centerECEF;
-                const SpatialReference* mapSRS = osgEarth::SpatialReference::get("epsg:4326");
-                if (mapSRS)
-                {
-                    ccExtent.getSRS()->transform(tileCenter, mapSRS->getGeocentricSRS(), centerECEF);
-                    osg::NodeCallback* ccc = ClusterCullingFactory::create(geodeticExtent);
-                    if (ccc)
-                        pagedNode->addCullCallback(ccc);
-                }
+                osg::ref_ptr< osg::KdTreeBuilder > kdTreeBuilder = osgDB::Registry::instance()->getKdTreeBuilder()->clone();
+                payload->accept(*kdTreeBuilder.get());
             }
         }
-    }
 
-    float loadRange = FLT_MAX;
+#if 0
+        // if we comment this out, the pager will continue to subdivide even up to the max level,
+        // which MIGHT be desirable for some datasets with sparse data...
+        else if (!_additive)
+        {
+            // If we are in REPLACE mode, and this node's payload did not appear,
+            // we have run out of data and will stop here.
+            // In ADD mode, we will continue to subdivide because we do not know when data will appear.
+            hasChildren = false;
+        }
+#endif
+    }
 
     if (hasChildren)
     {
+        //osg::ref_ptr<PagedNode2> pagedNode = new PagedNode2();
+        osg::ref_ptr<PagedNode2> pagedNode;
+        if (_createPagedNodeFunction)
+            pagedNode = _createPagedNodeFunction(key);
+        else
+            pagedNode = new PagedNode2();
+
+        pagedNode->setSceneGraphCallbacks(getSceneGraphCallbacks());
+
+        if (payload.valid())
+        {
+            pagedNode->addChild(payload);
+
+            onCreateNode.fire(key, payload.get());
+
+            if (_usePayloadBoundsForChildren)
+            {
+                const auto& bs = payload->getBound();
+                if (bs.valid())
+                {
+                    tileBounds.set(bs.center(), bs.radius());
+                    tileRadius = tileBounds.radius();
+                }
+            }
+        }
+
+        pagedNode->setCenter(tileBounds.center());
+        pagedNode->setRadius(tileRadius);
+
+        // Install a cluster-culling callback for geocentric data:
+        if (_mapProfile->getSRS()->isGeographic())
+        {
+            const GeoExtent& ccExtent = key.getExtent();
+            if (ccExtent.isValid())
+            {
+                // if the extent is more than 90 degrees, bail
+                GeoExtent geodeticExtent = ccExtent.transform(ccExtent.getSRS()->getGeographicSRS());
+                if (geodeticExtent.width() < 90.0 && geodeticExtent.height() < 90.0)
+                {
+                    // get the geocentric tile center:
+                    osg::Vec3d tileCenter;
+                    ccExtent.getCentroid(tileCenter.x(), tileCenter.y());
+                    osg::Vec3d centerECEF;
+                    const SpatialReference* mapSRS = _mapProfile->getSRS();
+                    if (mapSRS)
+                    {
+                        ccExtent.getSRS()->transform(tileCenter, mapSRS->getGeocentricSRS(), centerECEF);
+                        osg::NodeCallback* ccc = ClusterCullingFactory::create(geodeticExtent);
+                        if (ccc)
+                        {
+                            pagedNode->addCullCallback(ccc);
+                        }
+                    }
+                }
+            }
+        }
+
+        float loadRange = FLT_MAX;
+
         if (getName().empty())
             pagedNode->setName(key.str());
         else
             pagedNode->setName(getName() + " " + key.str());
 
-        // Now setup a filename on the PagedLOD that will load all of the children of this node.
         pagedNode->setPriorityScale(_priorityScale);
-        //pager->setPriorityOffset(_priorityOffset);
 
+        // Now set up a loader that will load the child data
         osg::observer_ptr<SimplePager> pager_weakptr(this);
-        pagedNode->setLoadFunction(
-            [pager_weakptr, key](Cancelable* c)
+
+        pagedNode->setLoadFunction([pager_weakptr, key](Cancelable* c)
             {
                 osg::ref_ptr<osg::Node> result;
+                if (c && c->canceled())
+                    return result;
+
                 osg::ref_ptr<SimplePager> pager;
                 if (pager_weakptr.lock(pager))
                 {
                     osg::ref_ptr<ProgressCallback> progress = new ProgressCallback(c);
-                    result = pager->loadKey(key, progress.get());
-                }
-                else
-                {
-                    OE_DEBUG << "Task canceled!" << std::endl;
+                    result = pager->createPagedChildrenOf(key, progress.get());
                 }
                 return result;
-            }
-        );
+            });
+
         loadRange = (float)(tileRadius * _rangeFactor);
+
         pagedNode->setRefinePolicy(_additive ? REFINE_ADD : REFINE_REPLACE);
+
+        pagedNode->setMaxRange(std::min(loadRange, _maxRange));
+
+        if (!_useRange)
+        {
+            pagedNode->setMinPixels(_minPixels);
+            pagedNode->setMaxPixels(_maxPixels);
+        }
+
+        result = pagedNode;
     }
 
-    pagedNode->setMaxRange(loadRange);
+    else // !hasChildren
+    {
+        if (payload.valid())
+        {
+            onCreateNode.fire(key, payload.get());
+            result = payload;
+        }
+    }
 
-    //OE_INFO << "PagedNode2: key="<<key.str()<<" hasChildren=" << hasChildren << ", range=" << loadRange << std::endl;
+    if (result.valid())
+    {
+        if (getName().empty())
+            result->setName(key.str());
+        else
+            result->setName(getName() + " " + key.str());
+    }
 
-    return pagedNode;
+    return result;
 }
 
 osg::ref_ptr<osg::Node>
-SimplePager::loadKey(const TileKey& key, ProgressCallback* progress)
+SimplePager::createPagedChildrenOf(const TileKey& parentKey, ProgressCallback* progress)
 {
     if (_done)
     {
         if (progress) progress->cancel();
-        return nullptr;
+        return {};
     }
 
     osg::ref_ptr< osg::Group >  group = new osg::Group;
 
     for (unsigned int i = 0; i < 4; i++)
     {
-        TileKey childKey = key.createChildKey( i );
+        TileKey childKey = parentKey.createChildKey( i );
 
-        osg::ref_ptr<osg::Node> plod = createPagedNode(childKey, progress);
-        if (plod.valid())
+        osg::ref_ptr<osg::Node> child = createChildNode(childKey, progress);
+        if (child.valid())
         {
-            group->addChild( plod );
+            group->addChild(child);
         }
     }
     if (group->getNumChildren() > 0)
     {
         return group;
     }
-    return nullptr;
+    return {};
 }
 
 const osgEarth::Profile* SimplePager::getProfile() const
 {
     return _profile.get();
-}
-
-void SimplePager::addCallback(Callback* callback)
-{
-    if (callback)
-    {
-        Threading::ScopedMutexLock lock(_mutex);
-        _callbacks.push_back(callback);
-    }
-}
-
-void SimplePager::removeCallback(Callback* callback)
-{
-    if (callback)
-    {
-        Threading::ScopedMutexLock lock(_mutex);
-        for (Callbacks::iterator i = _callbacks.begin(); i != _callbacks.end(); ++i)
-        {
-            if (i->get() == callback)
-            {
-                _callbacks.erase(i);
-                break;
-            }
-        }
-    }
-}
-
-void SimplePager::fire_onCreateNode(const TileKey& key, osg::Node* node)
-{
-    Threading::ScopedMutexLock lock(_mutex);
-    for (Callbacks::iterator i = _callbacks.begin(); i != _callbacks.end(); ++i)
-        i->get()->onCreateNode(key, node);
 }

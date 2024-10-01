@@ -90,24 +90,24 @@ OGR::OGRFeatureCursor::OGRFeatureCursor(
     const FeatureSource* source,
     const FeatureProfile* profile,
     const Query& query,
-    const FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     bool rewindPolygons,
     unsigned chunkSize,
     ProgressCallback* progress) :
 
-FeatureCursor     ( progress ),
-_source           ( source ),
-_dsHandle         ( dsHandle ),
-_layerHandle      ( layerHandle ),
-_resultSetHandle  ( 0L ),
-_spatialFilter    ( 0L ),
-_query            ( query ),
-_chunkSize        ( chunkSize == 0u ? 500u : chunkSize ),
-_nextHandleToQueue( 0L ),
-_resultSetEndReached(false),
-_profile          ( profile ),
-_filters          ( filters ),
-_rewindPolygons   ( rewindPolygons )
+    FeatureCursor(progress),
+    _source(source),
+    _dsHandle(dsHandle),
+    _layerHandle(layerHandle),
+    _resultSetHandle(0L),
+    _spatialFilter(0L),
+    _query(query),
+    _chunkSize(chunkSize == 0u ? 500u : chunkSize),
+    _nextHandleToQueue(0L),
+    _resultSetEndReached(false),
+    _profile(profile),
+    _filters(filters),
+    _rewindPolygons(rewindPolygons)
 {
     std::string expr;
     std::string from = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
@@ -188,8 +188,6 @@ _rewindPolygons   ( rewindPolygons )
         // note: "Directly" above means _spatialFilter takes ownership if ring handle
     }
 
-
-    OE_DEBUG << LC << "SQL: " << expr << std::endl;
     _resultSetHandle = GDALDatasetExecuteSQL(_dsHandle, expr.c_str(), _spatialFilter, 0L);
 
     if (_resultSetHandle)
@@ -295,17 +293,17 @@ OGR::OGRFeatureCursor::readChunk()
                         }
                         else
                         {
-                            OE_DEBUG << LC << "Invalid geometry found at feature " << feature->getFID() << std::endl;
+                            //OE_DEBUG << LC << "Invalid geometry found at feature " << feature->getFID() << std::endl;
                         }
                     }
                     else
                     {
-                        OE_DEBUG << LC << "Blacklisted feature " << feature->getFID() << " skipped" << std::endl;
+                        //OE_DEBUG << LC << "Blacklisted feature " << feature->getFID() << " skipped" << std::endl;
                     }
                 }
                 else
                 {
-                    OE_DEBUG << LC << "Skipping NULL feature" << std::endl;
+                    //OE_DEBUG << LC << "Skipping NULL feature" << std::endl;
                 }
                 OGR_F_Destroy( handle );
             }
@@ -315,8 +313,9 @@ OGR::OGRFeatureCursor::readChunk()
             }
         }
 
+#if 0
         // preprocess the features using the filter list:
-        if ( _filters.valid() && !_filters->empty() )
+        if (!_filters.empty())
         {
             FilterContext cx;
             cx.setProfile( _profile.get() );
@@ -329,12 +328,9 @@ OGR::OGRFeatureCursor::readChunk()
                 cx.extent() = _profile->getExtent();
             }
 
-            for( FeatureFilterChain::const_iterator i = _filters->begin(); i != _filters->end(); ++i )
-            {
-                FeatureFilter* filter = i->get();
-                cx = filter->push( filterList, cx );
-            }
+            cx = _filters.push(filterList, cx);
         }
+#endif
 
         for(FeatureList::const_iterator i = filterList.begin(); i != filterList.end(); ++i)
         {
@@ -418,7 +414,6 @@ OGRFeatureSource::closeImplementation()
             buf << "REPACK " << name;
             std::string bufStr;
             bufStr = buf.str();
-            OE_DEBUG << LC << "SQL: " << bufStr << std::endl;
             OGR_DS_ExecuteSQL(_dsHandle, bufStr.c_str(), 0L, 0L);
         }
         _layerHandle = 0L;
@@ -515,7 +510,7 @@ OGRFeatureSource::openImplementation()
         // otherwise, assume we're loading from the URL/connection:
 
         // remember the thread so we don't use the handles illegaly.
-        _dsHandleThreadId = osgEarth::Threading::getCurrentThreadId();
+        _dsHandleThreadId = std::this_thread::get_id();
 
         // If the user request a particular driver, set that up now:
         std::string driverName = options().ogrDriver().value();
@@ -613,18 +608,17 @@ OGRFeatureSource::openImplementation()
         {
             if ((options().forceRebuildSpatialIndex() == true) || (OGR_L_TestCapability(_layerHandle, OLCFastSpatialFilter) == 0))
             {
-                OE_INFO << LC << "Building spatial index for " << getName() << std::endl;
+                OE_DEBUG << LC << _source << ": building spatial index for " << getName() << std::endl;
                 std::stringstream buf;
                 const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
                 buf << "CREATE SPATIAL INDEX ON " << name;
                 std::string bufStr;
                 bufStr = buf.str();
-                OE_DEBUG << LC << "SQL: " << bufStr << std::endl;
                 OGR_DS_ExecuteSQL(_dsHandle, bufStr.c_str(), 0L, 0L);
             }
             else
             {
-                OE_DEBUG << LC << "Use existing spatial index for " << getName() << std::endl;
+                //OE_DEBUG << LC << "Use existing spatial index for " << getName() << std::endl;
             }
         }
 
@@ -776,7 +770,7 @@ OGRFeatureSource::create(const FeatureProfile* profile,
 
     _ogrDriverHandle = OGRGetDriverByName(driverName.c_str());
 
-    _dsHandleThreadId = osgEarth::Threading::getCurrentThreadId();
+    _dsHandleThreadId = std::this_thread::get_id();
 
     // this handle may ONLY be used from this thread!
     // https://github.com/OSGeo/gdal/blob/v2.4.1/gdal/gcore/gdaldataset.cpp#L2577
@@ -825,7 +819,7 @@ OGRFeatureSource::buildSpatialIndex()
    if (_dsHandle &&
        _layerHandle && 
        OGR_L_TestCapability(_layerHandle, OLCFastSpatialFilter) == 0 &&
-       _dsHandleThreadId == osgEarth::Threading::getCurrentThreadId())
+       _dsHandleThreadId == std::this_thread::get_id())
    {
        std::stringstream buf;
        const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
@@ -837,7 +831,7 @@ OGRFeatureSource::buildSpatialIndex()
 }
 
 FeatureCursor*
-OGRFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress)
+OGRFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress) const
 {
     if (_geometry.valid())
     {
@@ -879,8 +873,6 @@ OGRFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
             {
                 newQuery = options().query()->combineWith(query);
             }
-
-            OE_DEBUG << newQuery.getConfig().toJSON(true) << std::endl;
 
             // cursor is responsible for the OGR handles.
             return new OGR::OGRFeatureCursor(

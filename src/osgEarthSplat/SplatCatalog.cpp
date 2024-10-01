@@ -203,7 +203,7 @@ namespace
         {
             // if this is the first image loaded, remember it so we can ensure that
             // all images are copatible.
-            if ( firstImage == 0L )
+            if ( firstImage == nullptr)
             {
                 firstImage = result.getImage();
             }
@@ -215,7 +215,7 @@ namespace
                 {
                     osg::ref_ptr<osg::Image> conv = ImageUtils::convert(result.getImage(), firstImage->getPixelFormat(), firstImage->getDataType());
 
-                    if ( conv->s() != firstImage->s() || conv->t() != firstImage->t() )
+                    if (conv.valid() && (conv->s() != firstImage->s() || conv->t() != firstImage->t()))
                     {
                         osg::ref_ptr<osg::Image> conv2;
                         if ( ImageUtils::resizeImage(conv.get(), firstImage->s(), firstImage->t(), conv2) )
@@ -224,17 +224,18 @@ namespace
                         }
                     }
 
-                    if ( ImageUtils::textureArrayCompatible(conv.get(), firstImage) )
+                    if (conv.valid() && ImageUtils::textureArrayCompatible(conv.get(), firstImage))
                     {
                         conv->setInternalTextureFormat( firstImage->getInternalTextureFormat() );
                         return conv.release();
                     }
+
                     else
                     {
                         OE_WARN << LC << "Image " << uri.base()
                             << " was found, but cannot be used because it is not compatible with "
                             << "other splat images (same dimensions, pixel format, etc.)\n";
-                        return 0L;
+                        return nullptr;
                     }
                 }
             }
@@ -266,7 +267,7 @@ SplatCatalog::createSplatTextureDef(const osgDB::Options* dbOptions,
             range->_materialTextureIndex = -1;
             if ( range->_detail.isSet() )
             {
-                range->_detail->_textureIndex = -1;
+                range->_detail.mutable_value()._textureIndex = -1;
             }
         }
     }
@@ -356,7 +357,7 @@ SplatCatalog::createSplatTextureDef(const osgDB::Options* dbOptions,
                 {
                     texIndex = k->second;
                 }
-                range->_detail->_textureIndex = texIndex;
+                range->_detail.mutable_value()._textureIndex = texIndex;
             }
         }
     }

@@ -59,8 +59,7 @@ namespace
 }
 
 ObjectIndex::ObjectIndex() :
-_idGen( STARTING_OBJECT_ID ),
-_mutex("ObjectIndex(OE)")
+    _idGen(STARTING_OBJECT_ID)
 {
     _attribName     = "oe_index_objectid_attr";
     _attribLocation = osg::Drawable::SECONDARY_COLORS;
@@ -100,7 +99,7 @@ ObjectIndex::setObjectIDAtrribLocation(int value)
 ObjectID
 ObjectIndex::insert(osg::Referenced* object)
 {
-    Threading::ScopedMutexLock excl( _mutex );
+    std::lock_guard<std::mutex> excl( _mutex );
     return insertImpl( object );
 }
 
@@ -110,7 +109,6 @@ ObjectIndex::insertImpl(osg::Referenced* object)
     // internal: assume mutex is locked
     ObjectID id = ++_idGen;
     _index[id] = object;
-    OE_DEBUG << LC << "Insert " << id << "; size = " << _index.size() << "\n";
     return id;
 }
 
@@ -125,7 +123,7 @@ ObjectIndex::getImpl(ObjectID id) const
 void
 ObjectIndex::remove(ObjectID id)
 {
-    Threading::ScopedMutexLock excl(_mutex);
+    std::lock_guard<std::mutex> excl(_mutex);
     removeImpl(id);
 }
 
@@ -134,14 +132,12 @@ ObjectIndex::removeImpl(ObjectID id)
 {
     // internal - assume mutex is locked
     _index.erase( id );
-    OE_DEBUG << "Remove " << id << "; size = " << _index.size() << "\n";
-
 }
 
 ObjectID
 ObjectIndex::tagDrawable(osg::Drawable* drawable, osg::Referenced* object)
 {
-    Threading::ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectID oid = insertImpl(object);
     tagDrawable(drawable, oid);
     return oid;
@@ -170,7 +166,7 @@ ObjectIndex::tagDrawable(osg::Drawable* drawable, ObjectID id) const
 ObjectID
 ObjectIndex::tagRange(osg::Drawable* drawable, osg::Referenced* object, unsigned int start, unsigned int count)
 {
-    Threading::ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectID oid = insertImpl(object);
     tagRange(drawable, oid, start, count);
     return oid;
@@ -197,11 +193,16 @@ ObjectIndex::tagRange(osg::Drawable* drawable, ObjectID id, unsigned int start, 
         ids->setPreserveDataType(true);
     }
 
+    if (ids->size() < start + count)
+    {
+        ids->resize(start + count);
+    }
+
     for (unsigned int i = 0; i < count; ++i)
     {
         (*ids)[start + i] = id;
     }
-
+    
     ids->dirty();
 }
 
@@ -231,7 +232,7 @@ namespace
 ObjectID
 ObjectIndex::tagAllDrawables(osg::Node* node, osg::Referenced* object)
 {
-    Threading::ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectID oid = insertImpl(object);
     tagAllDrawables(node, oid);
     return oid;
@@ -250,7 +251,7 @@ ObjectIndex::tagAllDrawables(osg::Node* node, ObjectID id) const
 ObjectID
 ObjectIndex::tagNode(osg::Node* node, osg::Referenced* object)
 {
-    Threading::ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
     ObjectID oid = insertImpl(object);
     tagNode(node, oid);
     return oid;

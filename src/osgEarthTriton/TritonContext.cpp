@@ -77,7 +77,7 @@ TritonContext::getHeightMapSize() const
 const std::string&
 TritonContext::getMaskLayerName() const
 {
-    return _options.maskLayerLayerName().get();
+    return _options.maskLayer().externalLayerName().get();
 }
 
 void
@@ -86,7 +86,7 @@ TritonContext::initialize(osg::RenderInfo& renderInfo)
     if ( !_initAttempted && !_initFailed )
     {
         // lock/double-check:
-        Threading::ScopedMutexLock excl(_initMutex);
+        std::lock_guard<std::mutex> excl(_initMutex);
         if ( !_initAttempted && !_initFailed )
         {
             _initAttempted = true;
@@ -198,7 +198,7 @@ TritonContext::releaseGLObjects(osg::State* state) const
 {
     osg::Object::releaseGLObjects(state);
 
-    OE_INFO << LC << "Triton shutting down - releasing GL resources\n";
+    OE_DEBUG << LC << "Triton shutting down - releasing GL resources\n";
     if (state)
     {
         if ( _ocean )

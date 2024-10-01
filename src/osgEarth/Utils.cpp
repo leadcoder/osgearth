@@ -435,14 +435,14 @@ GeometryValidator::apply(osg::Geometry& geom)
 {
     if ( geom.getVertexArray() == 0L )
     {
-        OE_NOTICE << LC << "NULL vertex array!!" << std::endl;
+        OE_WARN << LC << "NULL vertex array!!" << std::endl;
         return;
     }
 
     unsigned numVerts = geom.getVertexArray()->getNumElements();
     if ( numVerts == 0 )
     {
-        OE_NOTICE << LC << "No verts!! name=" << geom.getName() <<  std::endl;
+        OE_WARN << LC << "No verts!! name=" << geom.getName() <<  std::endl;
         return;
     }
 
@@ -458,25 +458,25 @@ GeometryValidator::apply(osg::Geometry& geom)
         {
             if ( a->getBinding() == a->BIND_OVERALL && a->getNumElements() != 1 )
             {
-                OE_NOTICE << LC << "Found an array with BIND_OVERALL and size <> 1" << std::endl;
+                OE_WARN << LC << "Found an array with BIND_OVERALL and size <> 1" << std::endl;
             }
             else if ( a->getBinding() == a->BIND_PER_VERTEX && a->getNumElements() != numVerts )
             {
-                OE_NOTICE << LC << a->className () << " : Found BIND_PER_VERTEX with wrong number of elements (expecting " << numVerts << "; found " << a->getNumElements() << ")" << std::endl;
+                OE_WARN << LC << a->className () << " : Found BIND_PER_VERTEX with wrong number of elements (expecting " << numVerts << "; found " << a->getNumElements() << ")" << std::endl;
             }
 
             _vbos.insert( a->getVertexBufferObject() );
         }
         else
         {
-            OE_NOTICE << LC << "Found a NULL array" << std::endl;
+            OE_WARN << LC << "Found a NULL array" << std::endl;
         }
 
     }
 
     if ( _vbos.size() != 1 )
     {
-        OE_NOTICE << LC << "Found a Geometry that uses more than one VBO (non-optimal sharing)" << std::endl;
+        OE_WARN << LC << "Found a Geometry that uses more than one VBO (non-optimal sharing)" << std::endl;
     }
 
     const osg::Geometry::PrimitiveSetList& plist = geom.getPrimitiveSetList();
@@ -492,15 +492,15 @@ GeometryValidator::apply(osg::Geometry& geom)
         {
             if ( da->getFirst() >= (GLint)numVerts )
             {
-                OE_NOTICE << LC << "DrawArrays: first > numVerts" << std::endl;
+                OE_WARN << LC << "DrawArrays: first > numVerts" << std::endl;
             }
             if ( da->getFirst()+da->getCount() > (GLint)numVerts )
             {
-                OE_NOTICE << LC << "DrawArrays: first/count out of bounds" << std::endl;
+                OE_WARN << LC << "DrawArrays: first/count out of bounds" << std::endl;
             }
             if ( da->getCount() < 1 )
             {
-                OE_NOTICE << LC << "DrawArrays: count is zero" << std::endl;
+                OE_WARN << LC << "DrawArrays: count is zero" << std::endl;
             }
         }
 
@@ -529,25 +529,25 @@ GeometryValidator::apply(osg::Geometry& geom)
 
         if ( pset->getNumIndices() == 0 )
         {
-            OE_NOTICE << LC << "Primset: num elements = 0; class=" << pset->className() << ", name=" << pset->getName() << "" << std::endl;
+            OE_WARN << LC << "Primset: num elements = 0; class=" << pset->className() << ", name=" << pset->getName() << "" << std::endl;
         }
         else if ( pset->getType() >= GL_TRIANGLES && pset->getNumIndices() < 3 )
         {
-            OE_NOTICE << LC << "Primset: not enough indicies for surface prim type" << std::endl;
+            OE_WARN << LC << "Primset: not enough indicies for surface prim type" << std::endl;
         }
         else if ( pset->getType() >= GL_LINE_STRIP && pset->getNumIndices() < 2 )
         {
-            OE_NOTICE << LC << "Primset: not enough indicies for linear prim type" << std::endl;
+            OE_WARN << LC << "Primset: not enough indicies for linear prim type" << std::endl;
         }
         else if ( isDe && pset->getType() == GL_LINES && pset->getNumIndices() % 2 != 0 )
         {
-            OE_NOTICE << LC << "Primset: non-even index count for GL_LINES" << std::endl;
+            OE_WARN << LC << "Primset: non-even index count for GL_LINES" << std::endl;
         }
     }
 
     if ( _ebos.size() != 1 )
     {
-        OE_NOTICE << LC << "Found a Geometry that uses more than one EBO (non-optimal sharing)" << std::endl;
+        OE_WARN << LC << "Found a Geometry that uses more than one EBO (non-optimal sharing)" << std::endl;
     }
 }
 
@@ -711,4 +711,67 @@ CustomRenderLeaf::render(osg::RenderInfo& renderInfo, osgUtil::RenderLeaf* previ
     {
         state.decrementDynamicObjectCount();
     }
+}
+
+//.....
+
+#ifdef WIN32
+#include <Windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+#elif defined(__GNUC__)
+#include <execinfo.h>
+#include <cstdlib>
+#include <cstring>
+#include <cxxabi.h>
+#endif
+
+CallStack::CallStack()
+{
+#ifdef WIN32
+    HANDLE process = GetCurrentProcess();
+    SymInitialize(process, NULL, TRUE);
+
+    void* stack[100];
+    WORD frames = CaptureStackBackTrace(0, 100, stack, NULL);
+
+    SYMBOL_INFO* symbol = (SYMBOL_INFO*)calloc(sizeof(SYMBOL_INFO) + 256 * sizeof(char), 1);
+    symbol->MaxNameLen = 255;
+    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+
+    for (int i = 0; i < frames; i++)
+    {
+        SymFromAddr(process, (DWORD64)(stack[i]), 0, symbol);
+        symbols.emplace_back(symbol->Name);
+    }
+
+    free(symbol);
+#else
+    auto trim = [](const char* in, std::string& out)
+        {
+            std::string temp(in);
+            auto start = temp.find_first_of('(');
+            auto end = temp.find_first_of('+', start);
+            out = temp.substr(start + 1, end - 1 - start);
+        };
+
+    void* stack[100];
+    int frames = backtrace(stack, 100);
+    char** bt = backtrace_symbols(stack, frames);
+    for (int i = 0; i < frames; ++i)
+    {
+        std::string buf;
+        int status = -1;
+        trim(bt[i], buf);
+        char* demangled = abi::__cxa_demangle(buf.c_str(), nullptr, nullptr, &status);
+        if (status == 0) {
+            buf = demangled;
+            free(demangled);
+        }
+        symbols.emplace_back(buf);
+        if (buf == "main")
+            break;
+    }
+    free(bt);
+#endif
 }

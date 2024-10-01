@@ -19,8 +19,15 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include "MaterialLoader"
+#include "URI"
+#include "XmlUtils"
+#include "ImageUtils"
+#include "Elevation"
+
 #include <osg/Texture2D>
+#include <osg/Texture2DArray>
 #include <osgDB/FileNameUtils>
+#include <osgDB/ReadFile>
 
 using namespace osgEarth;
 using namespace osgEarth::Util;
@@ -135,8 +142,7 @@ MaterialLoader::apply(osg::StateSet* ss)
     if (ss->getTextureAttributeList().empty())
         return;
 
-    osg::Texture* t = dynamic_cast<osg::Texture*>(
-        ss->getTextureAttribute(0, osg::StateAttribute::TEXTURE));
+    osg::Texture* t = dynamic_cast<osg::Texture*>(ss->getTextureAttribute(0, osg::StateAttribute::TEXTURE));
     if (t == nullptr || t->getImage(0) == nullptr)
         return;
 
@@ -186,7 +192,7 @@ MaterialLoader::apply(osg::StateSet* ss)
                 mat_tex->setMaxAnisotropy(t->getMaxAnisotropy());
 
                 _cache[materialURI.full()] = mat_tex;
-                OE_INFO << LC << "Loaded material tex '" << materialURI.base() << "' to unit " << unit << std::endl;
+                OE_DEBUG << LC << "Loaded material tex '" << materialURI.base() << "' to unit " << unit << std::endl;
             }
         }   
 

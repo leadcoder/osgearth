@@ -26,6 +26,7 @@
 #include <osgEarth/Utils>
 #include <osgEarth/Capabilities>
 #include <osgEarth/Registry>
+#include <osgEarth/Notify>
 
 #include <osg/LineStipple>
 #include <osg/GraphicsContext>
@@ -43,9 +44,9 @@ using namespace osgEarth;
 
 #define LC "[GLUtils] "
 
-//#define USE_RECYCLING
+#define USE_RECYCLING
 
-#define OE_DEVEL OE_DEBUG 
+#define OE_DEVEL OE_DEBUG
 
 #ifndef GL_LINE_SMOOTH
 #define GL_LINE_SMOOTH 0x0B20
@@ -158,11 +159,7 @@ bool GLUtils::_useNVGL = false;
 void
 GLUtils::useNVGL(bool value)
 {
-    bool oldValue = _useNVGL;
-
-    _useNVGL =
-        value == true &&
-        Capabilities::get().supportsNVGL();
+    _useNVGL = value;
 
     if (_useNVGL)
     {
@@ -174,11 +171,16 @@ GLUtils::useNVGL(bool value)
     }
 }
 
+bool
+GLUtils::useNVGL()
+{
+    return _useNVGL && Registry::capabilities().supportsNVGL();
+}
+
 namespace
 {
     struct Mapping {
-        Mapping() : _ptr(nullptr) { }
-        const osg::State* _ptr;
+        const osg::State* _ptr = nullptr;
     };
     static Mapping s_mappings[4096];
 }
@@ -401,7 +403,7 @@ namespace
 #define GL_DEBUG_GROUP_STACK_DEPTH        0x826D
 #endif
 
-    void s_oe_gldebugproc(
+    void GL_APIENTRY s_oe_gldebugproc(
         GLenum source,
         GLenum type,
         GLuint id,
@@ -417,6 +419,16 @@ namespace
         {
             const std::string& s = severities[severity - GL_DEBUG_SEVERITY_HIGH];
             OE_WARN << "GL (" << s << ", " << source << ") -- " << message << std::endl;
+
+            std::stringstream buf;
+            CallStack stack;
+            for(unsigned i=1; i<stack.symbols.size(); ++i)
+            {
+                if (stack.symbols[i].find("s_oe_gldebugproc") == std::string::npos)
+                    buf << "\n - " << stack.symbols[i];
+                if (stack.symbols[i] == "main") break;
+            }
+            OE_WARN << "Call stack:" << buf.str() << std::endl;
         }
     }
 
@@ -486,7 +498,7 @@ GL3RealizeOperation::operator()(osg::Object* object)
         // perhaps create a reservation system for this.
         state->resetVertexAttributeAlias(false);
 
-        // We always want to use osg modelview and projection uniforms and vertex attribute aliasing.    
+        // We always want to use osg modelview and projection uniforms and vertex attribute aliasing.
         // Since we use modern opengl throughout even if OSG isn't explicitly built with GL3.
         state->setUseModelViewAndProjectionUniforms(true);
         state->setUseVertexAttributeAliasing(true);
@@ -509,7 +521,15 @@ GL3RealizeOperation::operator()(osg::Object* object)
 #define LC "[GLObjectPool] "
 
 // static decl
-Mutexed<std::vector<GLObjectPool*>> GLObjectPool::_pools;
+namespace
+{
+    std::mutex s_pools_mutex;
+    std::vector<GLObjectPool*> s_pools;
+}
+bool GLObjectPool::_enableRecycling = true;
+unsigned GLObjectPool::_bytes_to_delete_per_frame = 100000u;
+unsigned GLObjectPool::_frames_to_delay_deletion = 30u;
+
 
 GLObjectPool*
 GLObjectPool::get(osg::State& state)
@@ -528,23 +548,21 @@ std::unordered_map<int, GLObjectPool*>
 GLObjectPool::getAll()
 {
     std::unordered_map<int, GLObjectPool*> result;
-    ScopedMutexLock lock(_pools);
-    for (auto& pool : _pools)
+    std::lock_guard<std::mutex> lock(s_pools_mutex);
+    for (auto& pool : s_pools)
         result[pool->getContextID()] = pool;
     return result;
 }
 
 GLObjectPool::GLObjectPool(unsigned cxid) :
-    osg::GraphicsObjectManager("osgEarth::GLObjectPool", cxid),
-    _hits(0),
-    _misses(0),
-    _totalBytes(0),
-    _avarice(10.f)
+    osg::GraphicsObjectManager("osgEarth::GLObjectPool", cxid)
 {
-    _gcs.resize(256);
+    std::lock_guard<std::mutex> lock(s_pools_mutex);
+    s_pools.emplace_back(this);
 
-    ScopedMutexLock lock(_pools);
-    _pools.emplace_back(this);
+    char* value = ::getenv("OSGEARTH_GL_OBJECT_POOL_DELAY");
+    if (value)
+        _frames_to_delay_deletion = as<unsigned>(value, _frames_to_delay_deletion);
 }
 
 namespace
@@ -570,81 +588,40 @@ namespace
 void
 GLObjectPool::track(osg::GraphicsContext* gc)
 {
-    unsigned i;
-    for (i = 0; i < _gcs.size() && _gcs[i]._gc != nullptr; ++i)
+    // if we already know about this GC, we are good
+    for (auto& known_gc : _gcs)
     {
-        if (_gcs[i]._gc == gc)
+        if (known_gc == gc)
             return;
     }
 
-    _gcs[i]._gc = gc;
-    _gcs[i]._operation = new GCServicingOperation(this);
-    gc->add(_gcs[i]._operation.get());
+    // A new GC has appeared. Create a servicing operation that will run
+    // each frame and check for orphaned data.
+    gc->add(new GCServicingOperation(this));
 
-    //auto iter = _non_shared_objects.find(gc);
-    //if (iter == _non_shared_objects.end())
-    //{
-    //    _non_shared_objects.emplace(gc, Collection());
-
-    //    // add this object to the GC's operations thread so it
-    //    // can service it once per frame:
-    //    if (_gc_operation == nullptr)
-    //    {
-    //        _gc_operation = new FlushOperation(this);
-    //    }
-    //    gc->add(_gc_operation.get());
-    //}
+    _gcs.emplace_back(gc);
 }
 
-//void
-//GLObjectPool::flush(osg::GraphicsContext* gc)
-//{
-//    // This function is invoked by the FlushOperation once per
-//    // frame with the active GC.
-//    // Here we will look for per-state objects (like VAOs and FBOs)
-//    // that may only be deleted in the same GC that created them.
-//    unsigned num = flush(_non_shared_objects[gc]);
-//    if (num > 0)
-//    {
-//        OE_DEBUG << LC << "GC " << (std::uintptr_t)gc << " flushed " << num << " shared objects" << std::endl;
-//    }
-//}
-
 void
-GLObjectPool::watch(GLObject::Ptr object) //, osg::State& state)
+GLObjectPool::watch(GLObject::Ptr object)
 {
-    ScopedMutexLock lock(_mutex);
-    _objects.push_back(object);
-
-    //if (object->shareable())
-    //{
-    //    // either this is a shareable object, or we are inserting into
-    //    // a non-shared pool and that is why state is nullptr.
-    //    _objects.insert(object);
-    //}
-    //else
-    //{
-    //    _non_shared_objects[state.getGraphicsContext()].insert(object);
-    //}
+    std::lock_guard<std::mutex> lock(_mutex);
+    _objects.emplace_back(object);
 }
 
 void
 GLObjectPool::releaseGLObjects(osg::State* state)
 {
-    if (state)
+    // ONLY do mass-release here; not state-based. Leave that to
+    // the entities that own the GL objects themselves.
+    if (state == nullptr)
     {
-        GLObjectPool::get(*state)->releaseAll(state->getGraphicsContext());
+        for(auto pool : s_pools)
+        {
+            pool->releaseAll(nullptr);
+        }
     }
 }
-
-//void
-//GLObjectPool::releaseAll()
-//{
-//    ScopedMutexLock lock(_mutex);
-//    for (auto& object : _objects)
-//        object->release();
-//    _objects.clear();
-//}
 
 GLsizeiptr
 GLObjectPool::totalBytes() const
@@ -661,125 +638,100 @@ GLObjectPool::objects() const
 void
 GLObjectPool::flushDeletedGLObjects(double now, double& avail)
 {
-    //flush(_objects);
+    //nop
 }
 
 void
 GLObjectPool::flushAllDeletedGLObjects()
 {
-    deleteAllGLObjects();
+    //nop
 }
 
 void
 GLObjectPool::deleteAllGLObjects()
 {
-    //ScopedMutexLock lock(_mutex);
-    //for (auto& object : _objects)
-    //    object->release();
-    //_objects.clear();
-    //_totalBytes = 0;
+    //nop
 }
 
 void
 GLObjectPool::discardAllGLObjects()
 {
-    //ScopedMutexLock lock(_mutex);
-    //_objects.clear();
-    //_totalBytes = 0;
+    //nop
 }
 
 void
 GLObjectPool::releaseAll(const osg::GraphicsContext* gc)
 {
-    ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
     GLsizeiptr bytes = 0;
-    GLObjectPool::Collection keep;
+    GLObjectPool::Collection keepers;
 
     for (auto& object : _objects)
     {
-        if (object->gc() == gc)
+        // if an object 'owned' by this GC is not shared, release its GL objects
+        // and drop it from the tracking pool.
+        if (object->gc() == gc && object->shared() == false)
         {
             object->release();
         }
         else
         {
-            keep.push_back(object);
             bytes += object->size();
+            keepers.emplace_back(std::move(object));
         }
     }
-    _objects.swap(keep);
+
+    _objects.swap(keepers);
     _totalBytes = bytes;
 }
 
 void
 GLObjectPool::releaseOrphans(const osg::GraphicsContext* gc)
 {
-    ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
+    int bytes_remaining = (int)_bytes_to_delete_per_frame;
+
+    // then check for objects to add to the orphan list:
     GLsizeiptr bytes = 0;
-    unsigned maxNumToRelease = std::max(1u, (unsigned)pow(4.0f, _avarice));
-    unsigned numReleased = 0u;
-
-    for (unsigned int i = 0; i < _objects.size();)
+    Collection keepers;
+    keepers.reserve(_objects.size());
+    for (unsigned i = 0; i < _objects.size(); ++i)
     {
-        GLObject::Ptr& object = _objects[i];
+        auto& object = _objects[i];
+        
+        if (!object->valid())
+        {
+            // object has already been released; it cannot be recycled,
+            // so drop it from the tracker pool.
+            continue;
+        }
 
-        if (object->gc() == gc && object.use_count() == 1 && numReleased < maxNumToRelease)
+        // the object is not referenced anywhere else but here,
+        // and we've satisfied the byte-slice and time-slice requirements,
+        // release its memory and drop it from the tracker pool.
+        if (object.use_count() == 1 &&
+            bytes_remaining > 0 &&
+            object->_orphan_frames++ >= _frames_to_delay_deletion)
         {
-            // Release the object
             object->release();
-            ++numReleased;
-            // Move the object at the end of the vector into this slot, making sure not to increment i as we want this object processed next.
-            _objects[i] = std::move(_objects.back());
-            // Reduce the size of the vector by 1.
-            _objects.resize(_objects.size() - 1);
+            bytes_remaining -= object->size();
+            continue;
         }
-        else
-        {
-            bytes += object->size();
-            ++i;
-        }
+
+        // keep the object around.
+        bytes += object->size();
+        keepers.emplace_back(std::move(object));
     }
+
+    _objects.swap(keepers);
     _totalBytes = bytes;
 }
 
-#if 0
-unsigned
-GLObjectPool::flush(GLObjectPool::Collection& objects)
-{
-    ScopedMutexLock lock(_mutex);
-
-    GLsizeiptr bytes_released = 0;
-    std::unordered_set<GLObject::Ptr> keep;
-    unsigned maxNumToRelease = std::max(1u, (unsigned)pow(4.0f, _avarice));
-    unsigned numReleased = 0u;
-
-    for (auto& object : objects)
-    {
-        if (object.use_count() == 1 && numReleased < maxNumToRelease)
-        {
-            bytes_released += object->size();
-            object->release();
-            ++numReleased;
-        }
-        else
-        {
-            keep.insert(object);
-        }
-    }
-    objects.swap(keep);
-    _totalBytes = _totalBytes - bytes_released;
-
-    return numReleased;
-}
-#endif
 
 GLObject::GLObject(GLenum ns, osg::State& state) :
-    _name(0),
     _ns(ns),
-    _recyclable(false),
-    _shareable(false),
     _ext(osg::GLExtensions::Get(state.getContextID(), true)),
     _gc(state.getGraphicsContext())
 {
@@ -892,16 +844,13 @@ GLVAO::unbind()
 
 GLBuffer::GLBuffer(GLenum target, osg::State& state) :
     GLObject(GL_BUFFER, state),
-    _target(target),
-    _size(0),
-    _immutable(false),
-    _address(0)
+    _target(target)
 {
     ext()->glGenBuffers(1, &_name);
     if (name() == 0)
     {
         GLenum e = glGetError();
-        OE_INFO << "OpenGL error " << e << std::endl;
+        OE_FATAL << "OpenGL error " << e << std::endl;
         OE_HARD_ASSERT(name() != 0);
     }
 }
@@ -916,17 +865,26 @@ GLBuffer::create(GLenum target, osg::State& state)
 }
 
 GLBuffer::Ptr
-GLBuffer::create(
-    GLenum target,
-    osg::State& state,
-    GLsizei sizeHint)
+GLBuffer::create_shared(GLenum target, osg::State& state)
+{
+    auto ptr = create(target, state);
+    if (ptr) ptr->_shared = true;
+    return ptr;
+}
+
+#define NEXT_MULTIPLE(X, Y) (((X+Y-1)/Y)*Y)
+
+GLBuffer::Ptr
+GLBuffer::create(GLenum target, osg::State& state, GLsizei sizeHint, GLsizei chunkSize)
 {
 #ifdef USE_RECYCLING
-    const GLObject::Compatible comp = [sizeHint](GLObject* obj) {
+    GLsizei alignedSizeHint = NEXT_MULTIPLE(sizeHint, chunkSize);
+
+    const GLObject::Compatible comp = [alignedSizeHint](GLObject* obj) {
         return
             obj->ns() == GL_BUFFER &&
             obj->recyclable() &&
-            obj->size() == sizeHint;
+            obj->size() == alignedSizeHint;
     };
 
     Ptr object = GLObjectPool::get(state)->recycle<GLBuffer>(comp);
@@ -938,18 +896,32 @@ GLBuffer::create(
     else
     {
         object = create(target, state);
+        object->setChunkSize(chunkSize);
         object->_recyclable = true;
     }
     return object;
 #else
-    return create(target, state);
+    auto result = create(target, state);
+    result->setChunkSize(chunkSize);
+    return result;
 #endif
+}
+
+GLBuffer::Ptr
+GLBuffer::create_shared(GLenum target, osg::State& state, GLsizei sizeHint, GLsizei chunkSize)
+{
+    auto ptr = create(target, state, sizeHint, chunkSize);
+    if (ptr) ptr->_shared = true;
+    return ptr;
 }
 
 void
 GLBuffer::bind() const
 {
     //OE_DEVEL << LC << "GLBuffer::bind, name=" << name() << std::endl;
+    if (_name == 0) {
+        OE_WARN << "Catch" << std::endl;
+    }
     OE_SOFT_ASSERT_AND_RETURN(_name != 0, void(), "bind() called on invalid/deleted name: " + _name << );
     ext()->glBindBuffer(_target, _name);
 }
@@ -957,6 +929,9 @@ GLBuffer::bind() const
 void
 GLBuffer::bind(GLenum otherTarget) const
 {
+    if (_name == 0) {
+        OE_WARN << "Catch" << std::endl;
+    }
     //OE_DEVEL << LC << "GLBuffer::bind, name=" << name() << std::endl;
     OE_SOFT_ASSERT_AND_RETURN(_name != 0, void(), "bind() called on invalid/deleted name: " + label() << );
     ext()->glBindBuffer(otherTarget, _name);
@@ -974,7 +949,6 @@ GLBuffer::uploadData(GLsizei datasize, const GLvoid* data, GLbitfield flags) con
 {
     OE_SOFT_ASSERT_AND_RETURN(_immutable == false || datasize <= size(), void());
 
-    //if (!gl.NamedBufferData)
     if (!gl.useNamedBuffers)
         bind();
 
@@ -992,16 +966,31 @@ GLBuffer::uploadData(GLsizei datasize, const GLvoid* data, GLbitfield flags) con
 }
 
 void
-GLBuffer::bufferData(GLsizei size, const GLvoid* data, GLbitfield flags) const
+GLBuffer::bufferData(GLsizei datasize, const GLvoid* data, GLbitfield flags) const
 {
+    GLsizei alloc_size = NEXT_MULTIPLE(datasize, _chunk_size);
+
     if (_target == GL_SHADER_STORAGE_BUFFER)
-        size = ::align(size, getSSBOAlignment<GLsizei>());
+    {
+        alloc_size = ::align(datasize, getSSBOAlignment<GLsizei>());
+    }
 
     if (gl.NamedBufferData)
-        gl.NamedBufferData(name(), size, data, flags);
+    {
+        if (alloc_size > _alloc_size)
+            gl.NamedBufferData(name(), alloc_size, nullptr, flags);
+
+        gl.NamedBufferSubData(name(), 0, datasize, data);
+    }
     else
-        ext()->glBufferData(_target, size, data, flags);
-    _size = size;
+    {
+        if (alloc_size > _alloc_size)
+            ext()->glBufferData(_target, alloc_size, nullptr, flags);
+
+        ext()->glBufferSubData(_target, 0, datasize, data);
+    }
+
+    _alloc_size = alloc_size;
     _immutable = false;
 }
 
@@ -1016,23 +1005,54 @@ GLBuffer::bufferSubData(GLintptr offset, GLsizei datasize, const GLvoid* data) c
 }
 
 void
-GLBuffer::bufferStorage(GLsizei size, const GLvoid* data, GLbitfield flags) const
+GLBuffer::bufferStorage(GLsizei datasize, const GLvoid* data, GLbitfield flags) const
 {
     if (_target == GL_SHADER_STORAGE_BUFFER)
-        size = ::align(size, getSSBOAlignment<GLsizei>());
-
-    if (recyclable() && size == _size)
     {
-        ext()->glBufferSubData(_target, 0, size, data);
+        OE_SOFT_ASSERT(datasize == ::align(datasize, getSSBOAlignment<GLsizei>()));
+    }
+
+    if (recyclable() && datasize <= _alloc_size)
+    {
+        ext()->glBufferSubData(_target, 0, datasize, data);
     }
     else
     {
         if (recyclable())
             flags |= GL_DYNAMIC_STORAGE_BIT;
 
-        ext()->glBufferStorage(_target, size, data, flags);
+        ext()->glBufferStorage(_target, datasize, data, flags);
+        _alloc_size = datasize;
     }
-    _size = size;
+
+    _immutable = true;
+}
+
+void
+GLBuffer::bufferStorage(GLsizei buffersize, GLsizei datasize, const GLvoid* data, GLbitfield flags) const
+{
+    OE_SOFT_ASSERT_AND_RETURN(datasize <= buffersize, void());
+
+    if (_target == GL_SHADER_STORAGE_BUFFER)
+    {
+        buffersize = ::align(buffersize, getSSBOAlignment<GLsizei>());
+    }
+
+    if (recyclable() && datasize <= _alloc_size)
+    {
+        ext()->glBufferSubData(_target, 0, datasize, data);
+    }
+    else
+    {
+        if (recyclable())
+            flags |= GL_DYNAMIC_STORAGE_BIT;
+
+        ext()->glBufferStorage(_target, buffersize, nullptr, flags);
+        _alloc_size = buffersize;
+
+        ext()->glBufferSubData(_target, 0, datasize, data);
+    }
+
     _immutable = true;
 }
 
@@ -1103,18 +1123,23 @@ GLBuffer::release()
     {
         OE_DEVEL << LC << "GLBuffer::release, name=" << name() << std::endl;
 
-        //makeNonResident();
+#ifdef OSGEARTH_SINGLE_GL_CONTEXT
+        if (_isResident == true)
+        {
+            OE_HARD_ASSERT(gl.MakeNamedBufferNonResidentNV);
+            gl.MakeNamedBufferNonResidentNV(name());
+            _address = 0;
+            _isResident.value = false;
+        }
+#else
+        for (auto& i : _isResident)
+            i.second.value = false;
+#endif
+
         //OE_DEVEL << "Releasing buffer " << _name << "(" << _label << ")" << std::endl;
         ext()->glDeleteBuffers(1, &_name);
         _name = 0;
-        _size = 0;
-
-#ifdef OSGEARTH_SINGLE_GL_CONTEXT
-        _isResident = false;
-#else
-        for (auto& i : _isResident)
-            i.second = false;
-#endif
+        _alloc_size = 0;
     }
 }
 
@@ -1139,12 +1164,16 @@ GLBuffer::makeResident(osg::State& state)
     Resident& resident = _isResident[state.getGraphicsContext()];
 #endif
 
+    OE_SOFT_ASSERT(address() != 0, "makeResident() called on buffer with no address");
+
+    // Note: it's legal to call this function if the object is already resident.
+
     if (address() != 0 && resident == false)
     {
         OE_HARD_ASSERT(gl.MakeNamedBufferResidentNV);
         //Currently only GL_READ_ONLY is supported according to the spec
         gl.MakeNamedBufferResidentNV(name(), GL_READ_ONLY_ARB);
-        resident = true;
+        resident.value = true;
     }
 }
 
@@ -1157,13 +1186,17 @@ GLBuffer::makeNonResident(osg::State& state)
     Resident& resident = _isResident[state.getGraphicsContext()];
 #endif
 
+    OE_SOFT_ASSERT(address() != 0, "makeNonResident() called on buffer with no address");
+
+    // Note: it's legal to call this function if the object is already non-resident.
+
     if (address() != 0 && resident == true)
     {
         OE_HARD_ASSERT(gl.MakeNamedBufferNonResidentNV);
         gl.MakeNamedBufferNonResidentNV(name());
         // address can be invalidated, so zero it out
         _address = 0;
-        resident = false;
+        resident.value = false;
     }
 }
 
@@ -1176,14 +1209,17 @@ GLBuffer::align(size_t val)
         return ::align(val, getUBOAlignment<size_t>());
 }
 
+void
+GLBuffer::setChunkSize(GLsizei value)
+{
+    if (value > 0)
+    {
+        _chunk_size = align(value);
+    }
+}
+
 GLTexture::Profile::Profile(GLenum target) :
-    osg::Texture::TextureProfile(target),
-    _minFilter(GL_LINEAR),
-    _magFilter(GL_LINEAR),
-    _wrapS(GL_CLAMP_TO_EDGE),
-    _wrapT(GL_CLAMP_TO_EDGE),
-    _wrapR(GL_CLAMP_TO_EDGE),
-    _maxAnisotropy(1.0f)
+    osg::Texture::TextureProfile(target)
 {
     //nop
 }
@@ -1234,11 +1270,10 @@ GLTexture::Profile::operator==(const GLTexture::Profile& rhs) const
 GLTexture::GLTexture(GLenum target, osg::State& state) :
     GLObject(GL_TEXTURE, state),
     _target(target),
-    _handle(0),
-    _profile(target),
-    _size(0)
+    _profile(target)
 {
     glGenTextures(1, &_name);
+    _shared = true;
 }
 
 GLTexture::Ptr
@@ -1251,10 +1286,7 @@ GLTexture::create(GLenum target, osg::State& state)
 }
 
 GLTexture::Ptr
-GLTexture::create(
-    GLenum target,
-    osg::State& state,
-    const Profile& profileHint)
+GLTexture::create(GLenum target, osg::State& state, const Profile& profileHint)
 {
 #ifdef USE_RECYCLING
     const GLObject::Compatible comp = [profileHint](GLObject* obj) {
@@ -1289,10 +1321,16 @@ GLTexture::bind(osg::State& state)
     glBindTexture(_target, _name);
 
     // Inform OSG of the state change
-    state.haveAppliedTextureAttribute(
-        state.getActiveTextureUnit(), osg::StateAttribute::TEXTURE);
-    state.haveAppliedTextureMode(
-        state.getActiveTextureUnit(), _target);
+    state.haveAppliedTextureAttribute(state.getActiveTextureUnit(), osg::StateAttribute::TEXTURE);
+
+    // account for the FFP version of the mode
+    GLenum fixed_function_target = _target;
+    if (_target == GL_TEXTURE_2D_ARRAY)
+    {
+        fixed_function_target = GL_TEXTURE_2D;
+    }
+
+    state.haveAppliedTextureMode(state.getActiveTextureUnit(), fixed_function_target);
 }
 
 GLuint64
@@ -1317,7 +1355,8 @@ GLTexture::makeResident(const osg::State& state, bool toggle)
     Resident& resident = _isResident[state.getGraphicsContext()];
 #endif
 
-    //TODO: does this stall??
+    // Note: it's legal to call this function if the object is already resident.
+    
     if (resident != toggle)
     {
         OE_SOFT_ASSERT_AND_RETURN(_handle != 0, void(), "makeResident() called on invalid handle: " + label() << );
@@ -1329,7 +1368,7 @@ GLTexture::makeResident(const osg::State& state, bool toggle)
 
         OE_DEVEL << "'" << id() << "' name=" << name() << " resident=" << (toggle ? "yes" : "no") << std::endl;
 
-        resident = toggle;
+        resident.value = toggle;
     }
 }
 
@@ -1350,14 +1389,16 @@ GLTexture::release()
 {
     OE_DEVEL << LC << "GLTexture::release, name=" << name() << std::endl;
     if (_handle != 0)
-    {
+    {        
 #ifdef OSGEARTH_SINGLE_GL_CONTEXT
-        _isResident = false;
+        if (_isResident == true)
+            ext()->glMakeTextureHandleNonResident(_handle);
+
+        _isResident.value = false;
 #else
         for (auto& i : _isResident)
-            i.second = false;
+            i.second.value = false;
 #endif
-
         _handle = 0;
     }
     if (_name != 0)
@@ -1485,11 +1526,7 @@ GLFBO::size() const
 }
 
 GLTexture::Ptr
-GLFBO::renderToTexture(
-    GLsizei width,
-    GLsizei height,
-    DrawFunction draw,
-    osg::State& state)
+GLFBO::renderToTexture(GLsizei width, GLsizei height, DrawFunction draw, osg::State& state)
 {
     // http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-14-render-to-texture/
 
@@ -1520,7 +1557,7 @@ GLFBO::renderToTexture(
     texture->debugLabel("GLFBO");
 
     // allocate the storage.
-    // TODO: use glTexImage2D instead so we can change the 
+    // TODO: use glTexImage2D instead so we can change the
     // mipmapping filters later?
     texture->storage2D(profile);
 
@@ -1636,14 +1673,14 @@ GLPipeline::Dispatcher::operator()(osg::GraphicsContext* gc)
 }
 
 //static defs
-Mutex GLPipeline::_mutex("GLPipeline(OE)");
+Mutex GLPipeline::_mutex;
 std::unordered_map<osg::State*, GLPipeline::Ptr> GLPipeline::_lut;
 
 
 GLPipeline::Ptr
 GLPipeline::get(osg::State& state)
 {
-    ScopedMutexLock lock(GLPipeline::_mutex);
+    std::unique_lock<std::mutex> lock(GLPipeline::_mutex);
     GLPipeline::Ptr& p = _lut[&state];
 
     if (p == nullptr)
@@ -1692,8 +1729,7 @@ ComputeImageSession::setImage(osg::Image* image)
 void
 ComputeImageSession::execute(osg::State& state)
 {
-    auto job = GLPipeline::get(state)->dispatch<bool>(
-        [this](osg::State& state, Promise<bool>& promise, int invocation)
+    auto task = [this](osg::State& state, jobs::promise<bool>& promise, int invocation)
         {
             if (invocation == 0)
             {
@@ -1707,9 +1743,9 @@ ComputeImageSession::execute(osg::State& state)
                 readback(&state);
                 return false; // all done.
             }
-        }
-    );
+        };
 
+    auto job = GLPipeline::get(state)->dispatch<bool>(task);
     job.join();
 }
 
@@ -1767,7 +1803,7 @@ namespace
 
     struct ICOCallback : public ICO::CompileCompletedCallback
     {
-        Promise<osg::ref_ptr<osg::Node>> _promise;
+        jobs::promise<osg::ref_ptr<osg::Node>> _promise;
         osg::ref_ptr<osg::Node> _node;
         std::atomic_int& _jobsActive;
 
@@ -1792,6 +1828,16 @@ namespace
 
 std::atomic_int GLObjectsCompiler::_jobsActive;
 
+namespace
+{
+    struct StateToCompileEx : public osgUtil::StateToCompile
+    {
+        void apply(osg::StateSet& stateSet) override
+        {
+        }
+    };
+}
+
 osg::ref_ptr<osgUtil::StateToCompile>
 GLObjectsCompiler::collectState(osg::Node* node) const
 {
@@ -1809,13 +1855,13 @@ GLObjectsCompiler::collectState(osg::Node* node) const
     return state;
 }
 
-Future<osg::ref_ptr<osg::Node>>
+jobs::future<osg::ref_ptr<osg::Node>>
 GLObjectsCompiler::compileAsync(
     const osg::ref_ptr<osg::Node>& node,
     const osg::Object* host,
     Cancelable* progress) const
 {
-    Future<osg::ref_ptr<osg::Node>> result;
+    jobs::future<osg::ref_ptr<osg::Node>> result;
 
     if (node.valid())
     {
@@ -1832,7 +1878,7 @@ GLObjectsCompiler::compileAsync(
                 auto compileSet = new osgUtil::IncrementalCompileOperation::CompileSet();
                 compileSet->buildCompileMap(ico->getContextSet(), *state.get());
                 ICOCallback* callback = new ICOCallback(node, _jobsActive);
-                result = callback->_promise.getFuture();
+                result = callback->_promise;
                 compileSet->_compileCompletedCallback = callback;
                 _jobsActive++;
                 ico->add(compileSet, false);
@@ -1843,28 +1889,27 @@ GLObjectsCompiler::compileAsync(
         if (!compileScheduled)
         {
             // no ICO available - just resolve the future immediately
-            Promise<osg::ref_ptr<osg::Node>> promise;
-            result = promise.getFuture();
-            promise.resolve(node);
+            result.resolve(node);
         }
     }
 
     return result;
 }
 
-Future<osg::ref_ptr<osg::Node>>
+jobs::future<osg::ref_ptr<osg::Node>>
 GLObjectsCompiler::compileAsync(
     const osg::ref_ptr<osg::Node>& node,
     osgUtil::StateToCompile* state,
     const osg::Object* host,
     Cancelable* progress) const
 {
-    Future<osg::ref_ptr<osg::Node>> result;
+    jobs::future<osg::ref_ptr<osg::Node>> result;
 
     OE_SOFT_ASSERT_AND_RETURN(node.valid(), result);
 
     // if there is an ICO available, schedule the GPU compilation
     bool compileScheduled = false;
+
     if (state != nullptr && !state->empty())
     {
         osg::ref_ptr<ICO> ico;
@@ -1873,7 +1918,7 @@ GLObjectsCompiler::compileAsync(
             auto compileSet = new osgUtil::IncrementalCompileOperation::CompileSet();
             compileSet->buildCompileMap(ico->getContextSet(), *state);
             ICOCallback* callback = new ICOCallback(node, _jobsActive);
-            result = callback->_promise.getFuture();
+            result = callback->_promise;
             compileSet->_compileCompletedCallback = callback;
             _jobsActive++;
             ico->add(compileSet, false);
@@ -1884,14 +1929,50 @@ GLObjectsCompiler::compileAsync(
     if (!compileScheduled)
     {
         // no ICO available - just resolve the future immediately
-        Promise<osg::ref_ptr<osg::Node>> promise;
-        result = promise.getFuture();
-        promise.resolve(node);
+        result.resolve(node);
     }
 
     return result;
 }
 
+void
+GLObjectsCompiler::requestIncrementalCompile(
+    const osg::ref_ptr<osg::Node>& node,
+    osgUtil::StateToCompile* state,
+    const osg::Object* host,
+    jobs::promise<osg::ref_ptr<osg::Node>> promise) const
+{
+    if (!node.valid())
+    {
+        promise.resolve();
+        return;
+    }
+
+    // if there is an ICO available, schedule the GPU compilation
+    bool compileScheduled = false;
+
+    if (state != nullptr && !state->empty())
+    {
+        osg::ref_ptr<ICO> ico;
+        if (ObjectStorage::get(host, ico) && ico->isActive())
+        {
+            auto compileSet = new osgUtil::IncrementalCompileOperation::CompileSet();
+            compileSet->buildCompileMap(ico->getContextSet(), *state);
+            ICOCallback* callback = new ICOCallback(node, _jobsActive);
+            callback->_promise = promise;
+            compileSet->_compileCompletedCallback = callback;
+            _jobsActive++;
+            ico->add(compileSet, false);
+            compileScheduled = true;
+        }
+    }
+
+    if (!compileScheduled)
+    {
+        // no ICO available - just resolve the future immediately
+        promise.resolve(node);
+    }
+}
 
 void
 GLObjectsCompiler::compileNow(
@@ -1901,7 +1982,7 @@ GLObjectsCompiler::compileNow(
 {
     if (node)
     {
-        Future<osg::ref_ptr<osg::Node>> result = compileAsync(node, host, progress);
+        auto result = compileAsync(node, host, progress);
         result.join(progress);
     }
 }

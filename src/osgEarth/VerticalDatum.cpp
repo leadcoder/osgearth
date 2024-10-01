@@ -35,7 +35,7 @@ namespace
 {
     typedef std::map<std::string, osg::ref_ptr<VerticalDatum> > VDatumCache;
     VDatumCache _vdatumCache;
-    Threading::Mutex _vdataCacheMutex("VDatumCache(OE)");
+    std::mutex _vdataCacheMutex;
     bool _vdatumWarning = false;
 } 
 
@@ -47,7 +47,7 @@ VerticalDatum::get( const std::string& initString )
     if (initString.empty())
         return result;
 
-    Threading::ScopedMutexLock exclusive(_vdataCacheMutex);
+    std::lock_guard<std::mutex> exclusive(_vdataCacheMutex);
 
     if (::getenv("OSGEARTH_IGNORE_VERTICAL_DATUMS"))
     {
@@ -80,21 +80,21 @@ VerticalDatum::get( const std::string& initString )
 // --------------------------------------------------------------------------
 
 VerticalDatum::VerticalDatum(const std::string& name,
-                             const std::string& initString,
-                             Geoid*             geoid ) :
-_name      ( name ),
-_initString( initString ),
-_geoid     ( geoid ),
-_units     ( Units::METERS )
+    const std::string& initString,
+    Geoid* geoid) :
+    _name(name),
+    _initString(initString),
+    _geoid(geoid),
+    _units(Units::METERS)
 {
-    if ( _geoid.valid() )
+    if (_geoid.valid())
         _units = _geoid->getUnits();
 }
 
-VerticalDatum::VerticalDatum( const Units& units ) :
-_name      ( units.getName() ),
-_initString( units.getName() ),
-_units     ( units )
+VerticalDatum::VerticalDatum(const UnitsType& units) :
+    _name(units.getName()),
+    _initString(units.getName()),
+    _units(units)
 {
     //nop
 }
@@ -114,8 +114,8 @@ VerticalDatum::transform(const VerticalDatum* from,
         in_out_z = from->msl2hae( lat_deg, lon_deg, in_out_z );
     }
 
-    Units fromUnits = from ? from->getUnits() : Units::METERS;
-    Units toUnits = to ? to->getUnits() : Units::METERS;
+    auto fromUnits = from ? from->getUnits() : Units::METERS;
+    auto toUnits = to ? to->getUnits() : Units::METERS;
 
     in_out_z = fromUnits.convertTo(toUnits, in_out_z);
 
@@ -231,12 +231,17 @@ VerticalDatumFactory::create( const std::string& init )
 {
     osg::ref_ptr<VerticalDatum> datum;
 
-    std::string driverExt = Stringify() << ".osgearth_vdatum_" << init;
-    osg::ref_ptr<osg::Object> object = osgDB::readRefObjectFile( driverExt );
-    datum = dynamic_cast<VerticalDatum*>( object.release() );
-    if ( !datum )
+    std::string driverExt = "osgearth_vdatum_" + init;
+    auto rw = osgDB::Registry::instance()->getReaderWriterForExtension(driverExt);
+    if (rw)
     {
-        OE_WARN << "WARNING: Failed to load Vertical Datum driver for \"" << init << "\"" << std::endl;
+        auto rr = rw->readObject("."+driverExt, nullptr);
+        osg::ref_ptr<osg::Object> object = rr.getObject();
+        datum = dynamic_cast<VerticalDatum*>(object.release());
+        if (!datum)
+        {
+            OE_WARN << "WARNING: Failed to load Vertical Datum driver for \"" << init << "\"" << std::endl;
+        }
     }
 
     return datum.release();

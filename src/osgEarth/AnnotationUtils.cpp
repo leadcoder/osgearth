@@ -24,7 +24,6 @@
 #include <osgEarth/Color>
 #include <osgEarth/MeshSubdivider>
 #include <osgEarth/TextSymbolizer>
-#include <osgEarth/Threading>
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
 #include <osgEarth/CullingUtils>
@@ -75,6 +74,7 @@ AnnotationUtils::createTextDrawable(const std::string& text,
     }
 
     drawable->setText( text, text_encoding );
+    drawable->setName(text);
 
     TextSymbolizer symbolizer(symbol);
     symbolizer.apply(drawable, 0L, 0L, &box);

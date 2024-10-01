@@ -86,10 +86,10 @@ LoadTileDataOperation::dispatch(bool async)
 
     TileKey key(_tilenode->getKey());
 
-    auto load = [engine, map, key, manifest, enableCancel] (Cancelable* progress)
+    auto load = [engine, map, key, manifest, enableCancel] (Cancelable& progress)
     {
         osg::ref_ptr<ProgressCallback> wrapper =
-            enableCancel ? new ProgressCallback(progress) : nullptr;
+            enableCancel ? new ProgressCallback(&progress) : nullptr;
 
         osg::ref_ptr<TerrainTileModel> result = engine->createTileModel(
             map.get(),
@@ -115,16 +115,15 @@ LoadTileDataOperation::dispatch(bool async)
 
     if (async)
     {
-        Job job;
-        job.setArena(ARENA_LOAD_TILE);
-        job.setPriorityFunction(priority_func);
-        _result = job.dispatch<LoadResult>(load);
+        jobs::context context;
+        context.pool = jobs::get_pool(ARENA_LOAD_TILE);
+        context.priority = priority_func;
+        _result = jobs::dispatch(load, context);
     }
     else
     {
-        Promise<LoadResult> promise;
-        _result = promise.getFuture();
-        promise.resolve(load(nullptr));
+        Cancelable c;
+        _result.resolve(load(c));
     }
 
     return true;
@@ -153,27 +152,26 @@ LoadTileDataOperation::merge()
 
     // no data model at all - done
     // GW: should never happen.
-    if (!_result.isAvailable())
+    if (!_result.available())
     {
         OE_WARN << tilenode->getKey().str() << " bailing out of merge b/c data model is NULL" << std::endl;
         return false;
     }
 
-    OE_SOFT_ASSERT_AND_RETURN(_result.isAvailable(), false);
+    OE_SOFT_ASSERT_AND_RETURN(_result.available(), false);
 
     OE_PROFILING_ZONE;
 
-    const osg::ref_ptr<TerrainTileModel>& model = _result.get();
+    const osg::ref_ptr<TerrainTileModel>& model = _result.value(); //.get();
 
     // Check the map data revision and scan the manifest and see if any
     // revisions don't match the revisions in the original manifest.
     // If there are mismatches, that means the map has changed since we
     // submitted this request, and the results are now invalid.
-    if (model->revision() != map->getDataModelRevision() ||
+    if (model->revision != map->getDataModelRevision() ||
         _manifest.inSyncWith(map.get()) == false)
     {
         // wipe the data model, update the revisions, and try again.
-        OE_DEBUG << LC << "Request for tile " << tilenode->getKey().str() << " out of date and will be requeued" << std::endl;
         _manifest.updateRevisions(map.get());
         _tilenode->refreshLayers(_manifest);
         return false;

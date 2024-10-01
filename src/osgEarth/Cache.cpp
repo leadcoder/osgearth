@@ -79,7 +79,7 @@ CacheSettings::integrateCachePolicy(const optional<CachePolicy>& policy)
 {
     // integrate the fields that are passed in first:
     if ( policy.isSet() )
-        cachePolicy()->mergeAndOverride( policy );
+        cachePolicy().mutable_value().mergeAndOverride( policy );
 
     // then resolve with global overrides from the registry.
     Registry::instance()->resolveCachePolicy( cachePolicy() );
@@ -129,9 +129,8 @@ CacheSettings::toString() const
 
 //------------------------------------------------------------------------
 
-Cache::Cache( const CacheOptions& options ) :
-_options( options ),
-_bins("OE.Cache.bins")
+Cache::Cache(const CacheOptions& options) :
+    _options(options)
 {
     //nop
 }
@@ -140,9 +139,8 @@ Cache::~Cache()
 {
 }
 
-Cache::Cache( const Cache& rhs, const osg::CopyOp& op ) :
-osg::Object( rhs, op ),
-_bins("OE.Cache.bins")
+Cache::Cache(const Cache& rhs, const osg::CopyOp& op) :
+    osg::Object(rhs, op)
 {
     _status = rhs._status;
 }
@@ -214,10 +212,14 @@ CacheFactory::create( const CacheOptions& options )
         osg::ref_ptr<osgDB::Options> rwopt = Registry::cloneOrCreateOptions();
         rwopt->setPluginData( CACHE_OPTIONS_TAG, (void*)&options );
 
-        std::string driverExt = std::string(".osgearth_cache_") + options.getDriver();
-        osg::ref_ptr<osg::Object> object = osgDB::readRefObjectFile( driverExt, rwopt.get() );
-        result = dynamic_cast<Cache*>( object.release() );
-        if ( !result.valid() )
+        std::string driverExt = std::string("osgearth_cache_") + options.getDriver();
+        auto rw = osgDB::Registry::instance()->getReaderWriterForExtension(driverExt);
+        if (rw)
+        {
+            osg::ref_ptr<osg::Object> object = rw->readObject("." + driverExt, rwopt.get()).getObject();
+            result = dynamic_cast<Cache*>(object.release());
+        }
+        if (!result.valid())
         {
             OE_WARN << LC << "Failed to load cache plugin for type \"" << options.getDriver() << "\"" << std::endl;
         }

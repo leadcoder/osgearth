@@ -40,7 +40,7 @@ using namespace osgEarth::Triton;
 
 
 TritonDrawable::TritonDrawable(TritonContext* TRITON) :
-_TRITON(TRITON)
+    _TRITON(TRITON)
 {
     // call this to ensure draw() gets called every frame.
     setSupportsDisplayList( false );
@@ -48,6 +48,9 @@ _TRITON(TRITON)
 
     // dynamic variance prevents update/cull overlap when drawing this
     setDataVariance( osg::Object::DYNAMIC );
+
+    _wgs84 = SpatialReference::get("wgs84");
+    _ecef = _wgs84->getGeocentricSRS();
 }
 
 TritonDrawable::~TritonDrawable()
@@ -140,7 +143,7 @@ TritonDrawable::drawImplementation(osg::RenderInfo& renderInfo) const
     osgEarth::NativeProgramAdapterCollection& adapters = _adapters[cid];
     if ( adapters.empty() )
     {
-        OE_INFO << LC << "Initializing Triton program adapters" << std::endl;
+        OE_DEBUG << LC << "Initializing Triton program adapters" << std::endl;
         const std::vector<const char*> prefixes = { "osg_", "oe_" };
         adapters.push_back( new osgEarth::NativeProgramAdapter(state, getOceanShader(_TRITON->getOcean(), ::Triton::WATER_SURFACE, 0L, tritonCam), prefixes, "WATER_SURFACE"));
         adapters.push_back( new osgEarth::NativeProgramAdapter(state, getOceanShader(_TRITON->getOcean(), ::Triton::WATER_SURFACE_PATCH, 0L, tritonCam), prefixes, "WATER_SURFACE_PATCH"));
@@ -163,6 +166,15 @@ TritonDrawable::drawImplementation(osg::RenderInfo& renderInfo) const
         tritonCam->SetProjectionMatrix(state->getProjectionMatrix().ptr());
     }
 
+    // Calculate sea level based on the camera:
+    if (_verticalDatum.valid())
+    {
+        GeoPoint cam(_ecef, osg::Vec3d(0, 0, 0) * state->getInitialInverseViewMatrix(), ALTMODE_ABSOLUTE);
+        cam.transformInPlace(_wgs84);
+        auto msl = _verticalDatum->hae2msl(cam.y(), cam.x(), 0.0);
+        environment->SetSeaLevel(-msl);
+    }
+
     if (_heightMapGenerator.valid())
     {
         GLint texName;
@@ -178,7 +190,7 @@ TritonDrawable::drawImplementation(osg::RenderInfo& renderInfo) const
 
             environment->SetHeightMap((::Triton::TextureHandle)texName, texMat, 0L, tritonCam);
                 
-            OE_DEBUG << LC << "Updating height map, FN=" << renderInfo.getState()->getFrameStamp()->getFrameNumber() << std::endl;
+            //OE_DEBUG << LC << "Updating height map, FN=" << renderInfo.getState()->getFrameStamp()->getFrameNumber() << std::endl;
         }
     }
 

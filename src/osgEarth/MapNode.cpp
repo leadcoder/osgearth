@@ -44,8 +44,6 @@ using namespace osgEarth::Contrib;
 
 #define LC "[MapNode] "
 
-//---------------------------------------------------------------------------
-
 namespace
 {
     /**
@@ -214,18 +212,6 @@ MapNode::Options::getConfig() const
 void
 MapNode::Options::fromConfig(const Config& conf)
 {
-    proxySettings().init(ProxySettings());
-    enableLighting().init(true);
-    overlayBlending().init(true);
-    overlayBlendingSource().init("alpha");
-    overlayMipMapping().init(false);
-    overlayTextureSize().init(4096);
-    overlayResolutionRatio().init(3.0f);
-    useCascadeDraping().init(false);
-    terrain().init(TerrainOptions());
-    drapingRenderBinNumber().init(1);
-    screenSpaceError().setDefault(25.0f);
-
     conf.get( "proxy",                    proxySettings() );
     conf.get( "lighting",                 enableLighting() );
     conf.get( "overlay_blending",         overlayBlending() );
@@ -293,14 +279,16 @@ MapNode::init()
     this->addChild(_terrainGroup);
 
     // make a group for the model layers.  This node is a PagingManager instead of a regular Group to allow PagedNode's to be used within the layers.
-    _layerNodes = new PagingManager;
-    _layerNodes->setName( "osgEarth::MapNode.layerNodes" );
+    auto pagingManager = new PagingManager();
+    pagingManager->setName("osgEarth::MapNode.layerNodes");
+    pagingManager->setMaxMergesPerFrame(options().terrain()->mergesPerFrame().value());
+    _layerNodes = pagingManager;
 
     this->addChild( _layerNodes );
 
     // Make sure the Registry is not destroyed until we are done using
     // it (in ~MapNode).
-    _registry = Registry::instance();
+    //_registry = Registry::instance();
 
     // the default SSE for all supporting geometries
     _sseU = new osg::Uniform("oe_sse", options().screenSpaceError().get());
@@ -506,9 +494,6 @@ MapNode::~MapNode()
 
     osg::observer_ptr<TerrainEngineNode> te = _terrainEngine;
     removeChildren(0, getNumChildren());
-    
-    OE_DEBUG << LC << "~MapNode (TerrainEngine="
-        << (te.valid()? te.get()->referenceCount() : 0) << ", Map=" << _map->referenceCount() << ")\n";
 }
 
 void
@@ -537,16 +522,16 @@ MapNode::getConfig() const
     const Map* cmap = _map.get();
     Config optionsConf = cmap->options().getConfig();
     optionsConf.merge( options().getConfig() );
-    mapConf.add( "options", optionsConf );
+    if (!optionsConf.empty())
+    {
+        mapConf.add("options", optionsConf);
+    }
 
     // the layers
     LayerVector layers;
     _map->getLayers(layers);
-
-    for (LayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i)
+    for(auto& layer : layers)
     {
-        const Layer* layer = i->get();
-
         Config layerConf = layer->getConfig();
         if (!layerConf.empty() && !layerConf.key().empty())
         {
@@ -684,7 +669,7 @@ MapNode::addExtension(Extension* extension, const osgDB::Options* options)
             }
         }
 
-        OE_INFO << LC << "Added extension \"" << extension->getName() << "\"\n";
+        //OE_INFO << LC << "Added extension \"" << extension->getName() << "\"\n";
     }
 }
 
@@ -778,8 +763,6 @@ MapNode::onLayerAdded(Layer* layer, unsigned index)
     osg::Node* node = layer->getNode();
     if (node)
     {
-        OE_DEBUG << LC << "Adding node from layer \"" << layer->getName() << "\" to the scene graph\n";
-
         // notify before adding it to the graph:
         layer->getSceneGraphCallbacks()->firePreMergeNode(node);
 
@@ -845,8 +828,8 @@ MapNode::traverse( osg::NodeVisitor& nv )
             nv.getVisitorType() == nv.CULL_VISITOR ||
             nv.getVisitorType() == nv.UPDATE_VISITOR)
         {
-            static Threading::Mutex s_openMutex(OE_MUTEX_NAME);
-            Threading::ScopedMutexLock lock(s_openMutex);
+            static std::mutex s_openMutex;
+            std::lock_guard<std::mutex> lock(s_openMutex);
             if (!_isOpen)
             {
                 _isOpen = open();
@@ -982,9 +965,14 @@ MapNode::releaseGLObjects(osg::State* state) const
     for(const osg::Callback* ec = getEventCallback(); ec; ec = ec->getNestedCallback())
         ec->releaseGLObjects(state);
 
+    // run this prior to the static bins and pools.
+    osg::Group::releaseGLObjects(state);
+
+    // indirect rendering objects
     ChonkRenderBin::releaseSharedGLObjects(state);
 
-    osg::Group::releaseGLObjects(state);
+    // managed GL objects
+    GLObjectPool::releaseGLObjects(state);
 }
 
 ClampingManager*

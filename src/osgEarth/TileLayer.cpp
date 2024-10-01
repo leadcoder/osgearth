@@ -32,7 +32,7 @@ namespace
     using DataExtentsIndex = RTree<DataExtent, double, 2>;
 }
 
-#define LC "[" << className() << "] " << getName() << "\" "
+#define LC "[" << className() << "] \"" << getName() << "\" "
 
 //------------------------------------------------------------------------
 
@@ -59,15 +59,6 @@ TileLayer::Options::getConfig() const
 void
 TileLayer::Options::fromConfig(const Config& conf)
 {
-    _minLevel.init( 0 );
-    _maxLevel.init( 23 );
-    _maxDataLevel.init( 99 );
-    _tileSize.init( 256 );
-    _noDataValue.init( -32767.0f ); // SHRT_MIN
-    _minValidValue.init( -32766.0f ); // -(2^15 - 2)
-    _maxValidValue.init( 32767.0f );
-    upsample().setDefault(false);
-
     conf.get( "min_level", _minLevel );
     conf.get( "max_level", _maxLevel );
     conf.get( "min_resolution", _minResolution );
@@ -85,20 +76,20 @@ TileLayer::Options::fromConfig(const Config& conf)
 //------------------------------------------------------------------------
 
 TileLayer::CacheBinMetadata::CacheBinMetadata() :
-_valid(false)
+    _valid(false)
 {
     //nop
 }
 
 TileLayer::CacheBinMetadata::CacheBinMetadata(const TileLayer::CacheBinMetadata& rhs) :
-_valid          ( rhs._valid ),
-_cacheBinId     ( rhs._cacheBinId ),
-_sourceName     ( rhs._sourceName ),
-_sourceDriver   ( rhs._sourceDriver ),
-_sourceTileSize ( rhs._sourceTileSize ),
-_sourceProfile  ( rhs._sourceProfile ),
-_cacheProfile   ( rhs._cacheProfile ),
-_cacheCreateTime( rhs._cacheCreateTime )
+    _valid(rhs._valid),
+    _cacheBinId(rhs._cacheBinId),
+    _sourceName(rhs._sourceName),
+    _sourceDriver(rhs._sourceDriver),
+    _sourceTileSize(rhs._sourceTileSize),
+    _sourceProfile(rhs._sourceProfile),
+    _cacheProfile(rhs._cacheProfile),
+    _cacheCreateTime(rhs._cacheCreateTime)
 {
     //nop
 }
@@ -369,7 +360,7 @@ TileLayer::addedToMap(const Map* map)
         !map->getProfile()->getSRS()->isHorizEquivalentTo(getProfile()->getSRS()))
     {
         l2CacheSize = 16u;
-        OE_INFO << LC << "Map/Layer profiles differ; requesting L2 cache" << std::endl;
+        OE_DEBUG << LC << "Map/Layer profiles differ; requesting L2 cache" << std::endl;
     }
 
     // Use the user defined option if it's set.
@@ -412,7 +403,7 @@ TileLayer::setUpL2Cache(unsigned minSize)
     if (l2CacheSize > 0)
     {
         _memCache = new MemCache(l2CacheSize);
-        OE_INFO << LC << "L2 cache size = " << l2CacheSize << std::endl;
+        OE_DEBUG << LC << "L2 cache size = " << l2CacheSize << std::endl;
     }
 }
 
@@ -594,7 +585,6 @@ TileLayer::getCacheBin(const Profile* profile)
     if (meta.valid())
     {
         _cacheBinMetadata[metaKey] = meta.get();
-        OE_DEBUG << LC << "Established metadata for cache bin [" << _runtimeCacheId << "]" << std::endl;
     }
 
     return bin;
@@ -905,35 +895,37 @@ TileLayer::getBestAvailableTileKey(
             {
                 // Build the index in the SRS of this layer
                 GeoExtent extentInLayerSRS = getProfile()->clampAndTransformExtent(*de);
-
-                if (extentInLayerSRS.getSRS()->isGeographic() && extentInLayerSRS.crossesAntimeridian())
+                if (extentInLayerSRS.isValid())
                 {
-                    GeoExtent west, east;
-                    extentInLayerSRS.splitAcrossAntimeridian(west, east);
-                    if (west.isValid())
+                    if (extentInLayerSRS.getSRS()->isGeographic() && extentInLayerSRS.crossesAntimeridian())
                     {
-                        DataExtent new_de(west);
-                        new_de.minLevel() = de->minLevel();
-                        new_de.maxLevel() = de->maxLevel();
-                        a_min[0] = new_de.xMin(), a_min[1] = new_de.yMin();
-                        a_max[0] = new_de.xMax(), a_max[1] = new_de.yMax();
-                        dataExtentsIndex->Insert(a_min, a_max, new_de);
+                        GeoExtent west, east;
+                        extentInLayerSRS.splitAcrossAntimeridian(west, east);
+                        if (west.isValid())
+                        {
+                            DataExtent new_de(west);
+                            new_de.minLevel() = de->minLevel();
+                            new_de.maxLevel() = de->maxLevel();
+                            a_min[0] = new_de.xMin(), a_min[1] = new_de.yMin();
+                            a_max[0] = new_de.xMax(), a_max[1] = new_de.yMax();
+                            dataExtentsIndex->Insert(a_min, a_max, new_de);
+                        }
+                        if (east.isValid())
+                        {
+                            DataExtent new_de(east);
+                            new_de.minLevel() = de->minLevel();
+                            new_de.maxLevel() = de->maxLevel();
+                            a_min[0] = new_de.xMin(), a_min[1] = new_de.yMin();
+                            a_max[0] = new_de.xMax(), a_max[1] = new_de.yMax();
+                            dataExtentsIndex->Insert(a_min, a_max, new_de);
+                        }
                     }
-                    if (east.isValid())
+                    else
                     {
-                        DataExtent new_de(east);
-                        new_de.minLevel() = de->minLevel();
-                        new_de.maxLevel() = de->maxLevel();
-                        a_min[0] = new_de.xMin(), a_min[1] = new_de.yMin();
-                        a_max[0] = new_de.xMax(), a_max[1] = new_de.yMax();
-                        dataExtentsIndex->Insert(a_min, a_max, new_de);
+                        a_min[0] = extentInLayerSRS.xMin(), a_min[1] = extentInLayerSRS.yMin();
+                        a_max[0] = extentInLayerSRS.xMax(), a_max[1] = extentInLayerSRS.yMax();
+                        dataExtentsIndex->Insert(a_min, a_max, *de);
                     }
-                }
-                else
-                {
-                    a_min[0] = extentInLayerSRS.xMin(), a_min[1] = extentInLayerSRS.yMin();
-                    a_max[0] = extentInLayerSRS.xMax(), a_max[1] = extentInLayerSRS.yMax();
-                    dataExtentsIndex->Insert(a_min, a_max, *de);
                 }
             }
             _dataExtentsIndex = dataExtentsIndex;

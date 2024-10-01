@@ -22,8 +22,8 @@
 #include "TextureSplattingLayer"
 #include "TextureSplattingMaterials"
 #include "ProceduralShaders"
-#include "NoiseTextureFactory"
 
+#include <osgEarth/NoiseTextureFactory>
 #include <osgEarth/TerrainEngineNode>
 #include <osgEarth/TerrainResources>
 #include <osgEarth/VirtualProgram>
@@ -47,14 +47,15 @@
 using namespace osgEarth::Procedural;
 
 REGISTER_OSGEARTH_LAYER(proceduralimage, TextureSplattingLayer);
-REGISTER_OSGEARTH_LAYER(procedural_image, TextureSplattingLayer);
+//REGISTER_OSGEARTH_LAYER(procedural_image, TextureSplattingLayer);
+
 
 //........................................................................
 
 Config
 TextureSplattingLayer::Options::getConfig() const
 {
-    Config conf = VisibleLayer::Options::getConfig();
+    Config conf = super::getConfig();
     conf.set("num_levels", numLevels());
     conf.set("use_hex_tiler", useHexTiler());
     conf.set("normalmap_power", normalMapPower());
@@ -67,13 +68,6 @@ TextureSplattingLayer::Options::getConfig() const
 void
 TextureSplattingLayer::Options::fromConfig(const Config& conf)
 {
-    numLevels().setDefault(1);
-    useHexTiler().setDefault(true);
-    normalMapPower().setDefault(1.0f);
-    lifeMapMaskThreshold().setDefault(0.0f);
-    displacementDepth().setDefault(0.1f);
-    maxTextureSize().setDefault(INT_MAX);
-
     conf.get("num_levels", numLevels());
     conf.get("use_hex_tiler", useHexTiler());
     conf.get("normalmap_power", normalMapPower());
@@ -87,19 +81,19 @@ TextureSplattingLayer::Options::fromConfig(const Config& conf)
 BiomeLayer*
 TextureSplattingLayer::getBiomeLayer() const
 {
-    return options().biomeLayer().getLayer();
+    return _biomeLayer.get();
 }
 
 LifeMapLayer*
 TextureSplattingLayer::getLifeMapLayer() const
 {
-    return options().lifeMapLayer().getLayer();
+    return _lifeMapLayer.get();
 }
 
 void
 TextureSplattingLayer::init()
 {
-    VisibleLayer::init();
+    super::init();
 
     setRenderType(osgEarth::Layer::RENDERTYPE_TERRAIN_SURFACE);
 }
@@ -107,22 +101,16 @@ TextureSplattingLayer::init()
 void
 TextureSplattingLayer::addedToMap(const Map* map)
 {
-    VisibleLayer::addedToMap(map);
+    super::addedToMap(map);
 
-    options().biomeLayer().addedToMap(map);
     if (getBiomeLayer() == nullptr)
     {
-        BiomeLayer* layer = map->getLayer<BiomeLayer>();
-        if (layer)
-            options().biomeLayer().setLayer(layer);
+        _biomeLayer = map->getLayer<BiomeLayer>();
     }
 
-    options().lifeMapLayer().addedToMap(map);
     if (getLifeMapLayer() == nullptr)
     {
-        LifeMapLayer* layer = map->getLayer<LifeMapLayer>();
-        if (layer)
-            options().lifeMapLayer().setLayer(layer);
+        _lifeMapLayer = map->getLayer<LifeMapLayer>();
     }
 
     _mapProfile = map->getProfile();
@@ -133,16 +121,15 @@ TextureSplattingLayer::addedToMap(const Map* map)
 void
 TextureSplattingLayer::removedFromMap(const Map* map)
 {
-    VisibleLayer::removedFromMap(map);
-
-    options().biomeLayer().removedFromMap(map);
-    options().lifeMapLayer().removedFromMap(map);
+    super::removedFromMap(map);
+    _lifeMapLayer = nullptr;
+    _biomeLayer = nullptr;
 }
 
 void
 TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
 {
-    VisibleLayer::prepareForRendering(engine);
+    super::prepareForRendering(engine);
 
     if (Capabilities::get().supportsInt64() == false)
     {
@@ -201,7 +188,7 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
                 Registry::instance()->getMaxTextureSize());
 
             // Function to load all material textures.
-            auto loadMaterials = [assets, tile_height_m, readOptions, maxTextureSize](Cancelable* c) -> Materials::Ptr
+            auto loadMaterials = [assets, tile_height_m, readOptions, maxTextureSize](Cancelable& c) -> Materials::Ptr
             {
                 Materials::Ptr result = Materials::Ptr(new Materials);
 
@@ -238,7 +225,7 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
                         << ", t=" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "ms"
                         << std::endl;
 
-                    if (c && c->isCanceled())
+                    if (c.canceled())
                         return nullptr;
 
                     // Set up the texture scaling:
@@ -258,7 +245,7 @@ TextureSplattingLayer::prepareForRendering(TerrainEngine* engine)
             };
 
             // Load material asynchronously
-            _materialsJob = Job().dispatch<Materials::Ptr>(loadMaterials);
+            _materialsJob = jobs::dispatch(loadMaterials);
         }
     }
     else
@@ -278,7 +265,7 @@ void
 TextureSplattingLayer::update(osg::NodeVisitor& nv)
 {
     // once the materials are loaded, install them and build the state set.
-    if (_materials == nullptr && _materialsJob.isAvailable())
+    if (_materials == nullptr && _materialsJob.available())
     {
         _materials = _materialsJob.release();
         buildStateSets();
@@ -426,7 +413,7 @@ TextureSplattingLayer::getMaxTextureSize() const
 void
 TextureSplattingLayer::resizeGLObjectBuffers(unsigned maxSize)
 {
-    VisibleLayer::resizeGLObjectBuffers(maxSize);
+    super::resizeGLObjectBuffers(maxSize);
 
     if (_materials && _materials->_arena.valid())
         _materials->_arena->resizeGLObjectBuffers(maxSize);
@@ -435,7 +422,7 @@ TextureSplattingLayer::resizeGLObjectBuffers(unsigned maxSize)
 void
 TextureSplattingLayer::releaseGLObjects(osg::State* state) const
 {
-    VisibleLayer::releaseGLObjects(state);
+    super::releaseGLObjects(state);
 
     if (_materials && _materials->_arena.valid())
         _materials->_arena->releaseGLObjects(state);

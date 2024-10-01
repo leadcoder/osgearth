@@ -24,7 +24,6 @@
 #include <osgEarth/TextureArena>
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/ExampleResources>
-#include <osgEarth/GeometryCloud>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/Chonk>
 #include <osgEarth/Capabilities>
@@ -53,6 +52,8 @@ int main_NV(int argc, char** argv)
     osg::ArgumentParser arguments(&argc, argv);
 
     osgViewer::Viewer viewer(arguments);
+    viewer.setRealizeOperation(new GL3RealizeOperation());
+
     MapNodeHelper().configureView(&viewer);
 
     if (arguments.read("--pause"))

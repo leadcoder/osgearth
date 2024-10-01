@@ -16,8 +16,7 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifndef OSGEARTH_TEXTURE_ARENA_H
-#define OSGEARTH_TEXTURE_ARENA_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/GLUtils>
@@ -76,24 +75,27 @@ namespace osgEarth
         void update(osg::NodeVisitor& nv);
 
         //! GL memory functions
-        void compileGLObjects(osg::State&) const;
+        //! Returns true if the object needed compiling and was compiled.
+        bool compileGLObjects(osg::State&) const;
         void resizeGLObjectBuffers(unsigned);
         void releaseGLObjects(osg::State*, bool force = false) const;
 
-        OE_PROPERTY(std::string, name);
-        OE_PROPERTY(std::string, category);
-        OE_PROPERTY(bool, compress);
-        OE_PROPERTY(bool, mipmap);
-        OE_PROPERTY(bool, clamp);
-        OE_PROPERTY(bool, keepImage);
-        OE_PROPERTY(unsigned, maxDim);
+        OE_PROPERTY(std::string, name, {});
+        OE_PROPERTY(std::string, category, {});
+        OE_PROPERTY(bool, compress, true);
+        OE_PROPERTY(bool, mipmap, true);
+        OE_PROPERTY(bool, clamp_s, false);
+        OE_PROPERTY(bool, clamp_t, false);
+        OE_PROPERTY(bool, clamp_r, false);
+        OE_PROPERTY(bool, keepImage, true);
+        OE_PROPERTY(unsigned, maxDim, 65536);
 
         OE_OPTION(URI, uri);
         OE_OPTION(GLenum, internalFormat);
         OE_OPTION(float, maxAnisotropy);
 
-        OE_PROPERTY(osg::ref_ptr<osg::Texture>, osgTexture);
-        OE_PROPERTY_CONST(GLenum, target);
+        OE_PROPERTY(osg::ref_ptr<osg::Texture>, osgTexture, {});
+        OE_PROPERTY_CONST(GLenum, target, GL_TEXTURE_2D);
 
         //! Whether any actual image data has been loaded into this object,
         //! or whether we need to load it from the URI
@@ -103,8 +105,7 @@ namespace osgEarth
         struct GLObjects : public BindlessShareableGLObjects
         {
             GLTexture::Ptr _gltexture;
-            unsigned _imageModCount;
-            GLObjects() : _imageModCount(0) { }
+            unsigned _imageModCount = 0u;
         };
         mutable osg::buffered_object<GLObjects> _globjects;
 
@@ -145,7 +146,7 @@ namespace osgEarth
         void setAutoRelease(bool value);
         bool getAutoRelease() const { return _autoRelease; }
 
-        //! Sets the GLSL binding point for the arena. Default is 5.
+        //! Sets the GLSL binding point for the arena. Default is 1.
         void setBindingPoint(unsigned value);
 
         //! Sets the maximum texture size (in one dimension, in pixels)
@@ -210,13 +211,14 @@ namespace osgEarth
         mutable osg::buffered_object<GLObjects> _globjects;
 
         mutable TextureVector _textures;
-        mutable std::unordered_map<Texture::Ptr, unsigned int> _textureIndices;
+        mutable std::unordered_map<Texture*, unsigned> _textureIndices;
         mutable std::unordered_set<unsigned> _dynamicTextures;
-        bool _autoRelease;
-        unsigned _bindingPoint;
-        bool _useUBO;
-        mutable int _releasePtr;
-        unsigned _maxDim;
+
+        bool _autoRelease = false;
+        unsigned _bindingPoint = 1u;
+        bool _useUBO = false;
+        mutable int _releasePtr = 0;
+        unsigned _maxDim = 65536u;
 
         mutable Mutex _m;
 
@@ -227,5 +229,3 @@ namespace osgEarth
         void notifyOfTextureRelease(osg::State*) const;
     };
 }
-
-#endif // OSGEARTH_TEXTURE_ARENA_H

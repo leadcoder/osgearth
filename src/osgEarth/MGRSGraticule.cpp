@@ -111,7 +111,7 @@ namespace
         {
             // Read source data into an array:
             FeatureList sqids;
-            osg::ref_ptr<FeatureCursor> sqid_cursor = sqid_fs->createFeatureCursor(Query::ALL,0L);
+            osg::ref_ptr<FeatureCursor> sqid_cursor = sqid_fs->createFeatureCursor(Query::ALL);
             if (sqid_cursor.valid() && sqid_cursor->hasMore())
                 sqid_cursor->fill(sqids);
 
@@ -233,7 +233,7 @@ namespace
             }
             else
             {
-                OE_DEBUG << LC << "Empty SQID geom at " << gzd << " " << sqid << std::endl;
+                //OE_DEBUG << LC << "Empty SQID geom at " << gzd << " " << sqid << std::endl;
             }
         }
         return true;
@@ -912,10 +912,6 @@ namespace
 
                 fullExtent.expandToInclude(extent);
             }
-
-            OE_DEBUG << LC << "Created " << features.size() << " text elements for " << getName() << std::endl;
-            
-            //Registry::shaderGenerator().run(this, Registry::stateSetCache());
         }
         
 #ifdef DEBUG_MODE
@@ -1299,12 +1295,12 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("gzd");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(1, 0, 0, 0.25);
-            line->stroke()->width() = 4.0;
+            line->stroke().mutable_value().color().set(1, 0, 0, 0.25);
+            line->stroke().mutable_value().width() = 4.0;
             line->tessellation() = 20;
             TextSymbol* text = style.getOrCreate<TextSymbol>();
-            text->fill()->color() = Color::White;
-            text->halo()->color() = Color::Black;
+            text->fill().mutable_value().color() = Color::White;
+            text->halo().mutable_value().color() = Color::Black;
             text->alignment() = TextSymbol::ALIGN_LEFT_BOTTOM;
             styles->addStyle(style);
         }
@@ -1322,11 +1318,11 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("100000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(1,1,0,alpha);
-            line->stroke()->width() = 3;
+            line->stroke().mutable_value().color().set(1,1,0,alpha);
+            line->stroke().mutable_value().width() = 3;
             TextSymbol* text = style.getOrCreate<TextSymbol>();
-            text->fill()->color() = Color::White;
-            text->halo()->color() = Color::Black;
+            text->fill().mutable_value().color() = Color::White;
+            text->halo().mutable_value().color() = Color::Black;
             text->alignment() = TextSymbol::ALIGN_LEFT_BOTTOM;
             styles->addStyle(style);
         }
@@ -1336,8 +1332,8 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("10000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(0,1,0,alpha);
-            line->stroke()->width() = 2;
+            line->stroke().mutable_value().color().set(0,1,0,alpha);
+            line->stroke().mutable_value().width() = 2;
             styles->addStyle(style);
         }
 
@@ -1346,8 +1342,8 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("1000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(.5,.5,1,alpha);
-            line->stroke()->width() = 2;
+            line->stroke().mutable_value().color().set(.5,.5,1,alpha);
+            line->stroke().mutable_value().width() = 2;
             styles->addStyle(style);
         }
 
@@ -1356,8 +1352,8 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("100");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(1,1,1,alpha);
-            line->stroke()->width() = 1;
+            line->stroke().mutable_value().color().set(1,1,1,alpha);
+            line->stroke().mutable_value().width() = 1;
             styles->addStyle(style);
         }
 
@@ -1366,8 +1362,8 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("10");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(1,1,1,alpha);
-            line->stroke()->width() = 1;
+            line->stroke().mutable_value().color().set(1,1,1,alpha);
+            line->stroke().mutable_value().width() = 1;
             styles->addStyle(style);
         }
 
@@ -1376,8 +1372,8 @@ MGRSGraticule::setUpDefaultStyles()
         {
             Style style("1");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
-            line->stroke()->color().set(1,1,1,alpha);
-            line->stroke()->width() = 0.5;
+            line->stroke().mutable_value().color().set(1,1,1,alpha);
+            line->stroke().mutable_value().width() = 0.5;
             styles->addStyle(style);
         }
     }

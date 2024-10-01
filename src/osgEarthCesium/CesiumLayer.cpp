@@ -34,11 +34,13 @@ Config
 CesiumNative3DTilesLayer::Options::getConfig() const
 {
     Config conf = VisibleLayer::Options::getConfig();
+    conf.set("server", _server);
     conf.set("url", _url);
     conf.set("asset_id", _assetId);
     conf.set("token", _token);
     conf.set("raster_overlay", _rasterOverlay);
     conf.set("max_sse", _maximumScreenSpaceError);
+    conf.set("forbid_holes", _forbidHoles);
 
     return conf;
 }
@@ -46,12 +48,16 @@ CesiumNative3DTilesLayer::Options::getConfig() const
 void
 CesiumNative3DTilesLayer::Options::fromConfig(const Config& conf)
 {
+    _server.init("https://api.cesium.com/");
     _maximumScreenSpaceError.setDefault(16.0f);
+    _forbidHoles.setDefault(false);
+    conf.get("server", _server);
     conf.get("url", _url);
     conf.get("asset_id", _assetId);
     conf.get("token", _token);
     conf.get("raster_overlay", _rasterOverlay);
     conf.get("max_sse", _maximumScreenSpaceError);
+    conf.get("forbid_holes", _forbidHoles);
 }
 
 //........................................................................
@@ -95,7 +101,7 @@ CesiumNative3DTilesLayer::openImplementation()
         {
             overlays.push_back(*_options->rasterOverlay());
         }
-        _tilesetNode = new CesiumTilesetNode(_options->url()->full(), token, *_options->maximumScreenSpaceError(), overlays);
+        _tilesetNode = new CesiumTilesetNode(_options->url()->full(), _options->server()->full(), token, *_options->maximumScreenSpaceError(), overlays);
     }
     else if (_options->assetId().isSet())
     {
@@ -104,13 +110,15 @@ CesiumNative3DTilesLayer::openImplementation()
         {
             overlays.push_back(*_options->rasterOverlay());
         }
-        _tilesetNode = new CesiumTilesetNode(*_options->assetId(), token, *_options->maximumScreenSpaceError(), overlays);
+        _tilesetNode = new CesiumTilesetNode(*_options->assetId(), _options->server()->full(), token, *_options->maximumScreenSpaceError(), overlays);
     }
 
     if (!_tilesetNode.valid())
     {
         return Status(Status::GeneralError, "Failed to load asset from url or asset id");
     }
+
+    _tilesetNode->setForbidHoles(getForbidHoles());
 
     return STATUS_OK;
 }
@@ -154,5 +162,22 @@ CesiumNative3DTilesLayer::setMaximumScreenSpaceError(float maximumScreenSpaceErr
     if (_tilesetNode)
     {
         _tilesetNode->setMaximumScreenSpaceError(maximumScreenSpaceError);
+    }
+}
+
+bool
+CesiumNative3DTilesLayer::getForbidHoles() const
+{
+    return *options().forbidHoles();
+}
+
+void
+CesiumNative3DTilesLayer::setForbidHoles(bool forbidHoles)
+{
+
+    options().forbidHoles() = forbidHoles;
+    if (_tilesetNode)
+    {
+        _tilesetNode->setForbidHoles(forbidHoles);
     }
 }

@@ -37,9 +37,6 @@ REGISTER_OSGEARTH_LAYER(biomes, BiomeLayer);
 void
 BiomeLayer::Options::fromConfig(const Config& conf)
 {
-    blendRadius().setDefault(Distance(0.0f, Units::METERS));
-    blendPercentage().setDefault(0.0f);
-
     biomeCatalog() = std::make_shared<BiomeCatalog>(conf.child("biomecatalog"));
     landCoverLayer().get(conf, "landcover_layer");
     biomeBaseLayer().get(conf, "biome_base_layer");
@@ -93,8 +90,6 @@ BiomeLayer::init()
 
     _autoBiomeManagement = true;
 
-    _tracker.setName("BiomeLayer.tracker(OE)");
-
     setProfile(Profile::create(Profile::GLOBAL_GEODETIC));
 }
 
@@ -132,7 +127,7 @@ BiomeLayer::closeImplementation()
 
     // cache:
     {
-        ScopedMutexLock lock(_imageCache);
+        std::lock_guard<std::mutex> lock(_imageCache.mutex());
         _imageCache.clear();
     }
 
@@ -231,7 +226,7 @@ BiomeLayer::setBlendRadius(const Distance& value)
     options().blendRadius() = value;
     bumpRevision();
 
-    ScopedMutexLock lock(_imageCache);
+    std::lock_guard<std::mutex> lock(_imageCache.mutex());
     _imageCache.clear();
 }
 
@@ -269,7 +264,8 @@ BiomeLayer::createImageImplementation(
 #if 1
     // check the cache:
     {
-        ScopedMutexLock lock(_imageCache);
+        std::lock_guard<std::mutex> lock(_imageCache.mutex());
+
         auto iter = _imageCache.find(key);
         osg::ref_ptr<osg::Image> image;
         if (iter != _imageCache.end() && iter->second.lock(image))
@@ -355,6 +351,28 @@ BiomeLayer::createImageImplementation(
         }
     }
 
+    // Make a small l2 cache of biomes that we've already looked up and search the vector
+    // before going to the catalog. This is a performance optimization to avoid repeated queries into a potentially large catalog.
+    std::vector< const Biome* > biomeCache;
+    auto getBiome = [&](const std::string& id) -> const Biome*
+        {
+            // Search the cache first
+            for (auto i : biomeCache)
+            {
+                if (i->id() == id)
+                {
+                    return i;
+                }
+            }
+
+            auto result = getBiomeCatalog()->getBiome(id);
+            if (result)
+            {
+                biomeCache.push_back(result);
+            }
+            return result;
+        };
+
     iter.forEachPixelOnCenter([&]()
         {
             const Biome* biome = nullptr;
@@ -382,7 +400,7 @@ BiomeLayer::createImageImplementation(
                 {
                     if (sample->biomeid().isSet())
                     {
-                        biome = getBiomeCatalog()->getBiome(sample->biomeid().get());
+                        biome = getBiome(sample->biomeid().get());
                     }
                 }
             }
@@ -409,7 +427,7 @@ BiomeLayer::createImageImplementation(
                     // if the biomeid() is set, we are overriding the biome expressly:
                     if (sample->biomeid().isSet())
                     {
-                        biome = getBiomeCatalog()->getBiome(sample->biomeid().get());
+                        biome = getBiome(sample->biomeid().get());
                     }
 
                     // If we have a biome, but there are traits set, we need to
@@ -423,7 +441,7 @@ BiomeLayer::createImageImplementation(
                         std::string implicit_biome_id =
                             biome->id() + "." + AssetTraits::toString(sorted);
 
-                        const Biome* implicit_biome = getBiomeCatalog()->getBiome(implicit_biome_id);
+                        const Biome* implicit_biome = getBiome(implicit_biome_id);
 
                         if (implicit_biome)
                         {
@@ -463,13 +481,11 @@ BiomeLayer::createImageImplementation(
         OE_DEBUG << LC << buf.str() << std::endl;
     }
 
-#if 1
     // local cache:
     {
-        ScopedMutexLock lock(_imageCache);
+        std::lock_guard<std::mutex> lock(_imageCache.mutex());
         _imageCache[key] = image.get();
     }
-#endif
 
     return result;
 }
@@ -552,7 +568,7 @@ BiomeLayer::objectDeleted(void* value)
 
     _tracker.scoped_lock([&]()
         {
-            OE_DEBUG << LC << "Unloaded " << token->getName() << std::endl;
+            //OE_DEBUG << LC << "Unloaded " << token->getName() << std::endl;
 
             if (getAutoBiomeManagement())
             {

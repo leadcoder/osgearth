@@ -3,8 +3,9 @@
 
 #pragma import_defines(OE_GPUCULL_DEBUG)
 #pragma import_defines(OE_IS_SHADOW_CAMERA)
+#pragma import_defines(OE_LOD_SCALE_UNIFORM)
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 struct DrawElementsIndirectCommand
 {
@@ -81,7 +82,15 @@ uniform vec3 oe_Camera;
 uniform float oe_sse;
 uniform vec4 oe_lod_scale;
 uniform float osg_FrameTime;
-uniform float oe_chonk_lod_transition_factor = 0.1;
+uniform float oe_chonk_lod_transition_factor = 0.0;
+
+// Support a user-defined LOD scale uniform. When not present,
+// default to osgEarth's LOD scale value in oe_Camera.z.
+#ifdef OE_LOD_SCALE_UNIFORM
+uniform float OE_LOD_SCALE_UNIFORM;
+#else
+#define OE_LOD_SCALE_UNIFORM oe_Camera.z
+#endif
 
 #if OE_GPUCULL_DEBUG
 //#ifdef OE_GPUCULL_DEBUG
@@ -97,6 +106,10 @@ void cull()
 {
     const uint i = gl_GlobalInvocationID.x; // instance
     const uint lod = gl_GlobalInvocationID.y; // lod
+
+    // skip instances that exist only to pad the instance array to the workgroup size:
+    if (input_instances[i].first_lod_cmd_index < 0)
+        return;
 
     // initialize by clearing the visibility for this LOD:
     input_instances[i].visibility[lod] = 0.0;
@@ -147,7 +160,7 @@ void cull()
     LL = min(LL, temp); UR = max(UR, temp);
 
 #if OE_GPUCULL_DEBUG
-    float threshold = 0.75;
+    float threshold = 0.95; // 0.75;
 #else
     float threshold = 1.0;
 #endif
@@ -163,20 +176,22 @@ void cull()
     // OK, it is in view - now check pixel size on screen for this LOD:
     vec2 dims = 0.5*(UR.xy - LL.xy)*oe_Camera.xy;
 
-    float pixelSize = max(dims.x, dims.y);
+    float pixelSize = min(dims.x, dims.y);
     float pixelSizePad = pixelSize * oe_chonk_lod_transition_factor;
 
     float minPixelSize = oe_sse * chonks[v].far_pixel_scale * oe_lod_scale[lod];
     if (pixelSize < (minPixelSize - pixelSizePad))
         REJECT(REASON_SSE);
 
-    float maxPixelSize = 1e7;
-    if (lod > 0) {
+    float maxPixelSize = 3e38; // 1e10;
+    if (lod > 0)
+    {
         float near_scale = chonks[v].near_pixel_scale * oe_lod_scale[lod - 1];
         maxPixelSize = oe_sse * near_scale;
+
+        if (pixelSize > (maxPixelSize + pixelSizePad))
+            REJECT(REASON_SSE);
     }
-    if (pixelSize > (maxPixelSize + pixelSizePad))
-        REJECT(REASON_SSE);
 
     if (fade == 1.0)  // good to go, set the proper fade:
     {
@@ -196,7 +211,7 @@ void cull()
     float fade_range = chonks[v].fade_far - chonks[v].fade_near;
     if (fade_range > 0.0)
     {
-        float dist = length(center_view.xyz);
+        float dist = length(center_view.xyz) * OE_LOD_SCALE_UNIFORM;
         fade *= clamp((chonks[v].fade_far - dist) / fade_range, 0.0, 1.0);
     }
 
@@ -248,6 +263,6 @@ void main()
 {
     if (oe_pass == 0)
         cull();
-    else
+    else // if (oe_pass == 1)
         compact();
 }

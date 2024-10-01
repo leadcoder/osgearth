@@ -214,7 +214,7 @@ TFSFeatureSource::openImplementation()
 
     if (_layerValid)
     {
-        OE_INFO << LC << "Read layer TFS " << _layer.getTitle() << " " << _layer.getAbstract() << " " << _layer.getFirstLevel() << " " << _layer.getMaxLevel() << " " << _layer.getExtent().toString() << std::endl;
+        OE_INFO << LC << "Read TFS layer " << _layer.getTitle() << " " << _layer.getAbstract() << " " << _layer.getFirstLevel() << " " << _layer.getMaxLevel() << " " << _layer.getExtent().toString() << std::endl;
 
         fp = new FeatureProfile(_layer.getExtent());
         fp->setFirstLevel(_layer.getFirstLevel());
@@ -261,7 +261,7 @@ TFSFeatureSource::openImplementation()
 
 
 FeatureCursor*
-TFSFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress)
+TFSFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress) const
 {
     OE_PROFILING_ZONE;
 
@@ -273,7 +273,6 @@ TFSFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
     if (url.empty())
         return 0L;
 
-    OE_DEBUG << LC << url << std::endl;
     URI uri(url, options().url()->context());
 
     // read the data:
@@ -301,32 +300,7 @@ TFSFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
 
     if (dataOK)
     {
-        OE_DEBUG << LC << "Read " << features.size() << " features" << std::endl;
-    }
-
-    //If we have any filters, process them here before the cursor is created
-    if (getFilters() && !getFilters()->empty() && !features.empty())
-    {
-        FilterContext cx;
-        cx.setProfile(getFeatureProfile());
-        cx.extent() = query.tileKey()->getExtent();
-
-        for (FeatureFilterChain::const_iterator i = getFilters()->begin(); i != getFilters()->end(); ++i)
-        {
-            FeatureFilter* filter = i->get();
-            cx = filter->push(features, cx);
-        }
-    }
-
-    // If we have any features and we have an fid attribute, override the fid of the features
-    if (options().fidAttribute().isSet())
-    {
-        for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
-        {
-            std::string attr = itr->get()->getString(options().fidAttribute().get());
-            FeatureID fid = as<FeatureID>(attr, 0);
-            itr->get()->setFID(fid);
-        }
+        OE_NULL << LC << "Read " << features.size() << " features" << std::endl;
     }
 
     result = new FeatureListCursor(features);
@@ -335,7 +309,7 @@ TFSFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
 
 
 bool
-TFSFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, const std::string& mimeType, FeatureList& features)
+TFSFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, const std::string& mimeType, FeatureList& features) const
 {
     if (mimeType == "application/x-protobuf" || mimeType == "binary/octet-stream")
     {
@@ -409,7 +383,7 @@ TFSFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, con
 
 
 std::string
-TFSFeatureSource::getExtensionForMimeType(const std::string& mime)
+TFSFeatureSource::getExtensionForMimeType(const std::string& mime) const
 {
     //OGR is particular sometimes about the extension of files when it's reading them so it's good to have
     //the temp file have an appropriate extension
@@ -456,14 +430,11 @@ TFSFeatureSource::isJSON(const std::string& mime) const
 }
 
 std::string
-TFSFeatureSource::createURL(const Query& query)
+TFSFeatureSource::createURL(const Query& query) const
 {
     if (query.tileKey().isSet() && query.tileKey()->valid())
     {
         TileKey key = query.tileKey().get();
-
-        if ((int)key.getLOD() > getMaxLevel())
-            key = key.createAncestorKey(getMaxLevel());
 
         unsigned int tileX = key.getTileX();
         unsigned int tileY = key.getTileY();

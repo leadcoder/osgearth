@@ -138,9 +138,7 @@ SpatialReference::SpatialReference(void* handle) :
     _is_user_defined(false),
     _is_ltp(false),
     _is_spherical_mercator(false),
-    _ellipsoidId(0u),
-    _local("OE.SRS.Local"),
-    _mutex("OE.SRS")
+    _ellipsoidId(0u)
 {
     _setup.srcHandle = handle;
 
@@ -159,9 +157,7 @@ SpatialReference::SpatialReference(const Key& key) :
     _is_user_defined(false),
     _is_ltp(false),
     _is_spherical_mercator(false),
-    _ellipsoidId(0u),
-    _local("OE.SRS.Local"),
-    _mutex("OE.SRS")
+    _ellipsoidId(0u)
 {
     // shortcut for spherical-mercator:
     // https://wiki.openstreetmap.org/wiki/EPSG:3857
@@ -206,7 +202,8 @@ SpatialReference::SpatialReference(const Key& key) :
     // common WGS84:
     else if(
         key.horizLower == "epsg:4326" ||
-        key.horizLower == "wgs84")
+        key.horizLower == "wgs84" ||
+        key.horizLower == "wgs_1984")
     {
         _setup.name = "WGS84";
         _setup.type = INIT_PROJ;
@@ -340,10 +337,7 @@ SpatialReference::getLocal() const
                 error = OSRSetFromUserInput(local._handle, _setup.horiz.c_str());
             }
 
-            if (error == OGRERR_NONE)
-            {
-            }
-            else
+            if (error != OGRERR_NONE)
             {
                 OE_WARN << LC << "Failed to create SRS from \"" << _setup.horiz << "\"" << std::endl;
                 OSRDestroySpatialReference(local._handle);
@@ -431,7 +425,7 @@ SpatialReference::getDatumName() const
     return _datum;
 }
 
-const Units&
+const UnitsType&
 SpatialReference::getUnits() const
 {
     return _units;
@@ -566,7 +560,7 @@ SpatialReference::getGeographicSRS() const
 
     if ( !_geo_srs.valid() )
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
 
         if ( !_geo_srs.valid() ) // double-check pattern
         {
@@ -598,7 +592,7 @@ SpatialReference::getGeodeticSRS() const
 
     if ( !_geodetic_srs.valid() )
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
 
         if ( !_geodetic_srs.valid() ) // double check pattern
         {
@@ -630,7 +624,7 @@ SpatialReference::getGeocentricSRS() const
 
     if ( !_geocentric_srs.valid() )
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
 
         if ( !_geocentric_srs.valid() ) // double-check pattern
         {
@@ -986,9 +980,9 @@ SpatialReference::transformXYPointArrays(
     optional<TransformInfo>& xform = local._xformCache[out_srs->getWKT()];
     if (!xform.isSet())
     {
-        xform->_handle = OCTNewCoordinateTransformation(local._handle, out_srs->getHandle());
+        xform.mutable_value()._handle = OCTNewCoordinateTransformation(local._handle, out_srs->getHandle());
 
-        if ( xform->_handle == nullptr )
+        if ( xform.mutable_value()._handle == nullptr )
         {
             OE_WARN << LC
                 << "SRS xform not possible:" << std::endl
@@ -1001,8 +995,8 @@ SpatialReference::transformXYPointArrays(
             const char* errmsg = CPLGetLastErrorMsg();
             OE_WARN << LC << "ERROR: " << (errmsg? errmsg : "do not know") << std::endl;
 
-            xform->_handle = nullptr;
-            xform->_failed = true;
+            xform.mutable_value()._handle = nullptr;
+            xform.mutable_value()._failed = true;
 
             return false;
         }
@@ -1033,8 +1027,8 @@ SpatialReference::transformZ(std::vector<osg::Vec3d>& points,
     if ( _vdatum.get() == outVDatum )
         return true;
 
-    Units inUnits = _vdatum.valid() ? _vdatum->getUnits() : Units::METERS;
-    Units outUnits = outVDatum ? outVDatum->getUnits() : inUnits;
+    UnitsType inUnits = _vdatum.valid() ? _vdatum->getUnits() : Units::METERS;
+    UnitsType outUnits = outVDatum ? outVDatum->getUnits() : inUnits;
 
     if ( isGeographic() || pointsAreLatLong )
     {
@@ -1459,13 +1453,19 @@ SpatialReference::init()
     // Try to extract the horizontal datum
     _datum = getOGRAttrValue( handle, "DATUM", 0, true );
 
+    // Fix bad return values..
+    if (_datum == "wgs_1984" || _datum == "WGS_1984")
+        _datum = "WGS84";
+    else if (_datum == "nad_1983" || _datum == "NAD_1983")
+        _datum = "NAD83";
+
     // Extract the base units:
-    std::string units = getOGRAttrValue( handle, "UNIT", 0, true );
+    std::string units_name = getOGRAttrValue( handle, "UNIT", 0, true );
     double unitMultiplier = osgEarth::Util::as<double>( getOGRAttrValue( handle, "UNIT", 1, true ), 1.0 );
     if ( isGeographic() )
-        _units = Units(units, units, Units::TYPE_ANGULAR, unitMultiplier);
+        _units = UnitsType(units_name.c_str(), units_name.c_str(), Units::Domain::ANGLE, unitMultiplier);
     else
-        _units = Units(units, units, Units::TYPE_LINEAR, unitMultiplier);
+        _units = UnitsType(units_name.c_str(), units_name.c_str(), Units::Domain::DISTANCE, unitMultiplier);
 
     _reportedLinearUnits = OSRGetLinearUnits(handle, nullptr);
     

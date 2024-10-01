@@ -103,7 +103,8 @@ namespace osgEarth { namespace Util
     /** Runs a script */
     virtual ScriptResult run(Script* script, Feature const* feature=0L, FilterContext const* context=0L)
     {
-        return script ? run(script->getCode(), feature, context) : ScriptResult("", false);
+        OE_SOFT_ASSERT_AND_RETURN(script != nullptr, ScriptResult("Illegal null script", false));
+        return run(script->getCode(), feature, context);
     }
 
   public:
@@ -148,7 +149,7 @@ namespace osgEarth { namespace Util
 
     std::vector<std::string> _failedDrivers;
     static ScriptEngineFactory* s_singleton;
-    static osgEarth::Threading::Mutex s_singletonMutex;
+    static std::mutex s_singletonMutex;
   };
 } }
 

@@ -1,7 +1,6 @@
-set(TARGET_LIBRARIES_VARS OSG_LIBRARY OSGGA_LIBRARY OSGDB_LIBRARY OSGUTIL_LIBRARY OSGVIEWER_LIBRARY OPENTHREADS_LIBRARY OPENGL_LIBRARY)
-
-set(TARGET_COMMON_LIBRARIES ${TARGET_COMMON_LIBRARIES} osgEarthProcedural)
-
-set(TARGET_SRC osgearth_biome.cpp )
-
-SETUP_IMGUI_APPLICATION(osgearth_biome)
+add_osgearth_app(
+    TARGET osgearth_biome
+    SOURCES osgearth_biome.cpp
+    FOLDER Tools 
+    LIBRARIES osgEarthProcedural )
+    

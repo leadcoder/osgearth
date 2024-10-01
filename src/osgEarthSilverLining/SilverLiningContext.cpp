@@ -95,8 +95,6 @@ SilverLiningContext::~SilverLiningContext()
     delete _atmosphereWrapper;
     delete _atmosphere;
     delete _msTimer;
-
-    OE_INFO << LC << "Destroyed\n";
 }
 
 void
@@ -123,7 +121,7 @@ SilverLiningContext::initialize(osg::RenderInfo& renderInfo)
     if ( !_initAttempted && !_initFailed )
     {
         // lock/double-check:
-        Threading::ScopedMutexLock excl(_initMutex);
+        std::lock_guard<std::mutex> excl(_initMutex);
         if ( !_initAttempted && !_initFailed )
         {
             _initAttempted = true;
@@ -171,7 +169,7 @@ SilverLiningContext::initialize(osg::RenderInfo& renderInfo)
 #endif
                 if ( _options.drawClouds() == true )
                 {
-                    OE_INFO << LC << "Initializing clouds\n";
+                    OE_DEBUG << LC << "Initializing clouds" << std::endl;
                     setupClouds();
                 }
 

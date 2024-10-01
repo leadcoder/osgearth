@@ -28,6 +28,12 @@ namespace weemesh
     }
 
     template<typename T>
+    inline bool less_than(T a, T b, T epsilon)
+    {
+        return a < b && !equivalent(a, b, epsilon);
+    }
+
+    template<typename T>
     inline T clamp(T x, T lo, T hi)
     {
         return x < lo ? lo : x > hi ? hi : x;
@@ -51,7 +57,7 @@ namespace weemesh
     struct vert_t
     {
         using value_type = double;
-        double x, y, z;
+        double x = 0.0, y = 0.0, z = 0.0;
         vert_t() { }
         vert_t(value_type a, value_type b, value_type c) : x(a), y(b), z(c) { }
         vert_t(value_type* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]) { }
@@ -405,8 +411,11 @@ namespace weemesh
             output.clear();
             vert_t::value_type a_min[2] = { xmin, ymin };
             vert_t::value_type a_max[2] = { xmax, ymax };
-            _spatial_index.Search(a_min, a_max, [&](const UID& uid) {
-                output.emplace_back(&triangles[uid]); return true;  });
+            _spatial_index.Search(a_min, a_max, [&](const UID& uid) 
+                {
+                    output.emplace_back(&triangles[uid]);
+                    return RTREE_KEEP_SEARCHING;
+                });
             return output.size();
         }
 
@@ -426,11 +435,10 @@ namespace weemesh
 
             std::vector<UID> uids;
 
-            _spatial_index.Search(
-                a_min, a_max,
-                [&uids](const UID& u) {
+            _spatial_index.Search(a_min, a_max, [&uids](const UID& u)
+                {
                     uids.push_back(u);
-                    return true;
+                    return RTREE_KEEP_SEARCHING;
                 });
 
             for (auto uid : uids)
@@ -461,11 +469,10 @@ namespace weemesh
             a_max[1] = std::max(seg.first.y, seg.second.y);
             std::vector<UID> uids;
 
-            _spatial_index.Search(
-                a_min, a_max,
-                [&uids](const UID& u) {
+            _spatial_index.Search(a_min, a_max, [&uids](const UID& u)
+                {
                     uids.push_back(u);
-                    return true;
+                    return RTREE_KEEP_SEARCHING;
                 });
 
             // The working set of triangles which we will add to if we have
@@ -564,7 +571,8 @@ namespace weemesh
                             marker_is_set(tri.i0, _has_elevation_marker) && marker_is_set(tri.i1, _has_elevation_marker))
                         {
                             auto z0 = get_vertex(tri.i0).z, z1 = get_vertex(tri.i1).z;
-                            get_vertex(new_i).z = z0 + u * (z1 - z0);
+                            double& new_z = get_vertex(new_i).z;
+                            new_z = std::max(new_z, z0 + u * (z1 - z0));
                             set_marker(new_i, _has_elevation_marker);
                         }
 
@@ -609,7 +617,8 @@ namespace weemesh
                             marker_is_set(tri.i1, _has_elevation_marker) && marker_is_set(tri.i2, _has_elevation_marker))
                         {
                             auto z0 = get_vertex(tri.i1).z, z1 = get_vertex(tri.i2).z;
-                            get_vertex(new_i).z = z0 + u * (z1 - z0);
+                            double& new_z = get_vertex(new_i).z;
+                            new_z = std::max(new_z, z0 + u * (z1 - z0));
                             set_marker(new_i, _has_elevation_marker);
                         }
 
@@ -654,7 +663,8 @@ namespace weemesh
                             marker_is_set(tri.i2, _has_elevation_marker) && marker_is_set(tri.i0, _has_elevation_marker))
                         {
                             auto z0 = get_vertex(tri.i2).z, z1 = get_vertex(tri.i0).z;
-                            get_vertex(new_i).z = z0 + u * (z1 - z0);
+                            double& new_z = get_vertex(new_i).z;
+                            new_z = std::max(new_z, z0 + u * (z1 - z0));
                             set_marker(new_i, _has_elevation_marker);
                         }
 

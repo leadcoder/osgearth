@@ -22,6 +22,7 @@
 
 #include <osgViewer/Viewer>
 #include <osgViewer/CompositeViewer>
+#include <osgEarth/Controls>
 #include <osgEarth/ExampleResources>
 #include <osgEarth/EarthManipulator>
 #include <osgEarth/MapNode>
@@ -208,7 +209,7 @@ int main(int argc, char** argv)
     if (arguments.read("--sse"))
     {
         app._useLODScale = false;
-        MapNode::get(node)->getTerrainOptions().setLODMethod(TerrainLODMethod::SCREEN_SPACE);
+        MapNode::get(node)->getTerrainOptions().setLODMethod(LODMethod::SCREEN_SPACE);
     }
 
     // Add a UI to the main view:

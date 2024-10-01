@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_TERRAIN_ENGINE_NODE_H
-#define OSGEARTH_TERRAIN_ENGINE_NODE_H 1
+#pragma once
 
 #include <osgEarth/Map>
 #include <osgEarth/Terrain>
@@ -53,15 +52,6 @@ namespace osgEarth
     {
         class TerrainEngineNodeFactory;
     }
-
-    /**
-     * A callback that lets you customize the computed range for a terrain tile.
-     * Providing a custom range can let applications better control how paging behaves.
-     */
-    struct ComputeRangeCallback : public osg::Referenced
-    {
-        virtual float operator()(osg::Node* node, osg::NodeVisitor& nv) = 0;
-    };
 
     /**
      * Terrain Engine interface. (Pure virtual)
@@ -141,12 +131,6 @@ namespace osgEarth
         //! Access the stateset used to render terrain surface layers.
         virtual osg::StateSet* getSurfaceStateSet() = 0;
 
-        //! Gets the ComputeRangeCallback for this TerrainEngineNode */
-        virtual ComputeRangeCallback* getComputeRangeCallback() const = 0;
-
-        //! Sets the ComputeRangeCallback for this TerrainEngineNode */
-        virtual void setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback) = 0;
-
         //! Scene graph root of the terrain engine
         virtual osg::Node* getNode() = 0;
 
@@ -194,13 +178,9 @@ namespace osgEarth
      * A map engine lives under a MapNode and is responsible for generating the
      * actual geometry representing the Earth.
      */
-    class OSGEARTH_EXPORT TerrainEngineNode : 
-        public osg::CoordinateSystemNode,
-        public TerrainEngine,
-        public TerrainEngineRequirements
+    class OSGEARTH_EXPORT TerrainEngineNode : public osg::CoordinateSystemNode,  public TerrainEngine
     {
     public:
-
         TerrainTileModel* createTileModel(
             const Map* map,
             const TileKey& key,
@@ -210,6 +190,8 @@ namespace osgEarth
         const Map* getMap() const override { return _map.get(); }
 
         TerrainResources* getResources() const override;
+
+        virtual const TerrainEngineRequirements& getRequirements() const = 0;
 
         Terrain* getTerrain() override { return _terrainInterface.get(); }
         const Terrain* getTerrain() const override { return _terrainInterface.get(); }
@@ -282,9 +264,14 @@ namespace osgEarth
         //! Shut down the engine
         virtual void shutdown();
 
-        ComputeRangeCallback* getComputeRangeCallback() const override;
+        using ComputeTileRangeCallback = std::function<float(osg::Node* node, osg::NodeVisitor& nv)>;
+        using ComputeTilePixelSizeCallback = std::function<float(osg::Node* node, osg::NodeVisitor& nv)>;
 
-        void setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback) override;
+        void setComputeTileRangeCallback(const ComputeTileRangeCallback& callback) { _computeTileRangeCallback = callback; }
+        ComputeTileRangeCallback& getComputeTileRangeCallback() { return _computeTileRangeCallback; }
+
+        void setComputeTilePixelSizeCallback(const ComputeTilePixelSizeCallback& callback) { _computeTilePixelSizeCallback = callback; }
+        ComputeTilePixelSizeCallback& getComputeTilePixelSizeCallback() { return _computeTilePixelSizeCallback; }
 
         //! Return the top level node associated with the terrain.
         osg::Node* getNode() override {
@@ -314,16 +301,6 @@ namespace osgEarth
 
         static TerrainEngineNode* create(const TerrainOptions& options);
 
-
-    public: // TerrainEngineRequirements
-
-        bool normalTexturesRequired() const { return _requireNormalTextures; }
-        bool elevationTexturesRequired() const { return _requireElevationTextures; }
-        bool landCoverTexturesRequired() const { return _requireLandCoverTextures; }
-        bool parentTexturesRequired() const { return _requireParentTextures; }
-        bool elevationBorderRequired() const { return _requireElevationBorder; }
-        bool fullDataAtFirstLodRequired() const { return _requireFullDataAtFirstLOD; }
-
     protected:
         TerrainEngineNode();
         virtual ~TerrainEngineNode();
@@ -350,14 +327,6 @@ namespace osgEarth
         virtual void dirtyState() { }
 
         osg::ref_ptr<TerrainResources> _textureResourceTracker;
-
-        bool _requireElevationTextures;
-        bool _requireNormalTextures;
-        bool _requireLandCoverTextures;
-        bool _requireParentTextures;
-        bool _requireElevationBorder;
-        bool _requireFullDataAtFirstLOD;
-
         osg::ref_ptr<const Map> _map;
 
     private:
@@ -366,7 +335,7 @@ namespace osgEarth
         void onMapModelChanged( const MapModelChange& change );
         virtual void updateTextureCombining() { }
 
-    private:
+    protected:
         osg::ref_ptr<Terrain> _terrainInterface;
         unsigned _dirtyCount;
         bool _updateScheduled;
@@ -384,7 +353,8 @@ namespace osgEarth
 
         osg::ref_ptr<TerrainTileModelFactory> _tileModelFactory;
 
-        osg::ref_ptr<ComputeRangeCallback> _computeRangeCallback;
+        ComputeTileRangeCallback _computeTileRangeCallback;
+        ComputeTilePixelSizeCallback _computeTilePixelSizeCallback;
 
     public:
         // internal
@@ -401,5 +371,3 @@ namespace osgEarth
         }
     };
 } // namespace osgEarth
-
-#endif // OSGEARTH_TERRAIN_ENGINE_NODE_H

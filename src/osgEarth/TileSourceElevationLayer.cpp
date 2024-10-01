@@ -65,7 +65,6 @@ namespace
                     float& value = *i;
                     if ( osg::isNaN(value) || osg::equivalent(value, _noDataValue) || value < _minValidValue || value > _maxValidValue )
                     {
-                        OE_DEBUG << "Replaced " << value << " with NO_DATA_VALUE" << std::endl;
                         value = NO_DATA_VALUE;
                     }
                 } 
@@ -89,8 +88,9 @@ TileSourceElevationLayer::getOrCreatePreCacheOp() const
 {
     if ( !_preCacheOp.valid() )
     {
-        static Mutex s_mutex;
-        Threading::ScopedLock lock(s_mutex);
+        static std::mutex s_mutex;
+        std::lock_guard<std::mutex> lock(s_mutex);
+
         if ( !_preCacheOp.valid() )
         {
             _preCacheOp = new NormalizeNoDataValues(this);
@@ -163,7 +163,7 @@ TileSourceElevationLayer::openImplementation()
             {
                 // The "effective" policy overrides the runtime policy, but it does not get serialized.
                 //getCacheSettings()->cachePolicy()->mergeAndOverride( cp );
-                getCacheSettings()->cachePolicy()->minTime() = _tileSource->getLastModifiedTime();
+                getCacheSettings()->cachePolicy().mutable_value().minTime() = _tileSource->getLastModifiedTime();
                 OE_INFO << LC << "driver says min valid timestamp = " << DateTime(*cp.minTime()).asRFC1123() << "\n";
             }
         }
@@ -191,7 +191,7 @@ TileSourceElevationLayer::openImplementation()
             // Set the profile from the TileSource if possible:
             if (getProfile() == NULL)
             {
-                OE_DEBUG << LC << "Get Profile from tile source" << std::endl;
+                //OE_DEBUG << LC << "Get Profile from tile source" << std::endl;
                 setProfile(_tileSource->getProfile());
             }
         }
@@ -234,7 +234,6 @@ TileSourceElevationLayer::createHeightFieldImplementation(const TileKey& key, Pr
     // If the key is blacklisted, fail.
     if ( _tileSource->getBlacklist()->contains( key ))
     {
-        OE_DEBUG << LC << "Tile " << key.str() << " is blacklisted " << std::endl;
         if (progress) progress->message() = "blacklisted";
         return GeoHeightField::INVALID;
     }
@@ -242,8 +241,6 @@ TileSourceElevationLayer::createHeightFieldImplementation(const TileKey& key, Pr
     // Only try to get data if the source actually has data
     if (!mayHaveData(key))
     {
-        OE_DEBUG << LC << "Source for layer has no data at " << key.str() << std::endl;
-        //if (progress) progress->message() = "mayHaveData=false";
         return GeoHeightField::INVALID;
     }
 

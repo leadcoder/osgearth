@@ -190,11 +190,15 @@ private:
 
 PowerlineFeatureNodeFactory::PowerlineFeatureNodeFactory(const PowerlineLayer::Options& options, StyleSheet* styles)
     : GeomFeatureNodeFactory(options),    
-      _lineSourceLayer(options.lineSourceLayerName().get()),
-      _lineSource(options.lineSourceEmbeddedOptions().get()),
+      _lineSourceLayer(options.lineSource().externalLayerName().get()),
       _point_features(options.point_features().get()),
       _powerlineOptions(options)
 {
+    if (options.lineSource().embeddedOptions() != nullptr)
+    {
+        _lineSource = *options.lineSource().embeddedOptions();
+    }
+
     if (options.towerModels().empty())
         return;
     _renderData = options.towerModels();
@@ -333,7 +337,7 @@ namespace
                     Query newQuery(query);
                     newQuery.bounds().unset();
                     newQuery.tileKey() = neighborKey;
-                    FeatureCursor* cursor = session->getFeatureSource()->createFeatureCursor(newQuery, 0L);
+                    FeatureCursor* cursor = session->getFeatureSource()->createFeatureCursor(newQuery);
                     while (cursor->hasMore())
                     {
                         Feature* feature = cursor->nextFeature();
@@ -651,8 +655,8 @@ namespace
         osg::ref_ptr<LineSymbol> lineSymbol = cableStyle.getOrCreateSymbol<LineSymbol>();
         if (!lineSymbol->stroke()->width().isSet())
         {
-            lineSymbol->stroke()->width() = .05;
-            lineSymbol->stroke()->widthUnits() = Units::METERS;
+            lineSymbol->stroke().mutable_value().width() = .05;
+            lineSymbol->stroke().mutable_value().widthUnits() = Units::METERS;
         }
         if (!lineSymbol->tessellationSize().isSet())
         {
@@ -685,7 +689,7 @@ namespace
         if (!modelSymbol->url().isSet() || force)
         {
             modelSymbol->url() = "\"" + modelName + "\"";
-            modelSymbol->url()->setURIContext(referrer);
+            modelSymbol->url().mutable_value().setURIContext(referrer);
         }
     }
 }
@@ -904,15 +908,15 @@ bool PowerlineFeatureNodeFactory::createOrUpdateNode(FeatureCursor* cursor, cons
         {
             // defaults
             osg::ref_ptr<LineSymbol> lineSymbol = cableStyle.getOrCreateSymbol<LineSymbol>();
-            lineSymbol->stroke()->color() = Color("#6f6f6f");
-            lineSymbol->stroke()->width() = 1.5f;
+            lineSymbol->stroke().mutable_value().color() = Color("#6f6f6f");
+            lineSymbol->stroke().mutable_value().width() = 1.5f;
             lineSymbol->useGLLines() = true;
         }
         osg::ref_ptr<LineSymbol> lineSymbol = cableStyle.getOrCreateSymbol<LineSymbol>();
         if (!lineSymbol->stroke()->width().isSet())
         {
-            lineSymbol->stroke()->width() = .05;
-            lineSymbol->stroke()->widthUnits() = Units::METERS;
+            lineSymbol->stroke().mutable_value().width() = .05;
+            lineSymbol->stroke().mutable_value().widthUnits() = Units::METERS;
         }
         if (!lineSymbol->tessellationSize().isSet())
         {
@@ -932,8 +936,8 @@ bool PowerlineFeatureNodeFactory::createOrUpdateNode(FeatureCursor* cursor, cons
     FilterContext localCX = sharedCX;
     
     osgEarth::Util::JoinPointsLinesFilter pointsLinesFilter;
-    pointsLinesFilter.lineSourceLayerName() = "lines";
-    pointsLinesFilter.lineSourceEmbeddedOptions() = _lineSource;
+    pointsLinesFilter.lineSource().setExternalLayerName("lines");
+    pointsLinesFilter.lineSource().setEmbeddedOptions(_lineSource);
     if (!_point_features)
     {
         pointsLinesFilter.createPointFeatures() = true;

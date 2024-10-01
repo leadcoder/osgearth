@@ -27,21 +27,19 @@ using namespace osgEarth;
 #define LC "[TerrainResources] "
 
 
-TerrainResources::TerrainResources() :
-    _reservedUnitsMutex("TerrainResources(OE)")
+TerrainResources::TerrainResources()
 {
     // Unit 0 cannot be reserved
     _globallyReservedUnits.insert(0);
 }
 
 bool
-TerrainResources::reserveTextureImageUnit(int&        out_unit,
-                                          const char* requestor)
+TerrainResources::reserveTextureImageUnit(int& out_unit, const char* requestor)
 {
     out_unit = -1;
     unsigned maxUnits = osgEarth::Registry::instance()->getCapabilities().getMaxGPUTextureUnits();
     
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
     
     // first collect a list of units that are already in use.
     std::set<int> taken;
@@ -62,7 +60,7 @@ TerrainResources::reserveTextureImageUnit(int&        out_unit,
             out_unit = i;
             if ( requestor )
             {
-                OE_INFO << LC << "Texture unit " << i << " reserved for " << requestor << std::endl;
+                OE_DEBUG << LC << "Texture unit " << i << " reserved for " << requestor << std::endl;
             }
             return true;
         }
@@ -77,7 +75,7 @@ TerrainResources::reserveTextureImageUnit(TextureImageUnitReservation& reservati
     reservation._unit = -1;
     unsigned maxUnits = osgEarth::Registry::instance()->getCapabilities().getMaxGPUTextureUnits();
     
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
     
     // first collect a list of units that are already in use.
     std::set<int> taken;
@@ -99,7 +97,7 @@ TerrainResources::reserveTextureImageUnit(TextureImageUnitReservation& reservati
             reservation._res = this;
             if ( requestor )
             {
-                OE_INFO << LC << "Texture unit " << i << " reserved for " << requestor << std::endl;
+                OE_DEBUG << LC << "Texture unit " << i << " reserved for " << requestor << std::endl;
             }
             return true;
         }
@@ -121,7 +119,7 @@ TerrainResources::reserveTextureImageUnitForLayer(TextureImageUnitReservation& r
     reservation._unit = -1;
     unsigned maxUnits = osgEarth::Registry::instance()->getCapabilities().getMaxGPUTextureUnits();
     
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
     
     // first collect a list of units that are already in use.
     std::set<int> taken;
@@ -139,7 +137,7 @@ TerrainResources::reserveTextureImageUnitForLayer(TextureImageUnitReservation& r
             reservation._res = this;
             if ( requestor )
             {
-                OE_INFO << LC << "Texture unit " << i << " reserved (on layer "
+                OE_DEBUG << LC << "Texture unit " << i << " reserved (on layer "
                     << layer->getName() << ") for " << requestor << std::endl;
             }
             return true;
@@ -151,9 +149,9 @@ TerrainResources::reserveTextureImageUnitForLayer(TextureImageUnitReservation& r
 void
 TerrainResources::releaseTextureImageUnit(int unit)
 {
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
     _globallyReservedUnits.erase( unit );
-    OE_INFO << LC << "Texture unit " << unit << " released" << std::endl;
+    OE_DEBUG << LC << "Texture unit " << unit << " released" << std::endl;
 }
 
 void
@@ -162,7 +160,7 @@ TerrainResources::releaseTextureImageUnit(int unit, const Layer* layer)
     if (layer == 0L)
         releaseTextureImageUnit(unit);
 
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
     PerLayerReservedUnits::iterator i = _perLayerReservedUnits.find(layer);
     if (i != _perLayerReservedUnits.end())
     {
@@ -175,14 +173,14 @@ TerrainResources::releaseTextureImageUnit(int unit, const Layer* layer)
             _perLayerReservedUnits.erase(i);
         }
 
-        OE_INFO << LC << "Texture unit " << unit << " released (by layer " << layer->getName() << ")" << std::endl;
+        OE_DEBUG << LC << "Texture unit " << unit << " released (by layer " << layer->getName() << ")" << std::endl;
     }
 }
 
 bool
 TerrainResources::setTextureImageUnitOffLimits(int unit)
 {
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _reservedUnitsMutex );
 
     // Make sure it's not already reserved:
     if (_globallyReservedUnits.find(unit) != _globallyReservedUnits.end())

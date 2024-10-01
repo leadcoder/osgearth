@@ -261,6 +261,10 @@ GroundCoverLayer::init()
     _debug = (::getenv("OSGEARTH_GROUNDCOVER_DEBUG") != NULL);
 
     _frameLastUpdate = 0U;
+
+    // set a static bounding box buffer that can account for geometry in this layer.
+    // 25 meters on the sides and 50m on the top will be a rough guess for now.
+    _buffer.set(-25, -25, 0, 25, 25, 50);
 }
 
 GroundCoverLayer::~GroundCoverLayer()
@@ -881,11 +885,6 @@ GroundCoverLayer::Renderer::draw(osg::RenderInfo& ri, const TileBatch& input)
     DrawState& ds = _drawStateBuffer[GLUtils::getUniqueStateID(*ri.getState())]; // ri.getContextID()];
     ds._renderer = this;
     osg::State* state = ri.getState();
-
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,6)
-    // Need to unbind any VAO since we'll be doing straight GL calls
-    //ri.getState()->unbindVertexArrayObject();
-#endif
 
     // Push the pre-gen culling shader and run it:
     const ZoneSA* sa = ZoneSA::extract(ri.getState());

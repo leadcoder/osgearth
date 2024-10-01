@@ -13,9 +13,9 @@ jobs:
 
     strategy:
       matrix:
-        os: ['macos-13']
+        os: ['macos-14']
         include:
-          - os: 'macos-13'
+          - os: 'macos-14'
             triplet: 'x64-macosx'
 
     steps:
@@ -28,9 +28,10 @@ jobs:
         brew install protobuf
         brew install poco
         brew install open-scene-graph
+        brew install glew
         sudo xcode-select -p
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
@@ -45,10 +46,16 @@ jobs:
       shell: bash
       working-directory: ${{ runner.workspace }}/build
       run: |
-        cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DOSGEARTH_BUILD_TESTS=OFF -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=ON -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON -DCMAKE_CXX_STANDARD:STRING=17 -DCMAKE_CXX_STANDARD_REQUIRED:BOOL=ON -GXcode -DVCPKG_MANIFEST_DIR=$GITHUB_WORKSPACE/vcpkg
+        cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -DCMAKE_CXX_STANDARD:STRING=17 \
+          -DCMAKE_CXX_STANDARD_REQUIRED:BOOL=ON \
+          -DOSGEARTH_BUILD_LEGACY_SPLAT_NODEKIT=ON \
+          -DOSGEARTH_BUILD_PROCEDURAL_NODEKIT=ON \
+          -DOSGEARTH_BUILD_TESTS=OFF \
+          -GXcode -DVCPKG_MANIFEST_DIR=$GITHUB_WORKSPACE/vcpkg
 
     - name: 'Upload cmake configure log artifact'
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       if: ${{ failure() }}
       with:
         name: cmake-configure-log
@@ -62,7 +69,7 @@ jobs:
       run: cmake --build . --config $BUILD_TYPE
 
     - name: 'Upload cmake build log artifact'
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       if: ${{ failure() }}
       with:
         name: cmake-build-log

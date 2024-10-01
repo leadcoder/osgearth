@@ -54,10 +54,10 @@ namespace
     {
         Segment n;
         double  maxLen2 = 0.0;
-        ConstSegmentIterator i( geom, true );
+        ConstSegmentIterator i(geom, true);
         while( i.hasMore() )
         {
-            Segment s = i.next();
+            auto& s = i.next();
             double len2 = (s.second - s.first).length2();
             if ( len2 > maxLen2 ) 
             {
@@ -77,12 +77,7 @@ namespace
 
 //------------------------------------------------------------------------
 
-ExtrudeGeometryFilter::ExtrudeGeometryFilter() :
-_mergeGeometry         ( true ),
-_wallAngleThresh_deg   ( 60.0 ),
-_styleDirty            ( true ),
-_makeStencilVolume     ( false ),
-_gpuClamping           ( false )
+ExtrudeGeometryFilter::ExtrudeGeometryFilter()
 {
     _cosWallAngleThresh = cos( _wallAngleThresh_deg );
 }
@@ -198,6 +193,18 @@ ExtrudeGeometryFilter::reset( const FilterContext& context )
     }
 }
 
+namespace
+{
+    inline osg::Vec2d asVec2d(const osg::Vec3d& v) { return osg::Vec2d(v.x(), v.y()); }
+
+    inline osg::Vec4f shade(const osg::Vec4f& input, const osg::Vec3f& normal, float minimum)
+    {
+        float d = minimum + ((1.0f - minimum) * 0.5 * ((normal * osg::Vec3(1,0,0)) + 1.0));
+        return osg::Vec4f(input.r() * d, input.g() * d, input.b() * d, input.a());
+    }
+}
+
+
 bool
 ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
                                       double                  height,
@@ -211,6 +218,7 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
     bool makeECEF = false;
     osg::ref_ptr<const SpatialReference> srs;
     osg::ref_ptr<const SpatialReference> mapSRS;
+    unsigned numElevations = 0, numCorners = 0, numFaces = 0;
 
     if ( cx.isGeoreferenced() )
     {
@@ -319,8 +327,12 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
     }
 
     // prep for wall texture coordinate generation.
-    double texWidthM  = wallSkin ? *wallSkin->imageWidth() : 0.0;
-    double texHeightM = wallSkin ? *wallSkin->imageHeight() : 1.0;
+    const double defaultSpan = 100.0;
+    double texWidthM = wallSkin ? wallSkin->imageWidth().getOrUse(defaultSpan) : defaultSpan;
+    double texHeightM = wallSkin ? wallSkin->imageHeight().getOrUse(defaultSpan) : defaultSpan;
+
+    OE_SOFT_ASSERT_AND_RETURN(texWidthM > 0.0, false);
+    OE_SOFT_ASSERT_AND_RETURN(texHeightM > 0.0, false);
 
     ConstGeometryIterator iter( input );
     while( iter.hasMore() )
@@ -343,13 +355,13 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
 
         // Step 1 - Create the real corners and transform them into our target SRS.
         Corners corners;
-        for(Geometry::const_iterator m = part->begin(); m != part->end(); ++m)
+        for(Geometry::const_iterator point = part->begin(); point != part->end(); ++point)
         {
-            Corners::iterator corner = corners.insert(corners.end(), Corner());
+            auto corner = corners.emplace(corners.end());
             
             // mark as "from source", as opposed to being inserted by the algorithm.
             corner->isFromSource = true;
-            corner->base = *m;
+            corner->base = *point;
 
             // extrude:
             if ( height >= 0 ) // extrude up
@@ -361,7 +373,7 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
             }
             else // height < 0 .. extrude down
             {
-                corner->roof = *m;
+                corner->roof = *point;
                 corner->base.z() += height;
             }
             
@@ -398,127 +410,133 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
             corner->height = (corner->roof - corner->base).length();
         }
 
+        if (corners.size() > 5000)
+        {
+            OE_WARN << "numCorners (actual) = " << corners.size() << std::endl;
+        }
+
+        if (structure.isPolygon)
+        {
+            // close the polygon
+            corners.push_back(corners.front());
+            corners.back().isFromSource = false;
+        }
+
         // Step 2 - Insert intermediate Corners as needed to satify texturing
         // requirements (if necessary) and record each corner offset (horizontal distance
         // from the beginning of the part geometry to the corner.)
-        double cornerOffset    = 0.0;
-        double nextTexBoundary = texWidthM;
-
-        for(Corners::iterator c = corners.begin(); c != corners.end(); ++c)
+        if (wallSkin)
         {
-            Corners::iterator this_corner = c;
+            double corner_offset = 0.0;
+            double next_tex_boundary = texWidthM;
 
-            Corners::iterator next_corner = c;
-			bool isLastEdge = false;
-			if ( ++next_corner == corners.end() )
-			{
-				isLastEdge = true;
-				next_corner = corners.begin();
-			}
-
-            osg::Vec3d base_vec = next_corner->base - this_corner->base;
-            double span = base_vec.length();
-
-            this_corner->offsetX = cornerOffset;
-
-            if (wallSkin)
+            for (Corners::iterator c = corners.begin(); c != corners.end(); ++c)
             {
-                base_vec /= span; // normalize
-                osg::Vec3d roof_vec = next_corner->roof - this_corner->roof;
-                roof_vec.normalize();
+                auto this_corner = c;
+                this_corner->offsetX = corner_offset;
 
-                while(nextTexBoundary < cornerOffset+span)
+                auto next_corner = c;
+                ++next_corner;
+                if (next_corner == corners.end())
                 {
-                    // insert a new fake corner.
-					Corners::iterator new_corner;
+                    break;
+                }
 
-                    if (isLastEdge)
-                    {
-                        if (structure.isPolygon)
-                        {
-                            corners.push_back(Corner());
-                            new_corner = c;
-                            new_corner++;
-                        }
-                        else
-                        {
-                            // We only add a fake corner at the end for polygons
-                            break;
-                        }
-                    }
-                    else
-                    {
-						new_corner = corners.insert(next_corner, Corner());
-					}
+                auto base_vec_3d = next_corner->base - this_corner->base;
+                double span_2d = asVec2d(base_vec_3d).length();
 
+                // if this span crosses the next texture boundary, we need to insert a corner.
+                auto dist_to_next_tex_boundary = next_tex_boundary - corner_offset;
+                if (equivalent(dist_to_next_tex_boundary, 0.0))
+                {
+                    // this is a corner that's exactly on a texture boundary. Just skip it.
+                    corner_offset = next_tex_boundary;
+                    next_tex_boundary += texWidthM;
+                }
+
+                else if (span_2d > dist_to_next_tex_boundary)
+                {
+                    osg::Vec3d roof_vec_3d = next_corner->roof - this_corner->roof;
+                    double t = dist_to_next_tex_boundary / span_2d;
+
+                    auto new_corner = corners.emplace(next_corner, *this_corner); // copy and append
                     new_corner->isFromSource = false;
-                    double advance = nextTexBoundary-cornerOffset;
-                    new_corner->base = this_corner->base + base_vec*advance;
-                    new_corner->roof = this_corner->roof + roof_vec*advance;
+                    new_corner->base = this_corner->base + base_vec_3d * t;
+                    new_corner->roof = this_corner->roof + roof_vec_3d * t;
                     new_corner->height = (new_corner->roof - new_corner->base).length();
-                    new_corner->offsetX = cornerOffset + advance;
-                    nextTexBoundary += texWidthM;
-
-                    // advance the main iterator
-                    c = new_corner;
+                    corner_offset = next_tex_boundary;
+                    next_tex_boundary += texWidthM;
+                }
+                else
+                {
+                    corner_offset += span_2d;
                 }
             }
 
-            cornerOffset += span;
+            if (corners.size() > 3500)
+            {
+                //OE_WARN << "numCorners (interp) = " << corners.size() << std::endl;
+            }
         }
 
         // Step 3 - Calculate the angle of each corner.
-        osg::Vec3d prev_vec;
+        // TODO: is this never used???
+        osg::Vec2d prev_vec_2d;
         for(Corners::iterator c = corners.begin(); c != corners.end(); ++c)
         {
-            Corners::const_iterator this_corner = c;
+            auto this_corner = c;
+            auto next_corner = c;
 
-            Corners::const_iterator next_corner = c;
             if ( ++next_corner == corners.end() )
                 next_corner = corners.begin();
 
             if ( this_corner == corners.begin() )
             {
-                Corners::const_iterator prev_corner = corners.end();
+                auto prev_corner = corners.end();
                 --prev_corner;
-                prev_vec = this_corner->roof - prev_corner->roof;
-                prev_vec.normalize();
+                prev_vec_2d = asVec2d(this_corner->roof) - asVec2d(prev_corner->roof);
+                prev_vec_2d.normalize();
             }
 
-            osg::Vec3d this_vec = next_corner->roof - this_corner->roof;
-            this_vec.normalize();
+            auto this_vec_2d = asVec2d(next_corner->roof) - asVec2d(this_corner->roof);
+            this_vec_2d.normalize();
             if ( c != corners.begin() )
             {
-                c->cosAngle = prev_vec * this_vec;
+                c->cosAngle = prev_vec_2d * this_vec_2d;
             }
+
+            prev_vec_2d = this_vec_2d; // was missing!
         }
+
+        numCorners += corners.size();
 
         // Step 4 - Create faces connecting each pair of Posts.
         Faces& faces = elevation.faces;
         for(Corners::const_iterator c = corners.begin(); c != corners.end(); ++c)
         {
-            Corners::const_iterator this_corner = c;
-
-            Corners::const_iterator next_corner = c;
-            if ( ++next_corner == corners.end() )
-                next_corner = corners.begin();
+            auto this_corner = c;
+            auto next_corner = c;
+            if (++next_corner == corners.end())
+                break;
             
             // only close the shape for polygons.
-            if (next_corner != corners.begin() || structure.isPolygon)
+            //if (next_corner != corners.begin() || structure.isPolygon)
             {
-                faces.push_back(Face());
+                faces.emplace_back();
                 Face& face = faces.back();
-                face.left  = *this_corner;
+                face.left = *this_corner;
                 face.right = *next_corner;
 
-                // recalculate the final offset on the last face
-                if ( next_corner == corners.begin() )
-                {
-                    osg::Vec3d vec = next_corner->roof - this_corner->roof;
-                    face.right.offsetX = face.left.offsetX + vec.length();
-                }
+                //// recalculate the final offset on the last face
+                //if ( next_corner == corners.begin() )
+                //{
+                //    osg::Vec3d vec = next_corner->roof - this_corner->roof;
+                //    face.right.offsetX = face.left.offsetX + vec.length();
+                //}
 
                 face.widthM = next_corner->offsetX - this_corner->offsetX;
+
+                ++numFaces;
             }
         }
     }
@@ -527,30 +545,36 @@ ExtrudeGeometryFilter::buildStructure(const Geometry*         input,
 }
 
 bool
-ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
-                                         Feature* feature,
-                                         osg::Geometry*       walls,
-                                         const osg::Vec4&     wallColor,
-                                         const osg::Vec4&     wallBaseColor,
-                                         const SkinResource*  wallSkin,
-                                         FeatureIndexBuilder* index)
+ExtrudeGeometryFilter::buildWallGeometry(
+    const Structure& structure,
+    Feature* feature,
+    osg::Geometry* walls,
+    const osg::Vec4& wallColor,
+    const osg::Vec4& wallBaseColor,
+    const SkinResource* wallSkin,
+    float shadeMin,
+    FeatureIndexBuilder* index)
 {
     bool madeGeom = true;
 
     // 6 verts per face total (3 triangles)
     unsigned numWallVerts = structure.getNumPoints();
 
-    double texWidthM   = wallSkin ? *wallSkin->imageWidth()  : 1.0;
-    double texHeightM  = wallSkin ? *wallSkin->imageHeight() : 1.0;
+    const double defaultSpan = 100.0;
+    double texWidthM = wallSkin ? wallSkin->imageWidth().getOrUse(defaultSpan) : defaultSpan;
+    double texHeightM = wallSkin ? wallSkin->imageHeight().getOrUse(defaultSpan) : defaultSpan;
     bool   useColor    = (!wallSkin || wallSkin->texEnvMode() != osg::TexEnv::DECAL) && !_makeStencilVolume;
-    
+
+    OE_SOFT_ASSERT_AND_RETURN(texWidthM > 0.0, false);
+    OE_SOFT_ASSERT_AND_RETURN(texHeightM > 0.0, false);
+
     // Scale and bias:
-    osg::Vec2f scale, bias;
+    osg::Vec2f scale(1, 1), bias(0, 0);
     float layer;
     if ( wallSkin )
     {
-        bias.set (wallSkin->imageBiasS().get(),  wallSkin->imageBiasT().get());
-        scale.set(wallSkin->imageScaleS().get(), wallSkin->imageScaleT().get());
+        bias.set (wallSkin->imageBiasS().getOrUse(0.0),  wallSkin->imageBiasT().getOrUse(0.0));
+        scale.set(wallSkin->imageScaleS().getOrUse(1.0), wallSkin->imageScaleT().getOrUse(1.0));
         layer = (float)wallSkin->imageLayer().get();
     }
 
@@ -563,9 +587,7 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
     }
     // Store the current size of the geometry
     unsigned vertptr = verts->size();
-    unsigned int startVertPtr = vertptr;
-
-    verts->resize(verts->size() + numWallVerts);
+    unsigned startVertPtr = vertptr;
 
     osg::Vec3Array* tex = 0L;
     if ( wallSkin )
@@ -576,7 +598,6 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
             tex = new osg::Vec3Array();
             walls->setTexCoordArray( 0, tex );
         }
-        tex->resize(tex->size() + numWallVerts);
     }
 
     osg::Vec4Array* colors = 0L;
@@ -588,7 +609,6 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
             colors = new osg::Vec4Array( osg::Array::BIND_PER_VERTEX);
             walls->setColorArray( colors );
         }
-        colors->resize(colors->size() + numWallVerts);
     }
 
     osg::Vec3Array* normals = static_cast<osg::Vec3Array*>(walls->getNormalArray());
@@ -597,7 +617,6 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
         normals = new osg::Vec3Array(osg::Array::BIND_PER_VERTEX);
         walls->setNormalArray(normals);
     }
-    normals->resize(normals->size() + numWallVerts);
     
     ObjectIDArray* ids = nullptr;
     if (index)
@@ -611,7 +630,6 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
             walls->setVertexAttribArray(osg::Drawable::SECONDARY_COLORS, ids);
             ids->setPreserveDataType(true);
         }
-        ids->resize(ids->size() + numWallVerts);
     }
 
     osg::Vec4Array* anchors = 0L;
@@ -626,10 +644,10 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
             anchors->setNormalize(false);
             walls->setVertexAttribArray( Clamping::AnchorAttrLocation, anchors );
         } 
-        anchors->resize(anchors->size() + numWallVerts);
+        //anchors->resize(anchors->size() + numWallVerts);
     }
 
-    bool     tex_repeats_y = wallSkin && wallSkin->isTiled() == true;
+    bool tex_repeats_y = (wallSkin && wallSkin->isTiled() == true);
 
     bool flatten =
         _style.has<ExtrusionSymbol>() &&
@@ -651,23 +669,27 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
         for(Faces::const_iterator f = elev->faces.begin(); f != elev->faces.end(); ++f, vertptr+=6)
         {
             // set the 6 wall verts.
-            (*verts)[vertptr+0] = f->left.roof;
-            (*verts)[vertptr+1] = f->left.base;
-            (*verts)[vertptr+2] = f->right.base;
-            (*verts)[vertptr+3] = f->right.base;
-            (*verts)[vertptr+4] = f->right.roof;
-            (*verts)[vertptr+5] = f->left.roof;
+            verts->push_back(f->left.roof);
+            verts->push_back(f->left.base);
+            verts->push_back(f->right.base);
+            verts->push_back(f->right.base);
+            verts->push_back(f->right.roof);
+            verts->push_back(f->left.roof);
+
+            //TODO: use the cosAngle to decide whether to smooth the corner!
+
+            osg::Vec3 normal_cache[6];
 
             const osg::Vec3& v1 = f->left.roof;
             const osg::Vec3& v2 = f->left.base;
             const osg::Vec3& v3 = f->right.base;
             osg::Vec3 normal((v2 - v1) ^ (v3 - v1));
-            (*normals)[vertptr + 0] = normal;
-            (*normals)[vertptr + 1] = normal;
-            (*normals)[vertptr + 2] = normal;
-            (*normals)[vertptr + 3] = normal;
-            (*normals)[vertptr + 4] = normal;
-            (*normals)[vertptr + 5] = normal;
+            for (int i = 0; i < 6; ++i)
+            {
+                normal.normalize();
+                normal_cache[i] = normal;
+                normals->push_back(normal);
+            }
             
             if ( anchors )
             {
@@ -694,12 +716,12 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
             // Assign wall polygon colors.
             if (useColor)
             {
-                (*colors)[vertptr+0] = wallColor;
-                (*colors)[vertptr+1] = wallBaseColor;
-                (*colors)[vertptr+2] = wallBaseColor;
-                (*colors)[vertptr+3] = wallBaseColor;
-                (*colors)[vertptr+4] = wallColor;
-                (*colors)[vertptr+5] = wallColor;
+                colors->push_back(shade(wallColor, normal_cache[0], shadeMin));
+                colors->push_back(shade(wallBaseColor, normal_cache[1], shadeMin));
+                colors->push_back(shade(wallBaseColor, normal_cache[2], shadeMin));
+                colors->push_back(shade(wallBaseColor, normal_cache[3], shadeMin));
+                colors->push_back(shade(wallColor, normal_cache[4], shadeMin));
+                colors->push_back(shade(wallColor, normal_cache[5], shadeMin));
             }
 
             // Calculate texture coordinates:
@@ -729,12 +751,18 @@ ExtrudeGeometryFilter::buildWallGeometry(const Structure&     structure,
                 texBaseL = bias + osg::componentMultiply(texBaseL, scale);
                 texBaseR = bias + osg::componentMultiply(texBaseR, scale);
 
-                (*tex)[vertptr+0].set( texRoofL.x(), texRoofL.y(), layer );
-                (*tex)[vertptr+1].set( texBaseL.x(), texBaseL.y(), layer );
-                (*tex)[vertptr+2].set( texBaseR.x(), texBaseR.y(), layer );
-                (*tex)[vertptr+3].set( texBaseR.x(), texBaseR.y(), layer );
-                (*tex)[vertptr+4].set( texRoofR.x(), texRoofR.y(), layer );
-                (*tex)[vertptr+5].set( texRoofL.x(), texRoofL.y(), layer );
+                tex->push_back({ texRoofL.x(), texRoofL.y(), layer });
+                tex->push_back({ texBaseL.x(), texBaseL.y(), layer });
+                tex->push_back({ texBaseR.x(), texBaseR.y(), layer });
+                tex->push_back({ texBaseR.x(), texBaseR.y(), layer });
+                tex->push_back({ texRoofR.x(), texRoofR.y(), layer });
+                tex->push_back({ texRoofL.x(), texRoofL.y(), layer });
+                //(*tex)[vertptr+0].set(texRoofL.x(), texRoofL.y(), layer);
+                //(*tex)[vertptr+1].set( texBaseL.x(), texBaseL.y(), layer );
+                //(*tex)[vertptr+2].set( texBaseR.x(), texBaseR.y(), layer );
+                //(*tex)[vertptr+3].set( texBaseR.x(), texBaseR.y(), layer );
+                //(*tex)[vertptr+4].set( texRoofR.x(), texRoofR.y(), layer );
+                //(*tex)[vertptr+5].set( texRoofL.x(), texRoofL.y(), layer );
             }
 
             for(int i=0; i<6; ++i)
@@ -876,9 +904,7 @@ ExtrudeGeometryFilter::buildRoofGeometry(const Structure&     structure,
     osgEarth::Tessellator oeTess;
     if (!oeTess.tessellateGeometry(*tempGeom))
     {
-        //fallback to osg tessellator
-        OE_DEBUG << LC << "Falling back on OSG tessellator (" << roof->getName() << ")" << std::endl;
-
+        // fallback to osg tessellator
         osgUtil::Tessellator tess;
         tess.setTessellationType( osgUtil::Tessellator::TESS_TYPE_GEOMETRY );
         tess.setWindingType( osgUtil::Tessellator::TESS_WINDING_ODD );
@@ -1125,6 +1151,8 @@ ExtrudeGeometryFilter::process( FeatureList& features, FilterContext& context )
         {
             Geometry* part = iter.next();
 
+            part->removeDuplicates();
+
             // calculate the extrusion height:
             float height;
 
@@ -1224,7 +1252,7 @@ ExtrudeGeometryFilter::process( FeatureList& features, FilterContext& context )
                     _roofGeometries[roofStateSet.get()] = rooflines.get();
                     addDrawable(rooflines.get(), roofStateSet.get(), name, input, context.featureIndex());
                 }
-
+                    
                 // prep the shapes by making sure all polys are open:
                 static_cast<Polygon*>(part)->open();
             }
@@ -1277,7 +1305,13 @@ ExtrudeGeometryFilter::process( FeatureList& features, FilterContext& context )
                     wallBaseColor = wallColor;
                 }
 
-                buildWallGeometry(structure, input, walls.get(), wallColor, wallBaseColor, wallSkin, context.featureIndex());
+                float shadeMin = 1.0f;
+                if (_extrusionSymbol->wallShadePercentage().isSet())
+                {
+                    shadeMin = 1.0f - _extrusionSymbol->wallShadePercentage().value();
+                }
+
+                buildWallGeometry(structure, input, walls.get(), wallColor, wallBaseColor, wallSkin, shadeMin, context.featureIndex());
             }
 
             // tessellate and add the roofs if necessary:
@@ -1308,6 +1342,50 @@ ExtrudeGeometryFilter::process( FeatureList& features, FilterContext& context )
     }
 
     return true;
+}
+
+
+namespace
+{
+    struct Counter : public osg::NodeVisitor
+    {
+        unsigned _numVerts = 0u;
+        unsigned _numElements = 0u;
+
+        Counter()
+        {
+            // Use the "active chidren" mode to only bring in default switch
+            // and osgSim::MultiSwitch children for now. -gw
+            setTraversalMode(TRAVERSE_ACTIVE_CHILDREN);
+            setNodeMaskOverride(~0);
+        }
+
+        void apply(osg::Geometry& node) override
+        {
+            auto verts = dynamic_cast<osg::Vec3Array*>(node.getVertexArray());
+            if (verts)
+            {
+                _numVerts += verts->size();
+            }
+
+            for (unsigned i = 0; i < node.getNumPrimitiveSets(); ++i)
+            {
+                auto p = node.getPrimitiveSet(i);
+                if (p)
+                {
+                    if (p->getMode() == p->TRIANGLES ||
+                        p->getMode() == p->TRIANGLES_ADJACENCY ||
+                        p->getMode() == p->TRIANGLE_FAN ||
+                        p->getMode() == p->TRIANGLE_STRIP ||
+                        p->getMode() == p->QUADS ||
+                        p->getMode() == p->QUAD_STRIP)
+                    {
+                        _numElements += p->getNumIndices();
+                    }
+                }
+            }
+        }
+    };
 }
 
 osg::Node*

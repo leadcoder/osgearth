@@ -196,7 +196,7 @@ TileRasterizer::render(osg::Node* node, const GeoExtent& extent)
     job->_extent = extent;
 
     // retrieve the future so we can return it to the caller:
-    Future<Job::Result> result = job->_promise.getFuture();
+    Future<Job::Result> result = job->_promise; // .getFuture();
 
     // put it on the queue:
     _jobQ.push(job);
@@ -388,17 +388,18 @@ TileRasterizer::postDraw(osg::RenderInfo& ri)
     OE_HARD_ASSERT(job != nullptr);
 
     // Check to see if the client still wants the result:
-    if (job->_promise.isCanceled())
+    if (job->_promise.canceled())
         return;
 
     job->_renderer->allocate(state);
 
     // GPU task delegate:
-    auto gpu_task = [job](osg::State& state, Promise<Job::Result>& promise, int invocation)
+    auto gpu_task = [job](osg::State& state, jobs::promise<Job::Result>& promise, int invocation)
     {
-        if (promise.isAbandoned())
+        if (promise.empty())
         {
-            OE_DEBUG << "Job " << job << " canceled" << std::endl;
+            // job was canceled / abandoned
+            //OE_DEBUG << "Job " << job << " canceled" << std::endl;
             return false; // done
         }
 
@@ -450,13 +451,27 @@ TileRasterizer::releaseGLObjects(osg::State* state) const
 {
     osg::Node::releaseGLObjects(state);
 
-    for(unsigned i=0; i< _globjects.size(); ++i)
+    if (state)
     {
-        if (_globjects[i])
+        auto& gc = GLObjects::get(_globjects, *state);
+        if (gc)
         {
-            for (auto& r : _globjects[i]->_renderers)
+            for (auto& r : gc->_renderers)
             {
                 r->releaseGLObjects(state);
+            }
+        }
+    }
+    else
+    {
+        for(unsigned i=0; i< _globjects.size(); ++i)
+        {
+            if (_globjects[i])
+            {
+                for (auto& r : _globjects[i]->_renderers)
+                {
+                    r->releaseGLObjects(state);
+                }
             }
         }
     }

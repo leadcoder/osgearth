@@ -16,9 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-
-#ifndef OSGEARTH_TERRAIN_TILE_MODEL_FACTORY_H
-#define OSGEARTH_TERRAIN_TILE_MODEL_FACTORY_H 1
+#pragma once
 
 #include <osgEarth/TerrainTileModel>
 #include <osgEarth/TerrainOptions>
@@ -27,6 +25,7 @@
 #include <osgEarth/Progress>
 #include <osgEarth/Threading>
 #include <osgEarth/ElevationPool>
+#include <osgEarth/TileMesher>
 
 namespace osgEarth
 {
@@ -43,8 +42,6 @@ namespace osgEarth
     class OSGEARTH_EXPORT CreateTileManifest
     {
     public:
-        CreateTileManifest();
-
         //! Request data for a layer
         void insert(const Layer* layer);
 
@@ -77,10 +74,10 @@ namespace osgEarth
     private:
         typedef vector_map<UID, int> LayerTable;
         LayerTable _layers;
-        bool _includesElevation;
-        bool _includesConstraints;
-        bool _includesLandCover;
-        optional<bool> _progressive;
+        bool _includesElevation = false;
+        bool _includesConstraints = false;
+        bool _includesLandCover = false;
+        optional<bool> _progressive = false;
     };
 
     /**
@@ -105,7 +102,7 @@ namespace osgEarth
             const Map*                       map,
             const TileKey&                   key,
             const CreateTileManifest&        manifest,
-            const TerrainEngineRequirements* requirements,
+            const TerrainEngineRequirements& requirements,
             ProgressCallback*                progress);
 
         //! Same as createTileModel, except that this method will create "fallback"
@@ -116,7 +113,7 @@ namespace osgEarth
             const Map*                       map,
             const TileKey&                   key,
             const CreateTileManifest&        manifest,
-            const TerrainEngineRequirements* requirements,
+            const TerrainEngineRequirements& requirements,
             ProgressCallback*                progress);
 
     protected:
@@ -124,7 +121,7 @@ namespace osgEarth
         virtual void addColorLayers(
             TerrainTileModel*                model,
             const Map*                       map,
-            const TerrainEngineRequirements* reqs,
+            const TerrainEngineRequirements& reqs,
             const TileKey&                   key,
             const CreateTileManifest&        manifest,
             ProgressCallback*                progress,
@@ -134,14 +131,14 @@ namespace osgEarth
             TerrainTileModel* model,
             ImageLayer* layer,
             const TileKey& key,
-            const TerrainEngineRequirements* reqs,
+            const TerrainEngineRequirements& reqs,
             ProgressCallback* progress);
 
         virtual void addStandaloneImageLayer(
             TerrainTileModel* model,
             ImageLayer* layer,
             const TileKey& key,
-            const TerrainEngineRequirements* reqs,
+            const TerrainEngineRequirements& reqs,
             ProgressCallback* progress);
 
         virtual void addElevation(
@@ -164,7 +161,7 @@ namespace osgEarth
             TerrainTileModel*            model,
             const Map*                   map,
             const TileKey&               key,
-            const TerrainEngineRequirements* requirements,
+            const TerrainEngineRequirements& requirements,
             const CreateTileManifest&    manifest,
             ProgressCallback*            progress);
 
@@ -172,7 +169,15 @@ namespace osgEarth
             TerrainTileModel*            model,
             const Map*                   map,
             const TileKey&               key,
-            const TerrainEngineRequirements* requirements,
+            const TerrainEngineRequirements& requirements,
+            const CreateTileManifest&    manifest,
+            ProgressCallback*            progress);
+
+        virtual void addMesh(
+            TerrainTileModel*            model,
+            const Map*                   map,
+            const TileKey&               key,
+            const TerrainEngineRequirements& requirements,
             const CreateTileManifest&    manifest,
             ProgressCallback*            progress);
 
@@ -189,5 +194,3 @@ namespace osgEarth
         ElevationPool::WorkingSet _workingSet;
     };
 }
-
-#endif // OSGEARTH_TERRAIN_TILE_MODEL_FACTORY_H

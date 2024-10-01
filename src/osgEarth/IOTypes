@@ -19,13 +19,11 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-
-#ifndef OSGEARTH_IOTYPES_H
-#define OSGEARTH_IOTYPES_H 1
-
+#pragma once
 #include <osgEarth/Config>
 #include <osgEarth/DateTime>
 #include <osgEarth/Containers>
+#include <osg/Object>
 
 /**
  * A collectin of types used by the various I/O systems in osgEarth. These
@@ -123,6 +121,7 @@ namespace osgEarth
         {
             RESULT_OK,
             RESULT_CANCELED,
+            RESULT_UNAUTHORIZED,
             RESULT_NOT_FOUND,
             RESULT_EXPIRED,
             RESULT_SERVER_ERROR,
@@ -227,6 +226,7 @@ namespace osgEarth
             return
                 code == RESULT_OK              ? "OK" :
                 code == RESULT_CANCELED        ? "Read canceled" :
+                code == RESULT_UNAUTHORIZED    ? "Unauthorized" :
                 code == RESULT_NOT_FOUND       ? "Target not found" :
                 code == RESULT_SERVER_ERROR    ? "Server reported error" :
                 code == RESULT_TIMEOUT         ? "Read timed out" :
@@ -325,5 +325,3 @@ namespace osgEarth
     };
 
 }
-
-#endif // OSGEARTH_IOTYPES_H

@@ -85,8 +85,6 @@ RoadSurfaceLayer::init()
 {
     ImageLayer::init();
 
-    _keygate.setName("RoadSurfaceLayer " + getName());
-
     // Generate Mercator tiles by default.
     setProfile(Profile::create(Profile::GLOBAL_GEODETIC));
 
@@ -402,6 +400,22 @@ RoadSurfaceLayer::createImageImplementation(const TileKey& key, ProgressCallback
 
         if (group && group->getBound().valid())
         {
+            // Make sure there's actually geometry to render in the output extent
+            // since rasterization is expensive!
+            osg::Polytope polytope;
+            outputExtent.createPolytope(polytope);
+
+            osg::ref_ptr<osgUtil::PolytopeIntersector> intersector = new osgUtil::PolytopeIntersector(polytope);
+            osgUtil::IntersectionVisitor visitor(intersector);
+            group->accept(visitor);
+
+            if (intersector->getIntersections().empty())
+            {
+                //OE_DEBUG << LC << "RSL: skipped an EMPTY bounds without rasterizing :) for " << key.str() << std::endl;
+                return GeoImage::INVALID;
+            }
+
+
             OE_PROFILING_ZONE_NAMED("Rasterize");
 
             group->setName(key.str());
@@ -410,9 +424,17 @@ RoadSurfaceLayer::createImageImplementation(const TileKey& key, ProgressCallback
                 group.release(),
                 outputExtent);
 
+            // Since we join on the rasterizer future immediately, we need to make sure
+            // the join cancels properly with a custom cancel predicate that checks for
+            // the existence and status of the host layer.
+            osg::observer_ptr<const Layer> layer(this);
+
             osg::ref_ptr<ProgressCallback> local_progress = new ProgressCallback(
                 progress,
-                [&]() { return !isOpen(); }
+                [layer]() {
+                    osg::ref_ptr<const Layer> safe;
+                    return !layer.lock(safe) || !safe->isOpen() || !jobs::alive();
+                }
             );
 
             // Immediately blocks on the result.
@@ -420,11 +442,17 @@ RoadSurfaceLayer::createImageImplementation(const TileKey& key, ProgressCallback
             osg::ref_ptr<osg::Image> image = result.join(local_progress.get());
 
             // Empty image means the texture did not render anything
-            if (image.valid()
-                && image->data() != nullptr &&
-                !ImageUtils::isEmptyImage(image.get()))
+            if (image.valid() && image->data() != nullptr)
             {
-                return GeoImage(image.get(), key.getExtent());
+                if (!ImageUtils::isEmptyImage(image.get()))
+                {
+                    return GeoImage(image.get(), key.getExtent());
+                }
+                else
+                {
+                    //OE_DEBUG << LC << "RSL: skipped an EMPTY image result for " << key.str() << std::endl;
+                    return GeoImage::INVALID;
+                }
             }
             else
             {
@@ -477,7 +505,7 @@ RoadSurfaceLayer::getFeatures(
             }
             else
             {
-                cursor = fs->createFeatureCursor(subkey, _filterChain.get(), nullptr, progress);
+                cursor = fs->createFeatureCursor(subkey, _filterChain, nullptr, progress);
                 if (cursor.valid())
                 {
                     cursor->fill(
@@ -491,7 +519,8 @@ RoadSurfaceLayer::getFeatures(
 
         // Clone features onto the end of the output list.
         // We must always clone since osgEarth modifies the feature data
+        // TODO: check whether this is actually true
         for (auto& f : sublist)
-            output.push_back(osg::clone(f.get(), osg::CopyOp::DEEP_COPY_ALL));
+            output.push_back(new Feature(*f));
     }
 }

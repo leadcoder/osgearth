@@ -52,7 +52,7 @@ using namespace osgEarth::Util;
 class GLTFReader
 {
 public:
-    using TextureCache = osgEarth::Mutexed<
+    using TextureCache = osgEarth::Threading::Mutexed<
         std::unordered_map<std::string, osg::ref_ptr<osg::Texture2D>> >;
 
     struct NodeBuilder;
@@ -426,7 +426,7 @@ public:
 
             osg::ref_ptr<osg::Texture2D> tex;
 
-            OE_DEBUG << "New Texture: " << imageURI.full() << ", embedded=" << imageEmbedded << std::endl;
+            //OE_DEBUG << "New Texture: " << imageURI.full() << ", embedded=" << imageEmbedded << std::endl;
 
             // First load the image
             osg::ref_ptr<osg::Image> img;
@@ -495,11 +495,11 @@ public:
         {
             osg::Group *group = new osg::Group;
 
-            OE_DEBUG << "Drawing " << mesh.primitives.size() << " primitives in mesh" << std::endl;
+            //OE_DEBUG << "Drawing " << mesh.primitives.size() << " primitives in mesh" << std::endl;
 
             for (size_t i = 0; i < mesh.primitives.size(); i++) {
 
-                OE_DEBUG << " Processing primitive " << i << std::endl;
+                //OE_DEBUG << " Processing primitive " << i << std::endl;
                 const tinygltf::Primitive &primitive = mesh.primitives[i];
                 if (primitive.indices < 0)
                 {
@@ -538,10 +538,10 @@ public:
                       }
                     */
 
-                    OE_DEBUG << "additionalValues=" << material.additionalValues.size() << std::endl;
+                    //OE_DEBUG << "additionalValues=" << material.additionalValues.size() << std::endl;
                     for (tinygltf::ParameterMap::const_iterator paramItr = material.additionalValues.begin(); paramItr != material.additionalValues.end(); ++paramItr)
                     {
-                        OE_DEBUG << "    " << paramItr->first << "=" << paramItr->second.string_value << std::endl;
+                        //OE_DEBUG << "    " << paramItr->first << "=" << paramItr->second.string_value << std::endl;
                     }
 
                     //OSG_NOTICE << "values=" << material.values.size() << std::endl;
@@ -554,7 +554,7 @@ public:
                         }
                         else
                         {
-                            OE_DEBUG << "    " << paramItr->first << "=" << paramItr->second.string_value << std::endl;
+                            //OE_DEBUG << "    " << paramItr->first << "=" << paramItr->second.string_value << std::endl;
                         }
 
                     }
@@ -586,7 +586,7 @@ public:
                                 TextureCache* texCache = reader->_texCache;
                                 if (!imageEmbedded && texCache)
                                 {
-                                    ScopedMutexLock lock(*texCache);
+                                    std::lock_guard<std::mutex> lock(texCache->mutex());
                                     auto texItr = texCache->find(imageURI.full());
                                     if (texItr != texCache->end())
                                     {
@@ -604,7 +604,7 @@ public:
                                 {
                                     if (!imageEmbedded && texCache && !cachedTex)
                                     {
-                                        ScopedMutexLock lock(*texCache);
+                                        std::lock_guard<std::mutex> lock(texCache->mutex());
                                         auto insResult = texCache->insert(TextureCache::value_type(imageURI.full(), tex));
                                         if (insResult.second)
                                         {
@@ -612,7 +612,8 @@ public:
                                             tex = insResult.first->second;
                                         }
                                     }
-                                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex.get());
+                                    //geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex.get());
+                                    geom->getOrCreateStateSet()->setTextureAttribute(0, tex.get());
                                 }
 
                                 if (material.alphaMode != "OPAQUE")
@@ -662,12 +663,12 @@ public:
                     else if (it->first.compare("COLOR_0") == 0)
                     {
                         // TODO:  Multipy by the baseColorFactor here?
-                        OE_DEBUG << "Setting color array " << arrays[it->second].get() << std::endl;
+                        //OE_DEBUG << "Setting color array " << arrays[it->second].get() << std::endl;
                         geom->setColorArray(arrays[it->second].get());
                     }
                     else
                     {
-                        OE_DEBUG << "Skipping array " << it->first << std::endl;
+                        //OE_DEBUG << "Skipping array " << it->first << std::endl;
                     }
                 }
 

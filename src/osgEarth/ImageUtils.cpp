@@ -22,6 +22,7 @@
 #include <osgEarth/Capabilities>
 #include <osgEarth/Metrics>
 #include <osgEarth/ImageLayer>
+#include <osgEarth/Math>
 #include <osg/GLU>
 #include <osgDB/Registry>
 
@@ -748,7 +749,7 @@ ImageUtils::compressImageInPlace(
     OE_PROFILING_ZONE;
 
     // prevent 2 threads from compressing the same object at the same time
-    static Threading::Gate<void*> gate("ImageUtils::compressImageInPlace");
+    static Threading::Gate<void*> gate;
     Threading::ScopedGate<void*> lock(gate, input);
 
     if (!input)
@@ -1109,7 +1110,7 @@ ImageUtils::createSharpenedImage( const osg::Image* input )
 
 namespace
 {
-    static Threading::Mutex         s_emptyImageMutex(OE_MUTEX_NAME);
+    static std::mutex s_emptyImageMutex;
     static osg::ref_ptr<osg::Image> s_emptyImage;
 }
 
@@ -1118,7 +1119,7 @@ ImageUtils::createEmptyImage()
 {
     if (!s_emptyImage.valid())
     {
-        Threading::ScopedMutexLock exclusive( s_emptyImageMutex );
+        std::lock_guard<std::mutex> exclusive( s_emptyImageMutex );
         if (!s_emptyImage.valid())
         {
             s_emptyImage = createEmptyImage( 1, 1 );
@@ -2360,9 +2361,9 @@ namespace {
     float fractf(float x) {
         return x >= 0.0 ? (x - floorf(x)) : (x - ceilf(x));
     }
-    float clamp(double x, double a, double b) {
-        return x<a ? a : x>b ? b : x;
-    }
+    //float clamp(double x, double a, double b) {
+    //    return x<a ? a : x>b ? b : x;
+    //}
     float clampf(float x, float a, float b) {
         return x<a ? a : x>b ? b : x;
     }
@@ -2630,8 +2631,8 @@ ImageUtils::PixelReader::operator()(osg::Vec4f& out, double u, double v, int r, 
         }
         else
         {
-            u = clamp(u, 0.0f, 1.0f);
-            v = clamp(v, 0.0f, 1.0f);
+            u = clamp(u, 0.0, 1.0);
+            v = clamp(v, 0.0, 1.0);
         }
 
         // u, v => [0..1]

@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include "Loader"
+#include "TileNode"
 
 #include <osgEarth/Utils>
 #include <osgEarth/NodeUtils>
@@ -39,9 +40,9 @@ Merger::Merger() :
 {
     setCullingActive(false);
     setNumChildrenRequiringUpdateTraversal(+1);
-    _mutex.setName(OE_MUTEX_NAME);
 
-    _metrics = JobArena::get(ARENA_LOAD_TILE)->metrics();
+    auto pool = jobs::get_pool(ARENA_LOAD_TILE);
+    _metrics = pool->metrics();
 }
 
 Merger::~Merger()
@@ -58,18 +59,20 @@ Merger::setMergesPerFrame(unsigned value)
 void
 Merger::clear()
 {
-    ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
     // Decrement the numJobsRunning stat b/c these jobs in the queues will never actually run.
     if (_metrics)
     {
         for (unsigned int i = 0; i < _mergeQueue.size(); ++i)
         {
-            _metrics->numJobsRunning--;
+            //_metrics->running--;
+            _metrics->postprocessing--;
         }
         for (unsigned int i = 0; i < _compileQueue.size(); ++i)
         {
-            _metrics->numJobsRunning--;
+            //_metrics->running--;
+            _metrics->postprocessing--;
         }
     }
 
@@ -89,21 +92,24 @@ Merger::merge(LoadTileDataOperationPtr data, osg::NodeVisitor& nv)
         osg::ref_ptr<osgUtil::StateToCompile> state = glcompiler.collectState(nullptr);
         OE_SOFT_ASSERT_AND_RETURN(state.valid(), void());
 
-        // populate it with the tile model contents:
+        // populate it with the tile model contents.
+        // passing in the tilenode observer_ptr as a cancelation token - the ICO will skip
+        // the compilation if the corresponding tilenode goes nullptr.
         bool bindless = GLUtils::useNVGL();
-        data->_result.join()->getStateToCompile(*state.get(), bindless);
+        data->_result.join()->getStateToCompile(*state.get(), bindless, data->_tilenode.get());
 
-        ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
 
         if (!state->empty())
         {
-            static osg::ref_ptr<osg::Node> dummyNode = new osg::Node();
+            // make a fake node for the GL compiler to track - we are passing in the state directly
+            osg::ref_ptr<osg::Node> dummy = new osg::Node();
+            if (data->_tilenode.valid())
+                dummy->setName(data->_tilenode->getName());
 
             ToCompile toCompile;
             toCompile._data = data;
-            toCompile._compiled = glcompiler.compileAsync(
-                dummyNode.get(), state.get(), &nv, nullptr);
-
+            toCompile._compiled = glcompiler.compileAsync(dummy, state.get(), &nv, nullptr);
             _compileQueue.push_back(std::move(toCompile));
         }
         else
@@ -113,13 +119,14 @@ Merger::merge(LoadTileDataOperationPtr data, osg::NodeVisitor& nv)
     }
     else
     {
-        ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
         _mergeQueue.push(data);
     }
 
     if (_metrics)
     {
-        _metrics->numJobsRunning++;
+        _metrics->postprocessing++;
+        //_metrics->running++;
     }
 }
 
@@ -132,7 +139,7 @@ Merger::traverse(osg::NodeVisitor& nv)
     }
     else if (nv.getVisitorType() == nv.UPDATE_VISITOR && _clock.update())
     {
-        ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
 
         // Check the GL compile queue
         // TODO: the ICO will orphan compilesets when a graphics context
@@ -140,7 +147,7 @@ Merger::traverse(osg::NodeVisitor& nv)
         // these compilesets so they don't sit in this queue forever.
         for(auto& next : _compileQueue)
         {
-            if (next._compiled.isAvailable())
+            if (next._compiled.available())
             {
                 // compile finished, put it on the merge queue
                 _mergeQueue.emplace(std::move(next._data));
@@ -148,19 +155,20 @@ Merger::traverse(osg::NodeVisitor& nv)
                 // note: no change the metrics since we are just moving from
                 // one queue to another
             }
-            else if (next._compiled.isAbandoned())
+            else if (next._compiled.empty())
             {
                 // compile canceled, ditch it
                 if (_metrics)
                 {
-                    _metrics->numJobsRunning--;
-                    _metrics->numJobsCanceled++;
+                    //_metrics->running--;
+                    _metrics->postprocessing--;
+                    _metrics->canceled++;
                 }
             }
             else
             {
                 // not ready - requeue
-                _tempQueue.push_back(std::move(next));
+                _tempQueue.emplace_back(std::move(next));
             }
         }
         _compileQueue.swap(_tempQueue);
@@ -177,9 +185,10 @@ Merger::traverse(osg::NodeVisitor& nv)
 
             if (next != nullptr)
             {
-                if (next->_result.isAvailable())
+                if (next->_result.available())
                 {
                     next->merge();
+                    ++count;
                 }
                 else
                 {
@@ -187,12 +196,12 @@ Merger::traverse(osg::NodeVisitor& nv)
                 }
             }
 
-            ++count;
-
             _mergeQueue.pop();
+
             if (_metrics)
             {
-                _metrics->numJobsRunning--;
+                //_metrics->running--;
+                _metrics->postprocessing--;
             }
         }
 

@@ -16,18 +16,19 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#include <osgEarth/GLSLChunker>
-#include <osgEarth/StringUtils>
+#include "GLSLChunker"
+#include "StringUtils"
 #include <osgEarth/Notify>
 
 using namespace osgEarth;
 using namespace osgEarth::Util;
 
+#define LC "[GLSLChunker] "
 
 void
 GLSLChunker::dump(const std::string& msg, const Chunks& chunks) const
 {
-    OE_INFO << msg << "\n";
+    OE_DEBUG << LC << msg << std::endl;
     for (Chunks::const_iterator i = chunks.begin(); i != chunks.end(); ++i)
     {
         std::string type = 
@@ -37,7 +38,7 @@ GLSLChunker::dump(const std::string& msg, const Chunks& chunks) const
             i->type == Chunk::TYPE_FUNCTION ? "FUNCTION" :
             "????????";
 
-        OE_INFO << "   " << type << ": " << i->text << std::endl;
+        OE_DEBUG << "   " << type << ": " << i->text << std::endl;
     }
 }
 
@@ -204,14 +205,52 @@ GLSLChunker::read(const std::string& input, Chunks& output) const
     }
 }
 
+namespace
+{
+    std::string indent(const std::string& input)
+    {
+        std::ostringstream out;
+        std::vector<std::string> lines;
+        StringTokenizer(input, lines, "\n", "", true);
+        std::string prefix;
+        for (auto& line : lines)
+        {
+            auto temp = Strings::trim(line);
+            auto pos = temp.find_first_not_of(" \t", 0);
+            if (pos > 0 && pos != temp.npos)
+                temp = temp.substr(pos);
+
+            bool is_directive = (temp.size() > 0 && temp[0] == '#');
+
+            if (temp.find('}') != temp.npos && prefix.size() >= 4)
+                prefix.resize(prefix.size() - 4);
+
+            if (is_directive)
+                out << temp << "\n";
+            else
+                out << prefix << temp << "\n";
+            
+            if (temp.find('{') != temp.npos)
+                prefix += "    ";
+        }
+        return out.str();
+    }
+}
 
 void
-GLSLChunker::write(const Chunks& input, std::string& output) const
+GLSLChunker::write(const Chunks& input, std::string& output, bool reindent) const
 {
     std::stringstream buf;
     for(int i=0; i<input.size(); ++i)
     {
-        buf << input[i].text << "\n";
+        if (reindent && input[i].type != Chunk::TYPE_COMMENT && input[i].type != Chunk::TYPE_DIRECTIVE)
+        {
+            buf << indent(input[i].text);
+        }
+        else
+        {
+            buf << input[i].text << "\n";
+        }
     }
     output = buf.str();
 }

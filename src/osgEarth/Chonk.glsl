@@ -119,13 +119,7 @@ void oe_chonk_default_vertex_model(inout vec4 vertex)
 #pragma import_defines(OE_GPUCULL_DEBUG)
 #pragma import_defines(OE_CHONK_SINGLE_SIDED)
 
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
 
 // inputs
 in vec3 vp_Normal;
@@ -169,6 +163,8 @@ mat3 make_tbn(vec3 N, vec3 p, vec2 uv)
 
 void oe_chonk_default_fragment(inout vec4 color)
 {
+    const float alpha_discard_threshold = 0.5;
+
     // When simulating normals, we invert the texture coordinates
     // for backfacing geometry
     if (!gl_FrontFacing && oe_normal_technique != NT_DEFAULT)
@@ -181,26 +177,32 @@ void oe_chonk_default_fragment(inout vec4 color)
     {
         color *= texture(sampler2D(oe_albedo_tex), oe_tex_uv);
     }
+    else
+    {
+        //color = vec4(1, 0, 0, 1); // testing
+        // no texture ... use the vertex color
+    }
 
 #if defined(OE_IS_SHADOW_CAMERA) || defined(OE_IS_DEPTH_CAMERA)
 
-    // force alpha to 0 or 1 and threshold it.
-    color.a = step(oe_alpha_cutoff, color.a * oe_fade);
-    if (color.a < oe_alpha_cutoff)
+    // for shadowing cameras, just do a simple step discard.
+    color.a = step(alpha_discard_threshold, color.a * oe_fade);
+    if (color.a < 1.0)
         discard;
 
 #else // !OE_IS_SHADOW_CAMERA && !OE_IS_DEPTH_CAMERA
 
+
 #if OE_GPUCULL_DEBUG
 
     // apply the high fade from the instancer
-    if (oe_fade <= 1.0) color.a *= oe_fade;
-    else if (oe_fade <= 2.0) color.rgb = vec3(1, 0, 0);
-    else if (oe_fade <= 3.0) color.rgb = vec3(1, 1, 0);
-    else if (oe_fade <= 4.0) color.rgb = vec3(0, 1, 0);
+    if (oe_fade <= 1.0) color.a *= oe_fade; // color.rgb = vec3(oe_fade, oe_fade, oe_fade); // color.a *= oe_fade;
+    else if (oe_fade <= 2.0) color.rgb = vec3(1, 0, 0); // REASON_FRUSTUM
+    else if (oe_fade <= 3.0) color.rgb = vec3(1, 1, 0); // REASON_SSE
+    else if (oe_fade <= 4.0) color.rgb = vec3(0, 1, 0); // REASON_NEARCLIP
     else color.rgb = vec3(1, 0, 1); // should never happen :)
 
-#elif defined(OE_USE_ALPHA_TO_COVERAGE)
+#else // normal rendering path:
 
     // Adjust the alpha based on the calculated mipmap level.
     // Looks better and actually helps performance a bit as well.
@@ -208,26 +210,28 @@ void oe_chonk_default_fragment(inout vec4 color)
     // https://tinyurl.com/fhu4zdxz
     if (oe_albedo_tex > 0UL)
     {
-        ivec2 tsize = textureSize(sampler2D(oe_albedo_tex), 0);
-        vec2 cf = vec2(float(tsize.x)*oe_tex_uv.s, float(tsize.y)*oe_tex_uv.t);
-        vec2 dx_vtc = dFdx(cf);
-        vec2 dy_vtc = dFdy(cf);
-        float delta_max_sqr = max(dot(dx_vtc, dx_vtc), dot(dy_vtc, dy_vtc));
-        float miplevel = max(0, 0.5 * log2(delta_max_sqr));
-
-        color.a *= (1.0 + miplevel * oe_alpha_cutoff);
+        vec2 miplevel = textureQueryLod(sampler2D(oe_albedo_tex), oe_tex_uv);
+        color.a *= (1.0 + miplevel.x * oe_alpha_cutoff);
     }
-
     color.a *= oe_fade;
 
-#else // if !OE_USE_ALPHA_TO_COVERAGE
+  #ifndef OE_USE_ALPHA_TO_COVERAGE
 
-    // force alpha to 0 or 1 and threshold it.
-    color.a = step(oe_alpha_cutoff, color.a * oe_fade);
-    if (color.a < oe_alpha_cutoff)
+    // When A2C is not available, we force the alpha to 0 or 1 and then
+    // discard the invisible fragments.    
+    // This is necessary because the GPU culler generates the draw commands in an
+    // arbitrary order and not depth sorted. Even if we did depth-sort the results,
+    // there are plenty of overlapping geometries in vegetation that would cause
+    // flickering artifacts.
+    // (TODO: consider a cheap alpha-only pass that we can sample to prevent overdraw
+    // and discard in the expensive shader)
+    color.a = step(alpha_discard_threshold, color.a);
+    if (color.a < 1.0)
         discard;
 
-#endif
+  #endif // !OE_USE_ALPHA_TO_COVERAGE
+
+#endif // !OE_GPUCULL_DEBUG
 
     vec3 normal_view = vp_Normal;
 
@@ -286,9 +290,11 @@ void oe_chonk_default_fragment(inout vec4 color)
     {
         // apply PBR maps:
         vec4 texel = texture(sampler2D(oe_pbr_tex), oe_tex_uv);
-        oe_pbr.metal = clamp(oe_pbr.metal + texel[0], 0, 1);
-        oe_pbr.roughness *= (1.0 - texel[1]);
+
+        oe_pbr.displacement = texel[0];
+        oe_pbr.roughness *= texel[1];
         oe_pbr.ao *= texel[2];
+        oe_pbr.metal = clamp(oe_pbr.metal + texel[3], 0, 1);
     }
 
 #endif // !OE_IS_SHADOW_CAMERA

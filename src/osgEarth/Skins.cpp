@@ -119,7 +119,7 @@ SkinResource::getUniqueID() const
 osg::Texture*
 SkinResource::createTexture(const osgDB::Options* readOptions) const
 {
-    OE_DEBUG << LC << "Creating skin texture for " << imageURI()->full() << std::endl;
+    //OE_DEBUG << LC << "Creating skin texture for " << imageURI()->full() << std::endl;
     osg::ref_ptr<osg::Image> image = createImage(readOptions);
     return createTexture(image.get());
 }
@@ -234,7 +234,7 @@ SkinResource::createImage( const osgDB::Options* dbOptions ) const
 
     if (result.failed())
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
         if (_status.isOK())
             _status = Status::Error(Status::ServiceUnavailable, "Failed to load resource image\n");
     }

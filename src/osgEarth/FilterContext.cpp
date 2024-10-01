@@ -23,28 +23,21 @@
 
 using namespace osgEarth;
 
-FilterContext::FilterContext() :
-_session(0L),
-_profile(0L),
-_isGeocentric(false),
-_index(0L),
-_shaderPolicy(osgEarth::SHADERPOLICY_GENERATE)
-{
-    //nop
-}
+FilterContext::FilterContext(Session* session,
+    const FeatureProfile* profile,
+    const GeoExtent& workingExtent,
+    FeatureIndexBuilder* index) :
 
-FilterContext::FilterContext(Session*               session,
-                             const FeatureProfile*  profile,
-                             const GeoExtent&       workingExtent,
-                             FeatureIndexBuilder*   index ) :
-_session     ( session ),
-_profile     ( profile ),
-_extent      ( workingExtent, workingExtent ),
-_isGeocentric( false ),
-_index       ( index ),
-_shaderPolicy( osgEarth::SHADERPOLICY_GENERATE )
+    _session(session),
+    _profile(profile),
+    _extent(workingExtent),
+    _isGeocentric(false),
+    _index(index),
+    _shaderPolicy(osgEarth::SHADERPOLICY_GENERATE)
 {
-    if ( session )
+    _extent = workingExtent;
+
+    if (session)
     {
         if ( session->getResourceCache() )
         {
@@ -79,25 +72,16 @@ _shaderPolicy( osgEarth::SHADERPOLICY_GENERATE )
     }
 }
 
-FilterContext::FilterContext( const FilterContext& rhs ) :
-_profile              ( rhs._profile.get() ),
-_session              ( rhs._session.get() ),
-_isGeocentric         ( rhs._isGeocentric ),
-_extent               ( rhs._extent ),
-_referenceFrame       ( rhs._referenceFrame ),
-_inverseReferenceFrame( rhs._inverseReferenceFrame ),
-_resourceCache        ( rhs._resourceCache.get() ),
-_index                ( rhs._index ),
-_shaderPolicy         ( rhs._shaderPolicy ),
-_history              ( rhs._history ),
-_outputSRS            ( rhs._outputSRS.get() )
+FilterContext::FilterContext(const FeatureProfile* profile, const Query& query)
 {
-    //nop
-}
+    _profile = profile;
 
-FilterContext::~FilterContext()
-{
-    //nop
+    if (query.tileKey().isSet())
+        extent() = query.tileKey()->getExtent();
+    else if (query.bounds().isSet() && profile)
+        extent() = GeoExtent(profile->getSRS(), query.bounds().get());
+    else if (profile)
+        extent() = profile->getExtent();
 }
 
 void

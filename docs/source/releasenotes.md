@@ -1,5 +1,27 @@
 # Release Notes
 
+## Version 3.6.1 (July 2024)
+
+Bug fix release:
+
+* Support Blend2D 0.11.4
+* Revert a TileMesher update that broke TerrainConstraints in come cases
+* Fix a bug in Profile affecting antimeridian cursors
+
+## Version 3.6 (June 2024)
+
+Release Highlights:
+
+* C++14 is now the minimum requirement to build osgEarth
+* New CMake system embracing modern CMake practices
+* BuildConfig header now makes build-time options available to the developer
+* Replaced the job pool system (with weejobs)
+* The legacy osgEarth::Util::Controls library is now cmake-optional and off by default
+* Updates to the ImGui panels
+* New meshoptimizer plugin
+* Lots of bug fixes and performance improvements
+* Workaround for Mesa 23.1.4 driver bug(s)
+
 ## Version 3.5 (October 2023)
 
 Release Highlights:

@@ -19,19 +19,19 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifndef OSGEARTH_PROCEDURAL_SPLATTING_LAYER_H
-#define OSGEARTH_PROCEDURAL_SPLATTING_LAYER_H
+#pragma once
 
 #include <osgEarthProcedural/Export>
 #include <osgEarthProcedural/BiomeLayer>
 #include <osgEarthProcedural/LifeMapLayer>
 #include <osgEarth/GLUtils>
-#include <osgEarth/ImageLayer>
 #include <osgEarth/LayerReference>
 #include <osgEarth/TextureArena>
 
 namespace osgEarth { namespace Procedural
 {
+    using namespace osgEarth;
+
     //! Layer that renders geotypical textures on the terrain based on
     //! Biome classification data ("texture splatting").
     class OSGEARTHPROCEDURAL_EXPORT TextureSplattingLayer : public VisibleLayer
@@ -40,22 +40,20 @@ namespace osgEarth { namespace Procedural
         class OSGEARTHPROCEDURAL_EXPORT Options : public VisibleLayer::Options
         {
         public:
-            META_LayerOptions(osgEarth, Options, VisibleLayer::Options);
-            OE_OPTION_LAYER(BiomeLayer, biomeLayer);
-            OE_OPTION_LAYER(LifeMapLayer, lifeMapLayer);
-            OE_OPTION(int, numLevels);
-            OE_OPTION(bool, useHexTiler);
-            OE_OPTION(float, normalMapPower);
-            OE_OPTION(float, lifeMapMaskThreshold);
-            OE_OPTION(float, displacementDepth);
-            OE_OPTION(unsigned, maxTextureSize);
-            virtual Config getConfig() const;
+            META_LayerOptions(osgEarthProcedural, Options, VisibleLayer::Options);
+            OE_OPTION(int, numLevels, 1);
+            OE_OPTION(bool, useHexTiler, true);
+            OE_OPTION(float, normalMapPower, 1.0f);
+            OE_OPTION(float, lifeMapMaskThreshold, 0.0f);
+            OE_OPTION(float, displacementDepth, 0.1f);
+            OE_OPTION(unsigned, maxTextureSize, 63356);
+            Config getConfig() const override;
         private:
             void fromConfig(const Config& conf);
         };
 
     public:
-        META_Layer(osgEarthProcedural, TextureSplattingLayer, Options, VisibleLayer, SplatImage);
+        META_Layer(osgEarthProcedural, TextureSplattingLayer, Options, VisibleLayer, ProceduralImage);
 
         BiomeLayer* getBiomeLayer() const;
 
@@ -102,9 +100,7 @@ namespace osgEarth { namespace Procedural
         void resizeGLObjectBuffers(unsigned maxSize) override;
         void releaseGLObjects(osg::State* state) const override;
 
-    protected:
-        virtual ~TextureSplattingLayer() { }
-        
+    protected:        
         struct Materials
         {
             using Ptr = std::shared_ptr<Materials>;
@@ -117,13 +113,12 @@ namespace osgEarth { namespace Procedural
         Future<Materials::Ptr> _materialsJob;
         Materials::Ptr _materials;
         TextureImageUnitReservation _noiseUnit;
+        osg::ref_ptr<BiomeLayer> _biomeLayer;
+        osg::ref_ptr<LifeMapLayer> _lifeMapLayer;
 
         void buildStateSets();
 
-        Materials::Ptr loadMaterials(
-            const AssetCatalog&,
-            Cancelable*) const;
+        Materials::Ptr loadMaterials(const AssetCatalog&, Cancelable*) const;
     };
 } } // namespace osgEarth::Procedural
 
-#endif // OSGEARTH_PROCEDURAL_SPLATTING_LAYER_H

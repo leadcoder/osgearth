@@ -35,11 +35,14 @@ namespace osgEarth
             class OSGEARTHCESIUM_EXPORT Options : public VisibleLayer::Options {
             public:
                 META_LayerOptions(osgEarthCesium, Options, VisibleLayer::Options);
+                OE_OPTION(URI, server);
                 OE_OPTION(URI, url);
                 OE_OPTION(unsigned int, assetId);
                 OE_OPTION(std::string, token);
                 OE_OPTION(int, rasterOverlay);
                 OE_OPTION(float, maximumScreenSpaceError);
+                OE_OPTION(bool, forbidHoles);
+
                 virtual Config getConfig() const;
             private:
                 void fromConfig(const Config& conf);
@@ -67,6 +70,10 @@ namespace osgEarth
             //! The maximum screen space error for this layer
             float getMaximumScreenSpaceError() const;
             void setMaximumScreenSpaceError(float maximumScreenSpaceError);
+
+            //! Whether to forbid holes
+            bool getForbidHoles() const;
+            void setForbidHoles(bool forbidHoles);
 
         public: // Layer
 

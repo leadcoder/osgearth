@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_GEODATA_H
-#define OSGEARTH_GEODATA_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/GeoCommon>
@@ -30,16 +29,19 @@
 #include <osg/Referenced>
 #include <osg/Image>
 #include <osg/Shape>
-#include <osg/Polytope>
 
 #include <unordered_map>
+
+namespace osg
+{
+    class Camera;
+    class Polytope;
+}
 
 namespace osgEarth
 {
     class TerrainResolver;
     class GeoExtent;
-
-    using namespace Threading;
 
     /**
      * A georeferenced 3D point.
@@ -194,7 +196,7 @@ namespace osgEarth
         bool transformZ(const AltitudeMode& altMode, const TerrainResolver* t, double& out_z) const;
 
         //! Transforms a resolution distance to a cartesian value.
-        Distance transformResolution(const Distance& d, const Units& outUnits) const;
+        Distance transformResolution(const Distance& d, const UnitsType& outUnits) const;
 
         /**
          * Transforms this geopoint's Z to be absolute w.r.t. the vertical datum
@@ -273,8 +275,11 @@ namespace osgEarth
          */
         GeoPoint interpolate(const GeoPoint& rhs, double t) const;
 
+        //! Convert this point to screen coordinates.
+        osg::Vec2d toScreen(const osg::Camera* camera) const;
+
         //! Convenience function to return xy units
-        const Units& getXYUnits() const;
+        const UnitsType& getXYUnits() const;
 
         bool operator == (const GeoPoint& rhs) const;
         bool operator != (const GeoPoint& rhs) const { return !operator==(rhs); }
@@ -396,10 +401,10 @@ namespace osgEarth
         const SpatialReference* getSRS() const { return _srs.get(); }
 
         //! Coordinates of the bounding edges, normalized for the lat/long frame if necessary
-        inline double west() const { return _west; }
-        inline double east() const { return normalizeX(_west + _width); }
-        inline double south() const { return _south; }
-        inline double north() const { return _south + _height; }
+        inline double west() const;
+        inline double east() const;
+        inline double south() const;
+        inline double north() const;
 
         //! Coordinates of the bounds, NOT normalized to the lat/long frame.
         inline double xMin() const { return _west; }
@@ -411,13 +416,13 @@ namespace osgEarth
         inline double width() const { return _width; }
 
         //! East-to-est span in specified units
-        double width(const Units& units) const;
+        double width(const UnitsType& units) const;
 
         //! North-to-south span of the extent
         inline double height() const { return _height; }
 
         //! North-to-south span in specified units
-        double height(const Units& units) const;
+        double height(const UnitsType& units) const;
 
         //! Gets the centroid of the bounds
         GeoPoint getCentroid() const;
@@ -473,7 +478,10 @@ namespace osgEarth
          */
         bool contains(double x, double y, const SpatialReference* srs = 0L) const;
 
-        bool contains(const osg::Vec3d& xy, const SpatialReference* srs = 0L) const { return contains(xy.x(), xy.y(), srs); }
+        template<typename VEC>
+        bool contains(const VEC& a, const SpatialReference* srs = nullptr) const { 
+            return contains(a.x(), a.y(), srs);
+        }
 
         /**
          * Returns true if the point falls within this extent.
@@ -583,8 +591,13 @@ namespace osgEarth
          * extents. Otherwise returns false.
          */
         bool isWholeEarth() const;
+
     public:
         static GeoExtent INVALID;
+
+    public: // config
+        Config getConfig() const;
+        void fromConfig(const Config& conf);
 
     private:
         double _west, _width, _south, _height;
@@ -598,6 +611,18 @@ namespace osgEarth
 
         void setOriginAndSize(double west, double south, double width, double height);
     };
+
+    inline double GeoExtent::west() const { return _west; }
+
+    // if east is exactly on the antimeridian, return 180.0
+    inline double GeoExtent::east() const {
+        double a = normalizeX(_west + _width);
+        return (isValid() && _srs->isGeographic() && a == -180.0) ? 180.0 : a;
+    }
+
+    inline double GeoExtent::south() const { return _south; }
+
+    inline double GeoExtent::north() const { return _south + _height; }
 
 
     /**
@@ -655,7 +680,7 @@ namespace osgEarth
         GeoImage(const osg::Image* image, const GeoExtent& extent);
 
         //! Constructs a new goereferenced image from a future.
-        GeoImage(Future<osg::ref_ptr<osg::Image>> image, const GeoExtent& extent);
+        GeoImage(jobs::future<osg::ref_ptr<osg::Image>> image, const GeoExtent& extent);
 
         /** dtor */
         virtual ~GeoImage() { }
@@ -775,7 +800,7 @@ namespace osgEarth
         GeoExtent _extent;
         Status _status;
         osg::ref_ptr<const osg::Image> _myimage;
-        mutable optional<Future<osg::ref_ptr<osg::Image>>> _future;
+        mutable optional<jobs::future<osg::ref_ptr<osg::Image>>> _future;
         osg::ref_ptr<osg::Object> _token;
         ImageUtils::PixelReader _read;
     };
@@ -957,5 +982,3 @@ namespace osgEarth
 
     typedef std::vector<GeoNode> GeoNodeVector;
 }
-
-#endif // OSGEARTH_GEODATA_H

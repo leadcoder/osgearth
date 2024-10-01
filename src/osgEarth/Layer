@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_LAYER_H
-#define OSGEARTH_LAYER_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/Config>
@@ -186,17 +185,17 @@ namespace osgEarth
         public:
             META_LayerOptions(osgEarth, Options, ConfigOptions);
             OE_OPTION(std::string, name);
-            OE_OPTION(bool, openAutomatically);
+            OE_OPTION(bool, openAutomatically, true);
+            OE_OPTION(bool, terrainPatch, false);
             OE_OPTION(std::string, cacheId);
             OE_OPTION(CachePolicy, cachePolicy);
             OE_OPTION(std::string, shaderDefine);
-            OE_OPTION(bool, terrainPatch);
             OE_OPTION(std::string, attribution);
             OE_OPTION(ShaderOptions, shader);
             OE_OPTION_VECTOR(ShaderOptions, shaders);
             OE_OPTION(ProxySettings, proxySettings);
             OE_OPTION(std::string, osgOptionString);
-            OE_OPTION(unsigned int, l2CacheSize);
+            OE_OPTION(unsigned, l2CacheSize, 0u);
             virtual Config getConfig() const;
         private:
             void fromConfig(const Config& conf);
@@ -393,7 +392,15 @@ namespace osgEarth
     public: // Public internal methods
 
         //! Creates a layer from serialized data - internal use
-        static Layer* create(const ConfigOptions& options);
+        static osg::ref_ptr<Layer> create(const ConfigOptions& options);
+
+        //! Creates a layer from serialized data and attempt to cast it
+        //! to a specific type
+        template<class T>
+        static osg::ref_ptr<T> create_as(const ConfigOptions& options) {
+            auto layer = create(options);
+            return osg::ref_ptr<T>(dynamic_cast<T*>(layer.get()));
+        }
 
         //! Extracts config options from a DB options - internal use
         static const ConfigOptions& getConfigOptions(const osgDB::Options*);
@@ -474,14 +481,12 @@ namespace osgEarth
         osg::ref_ptr<SceneGraphCallbacks> _sceneGraphCallbacks;
         osg::ref_ptr<TraversalCallback> _traversalCallback;
         Hints _hints;
-        std::atomic_int _revision;
+        std::atomic_int _revision = { 1 };
         std::string _runtimeCacheId;
         osg::ref_ptr<osgDB::Options> _readOptions;
         osg::ref_ptr<CacheSettings> _cacheSettings;
         std::vector<osg::ref_ptr<LayerShader> > _shaders;
-        mutable Threading::ReadWriteMutex* _mutex;
-        bool _isClosing;
-        bool _isOpening;
+        mutable Threading::ReadWriteMutex _inuse_mutex;
 
         //! Prepares the layer for rendering if necessary.
         void invoke_prepareForRendering(TerrainEngine*);
@@ -511,13 +516,10 @@ namespace osgEarth
         //! subclass access to a mutex that serializes the 
         //! Layer open and close methods with respect to any asynchronous
         //! functions that require the layer to remain open
-        Threading::ReadWriteMutex& layerMutex() const { return *_mutex; }
+        Threading::ReadWriteMutex& inUseMutex() const { return _inuse_mutex; }
 
-        //! are we in the middle of a close() call?
-        bool isClosing() const { return _isClosing; }
-
-        //! are we in the middle of a open() call?
-        bool isOpening() const { return _isOpening; }
+        //! Layers that this layer wants to add to the map
+        std::vector<osg::ref_ptr<Layer>> _sublayers;
 
     public:
 
@@ -544,25 +546,25 @@ namespace osgEarth
         friend class MapNode;
     };
 
-    typedef std::vector< osg::ref_ptr<Layer> > LayerVector;
+    using LayerVector = std::vector<osg::ref_ptr<Layer>>;
 
 
     template<typename T, typename V>
     void Layer::setOptionThatRequiresReopen(T& target, const V& value) {
         if (target != value) {
             bool wasOpen = isOpen();
-            if (wasOpen && !isOpening() && !isClosing()) close();
+            if (wasOpen) close();
             target = value;
-            if (wasOpen && !isOpening() && !isClosing()) open();
+            if (wasOpen) open();
         }
     }
     template<typename T>
     void Layer::resetOptionThatRequiresReopen(T& target) {
         if (target.isSet()) {
             bool wasOpen = isOpen();
-            if (wasOpen && !isOpening() && !isClosing()) close();
+            if (wasOpen) close();
             target.unset();
-            if (wasOpen && !isOpening() && !isClosing()) open();
+            if (wasOpen) open();
         }
     }
     template<typename T>
@@ -572,13 +574,11 @@ namespace osgEarth
 
 
 #define REGISTER_OSGEARTH_LAYER(NAME,CLASS) \
-    extern "C" void osgdb_##NAME(void) {} \
-    static osgEarth::RegisterPluginLoader< osgEarth::PluginLoader<CLASS, osgEarth::Layer> > g_proxy_##CLASS_##NAME( #NAME );
+    extern "C" void osgdb_osgearth_##NAME(void) {} \
+    static osgEarth::RegisterPluginLoader< osgEarth::PluginLoader<CLASS, osgEarth::Layer> > g_proxy_##CLASS_##NAME(OE_STRINGIFY(osgearth_layer_##NAME));
 
 #define USE_OSGEARTH_LAYER(NAME) \
-    extern "C" void osgdb_##NAME(void); \
-    static osgDB::PluginFunctionProxy proxy_osgearth_layer_##NAME(osgdb_##NAME);
+    extern "C" void osgdb_osgearth_##NAME(void); \
+    static osgDB::PluginFunctionProxy proxy_osgearth_layer_##NAME(OE_STRINGIFY(osgdb_osgearth_##NAME));
 
 } // namespace osgEarth
-
-#endif // OSGEARTH_LAYER_H

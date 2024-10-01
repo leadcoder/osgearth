@@ -16,9 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-
-#ifndef OSGEARTH_FILTERED_FEATURE_SOURCE_H
-#define OSGEARTH_FILTERED_FEATURE_SOURCE_H 1
+#pragma once
 
 #include <osgEarth/FeatureSource>
 #include <osgEarth/LayerReference>
@@ -40,6 +38,7 @@ namespace osgEarth
         public:
             META_LayerOptions(osgEarth, Options, FeatureSource::Options);
             OE_OPTION_LAYER(FeatureSource, featureSource);
+            OE_OPTION_VECTOR(ConfigOptions, filters);
             virtual Config getConfig() const;
         private:
             void fromConfig(const Config& conf);
@@ -52,19 +51,19 @@ namespace osgEarth
         void setFeatureSource(FeatureSource* layer);
         FeatureSource* getFeatureSource() const;
 
-        virtual Status openImplementation();
+        Status openImplementation() override;
 
-        virtual void addedToMap(const Map*);
+        void addedToMap(const Map*) override;
 
-        virtual void removedFromMap(const Map*);
+        void removedFromMap(const Map*) override;
 
     protected:   
-        virtual FeatureCursor* createFeatureCursorImplementation(
+        FeatureCursor* createFeatureCursorImplementation(
             const Query& query,
-            ProgressCallback* progress);        
+            ProgressCallback* progress) const override;
+
+        FeatureFilterChain _filters;
     }; 
 }
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::FilteredFeatureSource::Options);
-
-#endif // OSGEARTH_FILTERED_FEATURE_SOURCE_H

@@ -1,0 +1,200 @@
+/* -*-c++-*- */
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
+ * http://osgearth.org
+ *
+ * osgEarth is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ */
+#pragma once
+
+#include <osgEarthImGui/ImGuiEventHandler>
+#include <osgEarthImGui/ImGuiPanel>
+
+namespace osgEarth
+{
+    // Gui action to open the ImGui Demo window
+    class ImGuiDemoWindowGUI : public ImGuiPanel
+    {
+    public:
+        ImGuiDemoWindowGUI() : ImGuiPanel("ImGui Demo Window") { }
+        void draw(osg::RenderInfo& ri) override
+        {
+            ImGui::ShowDemoWindow();
+        }
+    };
+
+    // Gui action to quit the application
+    class QuitGUI : public ImGuiPanel
+    {
+    public:
+        QuitGUI() : ImGuiPanel("Quit") { }
+        void draw(osg::RenderInfo& ri) override
+        {
+            exit(0);
+        }
+    };
+
+    // Gui action to draw a menu separator
+    class SeparatorGUI : public ImGuiPanel
+    {
+    public:
+        SeparatorGUI() : ImGuiPanel("__separator") { }
+    };
+
+    /**
+     * ImGuiAppEngine is our own customized ImGuiEventHandler that manages a collection
+     * of GUI panels and houses them in a set of menus. Several osgEarth example
+     * applications and tools use this utility.
+     */
+    class ImGuiAppEngine : public ImGuiEventHandler // no export
+    {
+    private:
+        using GUIPtr = std::shared_ptr<ImGuiPanel>;
+        using GUIVector = std::vector<GUIPtr>;
+        struct OrderedMap {
+            std::vector<std::string> keys;
+            std::vector<GUIVector> guis;
+            GUIVector& operator[](const std::string& key) {
+                auto iter = std::find(keys.begin(), keys.end(), key);
+                if (iter == keys.end()) {
+                    keys.push_back(key);
+                    guis.push_back(GUIVector());
+                    return guis.back();
+                }
+                return guis[std::distance(keys.begin(), iter)];
+            }
+        };
+        OrderedMap _menu;
+
+    public:
+        //! Construct a new imgui application engine
+        ImGuiAppEngine() = default;
+
+        //! Construct a new imgui application engine
+        ImGuiAppEngine(osg::ArgumentParser& args) : ImGuiEventHandler()
+        {
+            if (args.read("--nogui") || args.read("--no-gui"))
+            {
+                _show = false;
+            }
+        }
+
+        //! Find a panel given its type
+        template<typename T>
+        T* find() {
+            return dynamic_cast<T*>(reinterpret_cast<ImGuiPanel*>(findByType(typeid(T))));
+        }
+
+        //! User adds a gui to the default User menu
+        void add(ImGuiPanel* panel, bool visible = false)
+        {
+            OE_SOFT_ASSERT_AND_RETURN(panel, void());
+            panel->setVisible(visible);
+            _menu["User"].push_back(GUIPtr(panel));
+        }
+
+        //! User adds a gui to a named menu
+        void add(const std::string& menu, ImGuiPanel* panel, bool visible = false)
+        {
+            OE_SOFT_ASSERT_AND_RETURN(panel, void());
+            panel->setVisible(visible);
+            if (menu.empty())
+                add(panel);
+            else
+                _menu[menu].push_back(GUIPtr(panel));
+        }
+
+        void addSeparator(const std::string& menu)
+        {
+            _menu[menu].push_back(GUIPtr(new SeparatorGUI()));
+        }
+
+        //! Find a GUI element by name
+        void* findByName(const char* name) override
+        {
+            for(size_t i=0; i<_menu.guis.size(); ++i)
+                for (auto& panel : _menu.guis[i])
+                    if (std::string(panel->name()).compare(name) == 0)
+                        return panel.get();
+            return nullptr;
+        }
+
+        //! Find a GUI element by type
+        void* findByType(const std::type_info& t) override
+        {
+            for(size_t i=0; i<_menu.guis.size(); ++i)
+                for(auto& panel : _menu.guis[i])
+                    if (typeid(*panel.get()) == t)
+                        return panel.get();
+            return nullptr;
+        }
+
+        //! Render everything
+        void draw(osg::RenderInfo& ri) override
+        {
+            if (ImGui::BeginMainMenuBar())
+            {
+                for(size_t i=0; i<_menu.guis.size(); ++i)
+                {
+                    if (ImGui::BeginMenu(_menu.keys[i].c_str()))
+                    {
+                        for (auto& gui : _menu.guis[i])
+                        {
+                            if (strcmp(gui->name(), "__separator") == 0)
+                                ImGui::Separator();
+                            else
+                                ImGui::MenuItem(gui->name(), nullptr, gui->visible());
+                        }
+                        ImGui::EndMenu();
+                    }
+                }
+                ImGui::EndMainMenuBar();
+            }
+
+            for(size_t i=0; i<_menu.guis.size(); ++i)
+            {
+                for (auto& gui : _menu.guis[i])
+                {
+                    if (gui->isVisible())
+                        gui->draw(ri);
+                }
+            }
+        }
+
+        void load(void* section_ptr, const std::string& key, const std::string& value) override
+        {
+            ImGuiPanel* gui = reinterpret_cast<ImGuiPanel*>(section_ptr);
+            if (gui)
+            {
+                osgEarth::Config conf(gui->name());
+                conf.set(key, value);
+                gui->load_base(conf);
+            }
+        }
+
+        void save(osgEarth::Config& conf) override
+        {
+            for(size_t i=0; i<_menu.guis.size(); ++i)
+            {
+                for(auto& gui : _menu.guis[i])
+                {
+                    Config section(gui->name());
+                    gui->save_base(section);
+                    if (!section.children().empty())
+                        conf.add(section);
+                }
+            }
+        }
+    };
+}
