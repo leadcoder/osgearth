@@ -353,13 +353,7 @@ uniform float oe_GroundCover_roughness = 0;
 uniform float oe_GroundCover_ao = 1;
 uniform float oe_GroundCover_metal = 0;
 
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
 #endif
 
 // remap x from [0..1] to [lo..hi]
@@ -397,8 +391,8 @@ void oe_GroundCover_FS(inout vec4 color)
     color.rgb = oe_GroundCover_color_scale * mix(ground_mono*bb_color.rgb, color.rgb * bb_mono, oe_GroundCover_color_mix);
     color.a *= bb_color.a;
 #ifdef OE_USE_PBR
-    oe_pbr.brightness = oe_GroundCover_brightness;
-    oe_pbr.contrast= oe_GroundCover_contrast;
+    //oe_pbr.brightness = oe_GroundCover_brightness;
+    //oe_pbr.contrast= oe_GroundCover_contrast;
     oe_pbr.roughness = oe_GroundCover_roughness;
     oe_pbr.ao = oe_GroundCover_ao;
     oe_pbr.metal = oe_GroundCover_metal;

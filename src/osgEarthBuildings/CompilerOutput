@@ -49,8 +49,8 @@ namespace osgEarth { namespace Buildings
     {
         Threading::Mutex _mutex;
 
-        TextureCache() :
-            _mutex("OE.Buildings.TextureCache") { }
+        TextureCache() //: ("OE.Buildings.TextureCache") 
+        { }
 
         osg::Texture* get(SkinResource* skin, const osgDB::Options* readOptions) {
             _mutex.lock();

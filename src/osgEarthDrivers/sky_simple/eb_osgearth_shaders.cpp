@@ -58,13 +58,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
 
 #ifdef OE_USE_PBR
 // fragment stage global PBR params
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
 
 void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout vec3 ambience, inout vec3 COLOR)
 {
@@ -209,7 +203,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
+    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_sky_contrast + 0.5);
 #endif
 
     // limit to ambient floor:
@@ -330,7 +324,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast*oe_sky_contrast + 0.5) * oe_pbr.brightness;
+    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_sky_contrast + 0.5);
 #endif
 
     // limit to ambient floor:
