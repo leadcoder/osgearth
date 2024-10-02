@@ -24,7 +24,7 @@ set(OSGEARTH_PATCH_VERSION 0)
 set(OSGEARTH_VERSION ${OSGEARTH_MAJOR_VERSION}.${OSGEARTH_MINOR_VERSION}.${OSGEARTH_PATCH_VERSION})
 
 # Increment this each time the ABI changes
-set(OSGEARTH_SOVERSION 161)
+set(OSGEARTH_SOVERSION 163)
 
 # Require C++14
 set(CMAKE_CXX_STANDARD 14)
@@ -123,7 +123,7 @@ endif()
 
 # required - globally used
 find_package(OpenGL REQUIRED)
-find_package(OpenSceneGraph REQUIRED COMPONENTS osg osgDB osgGA osgManipulator osgShadow osgSim osgText osgUtil osgViewer OpenThreads)
+find_package(OpenSceneGraph REQUIRED COMPONENTS osgManipulator osgShadow osgSim osgViewer osgGA osgUtil osgText osgDB osg OpenThreads)
 
 # integrated profiling with tracy?
 if(OSGEARTH_ENABLE_PROFILING)
