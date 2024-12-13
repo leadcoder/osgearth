@@ -33,9 +33,9 @@ using namespace osgEarth;
 #undef LC
 #define LC "[KMLReader] "
 
-KMLReader::KMLReader( MapNode* mapNode, const KMLOptions* options ) :
-_mapNode( mapNode ),
-_options( options )
+KMLReader::KMLReader(MapNode* mapNode, const KMLOptions* options) :
+    _mapNode(mapNode),
+    _options(options)
 {
     //nop
 }
@@ -75,12 +75,11 @@ KMLReader::read( xml_document<>& doc, const osgDB::Options* dbOptions )
 	root->setName( context.referrer() );
 
     KMLContext cx;
-    cx._mapNode   = _mapNode;
     cx._sheet     = new StyleSheet();
     cx._options   = _options;
     //cx._srs      = SpatialReference::create( "wgs84", "egm96" );
     // Use the geographic srs of the map so that clamping will occur against the correct vertical datum.
-    cx._srs = _mapNode->getMapSRS()->getGeographicSRS();
+    cx._srs = _mapNode ? _mapNode->getMapSRS()->getGeographicSRS() : SpatialReference::create("wgs84");
     cx._referrer = context.referrer();
     cx._groupStack.push( root );
 
@@ -115,25 +114,25 @@ KMLReader::read( xml_document<>& doc, const osgDB::Options* dbOptions )
     {
         KML_Root kmlRoot;
 
-        osg::Timer_t start = osg::Timer::instance()->tick();
+        //osg::Timer_t start = osg::Timer::instance()->tick();
         kmlRoot.scan ( top, cx );    // first pass
-        osg::Timer_t end = osg::Timer::instance()->tick();
-        OE_INFO << LC << "  Scan1 took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
+        //osg::Timer_t end = osg::Timer::instance()->tick();
+        //OE_DEBUG << LC << "  Scan1 took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
 
-        start = osg::Timer::instance()->tick();
+        //start = osg::Timer::instance()->tick();
         kmlRoot.scan2( top, cx );   // second pass
-        end = osg::Timer::instance()->tick();
-        OE_INFO << LC << "  Scan2 took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
+        //end = osg::Timer::instance()->tick();
+        //OE_DEBUG << LC << "  Scan2 took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
 
-        start = osg::Timer::instance()->tick();
+        //start = osg::Timer::instance()->tick();
         kmlRoot.build( top, cx );   // third pass.
-        end = osg::Timer::instance()->tick();
-        OE_INFO << LC << "  build took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
+        //end = osg::Timer::instance()->tick();
+        //OE_DEBUG << LC << "  build took " << osg::Timer::instance()->delta_s(start, end) << std::endl;
     }
 
     URIResultCache* cacheUsed = URIResultCache::from(cx._dbOptions.get());
     CacheStats stats = cacheUsed->getStats();
-    OE_INFO << LC << "  URI Cache: " << stats._queries << " reads, " << (stats._hitRatio*100.0) << "% hits" << std::endl;
+    OE_DEBUG << LC << "  URI Cache: " << stats._queries << " reads, " << (stats._hitRatio*100.0) << "% hits" << std::endl;
 
     // Make sure the KML gets rendered after the terrain.
     root->getOrCreateStateSet()->setRenderBinDetails(2, "RenderBin");

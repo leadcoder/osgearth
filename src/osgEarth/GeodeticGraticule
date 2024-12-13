@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTHUTIL_GEODETIC_GRATICULE_H
-#define OSGEARTHUTIL_GEODETIC_GRATICULE_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/LatLongFormatter>
@@ -42,15 +41,15 @@ namespace osgEarth { namespace Util
         class OSGEARTH_EXPORT Options : public VisibleLayer::Options {
         public:
             META_LayerOptions(osgEarth, Options, VisibleLayer::Options);
-            OE_OPTION(Color, color);
+            OE_OPTION(Color, color, Color(Color::Yellow, 0.5f));
             OE_OPTION(Style, gridLabelStyle);
             OE_OPTION(Style, edgeLabelStyle);
-            OE_OPTION(float, lineWidth);
-            OE_OPTION(int, gridLines);
-            OE_OPTION(std::string, resolutions);
-            OE_OPTION(bool, gridLinesVisible);
-            OE_OPTION(bool, gridLabelsVisible);
-            OE_OPTION(bool, edgeLabelsVisible);
+            OE_OPTION(float, lineWidth, 2.0f);
+            OE_OPTION(int, gridLines, 10);
+            OE_OPTION(std::string, resolutions, { "10 5 2.5 1.0 0.5 0.25 0.125 0.0625 0.03125" });
+            OE_OPTION(bool, gridLinesVisible, true);
+            OE_OPTION(bool, gridLabelsVisible, true);
+            OE_OPTION(bool, edgeLabelsVisible, true);
             virtual Config getConfig() const;
         private:
             void fromConfig( const Config& conf );
@@ -102,23 +101,15 @@ namespace osgEarth { namespace Util
 
     public: // Layer
 
-        virtual void addedToMap(const Map* map);
-
-        virtual void removedFromMap(const Map* map);
-
-        virtual osg::Node* getNode() const;
-
-        virtual void init();
-
-    public: // VisibleLayer
-
-        virtual void setVisible(bool value);
+        void addedToMap(const Map* map) override;
+        void removedFromMap(const Map* map) override;
+        osg::Node* getNode() const override;
+        void init() override;
 
     public: // osg::Object
 
-        virtual void resizeGLObjectBuffers(unsigned maxSize);
-
-        virtual void releaseGLObjects(osg::State* state) const;
+        void resizeGLObjectBuffers(unsigned maxSize) override;
+        void releaseGLObjects(osg::State* state) const override;
 
     protected:
 
@@ -158,7 +149,7 @@ namespace osgEarth { namespace Util
         };
         typedef std::unordered_map<osg::Camera*, CameraData> CameraDataMap;
         mutable CameraDataMap _cameraDataMap;
-        mutable Threading::Mutex _cameraDataMapMutex;
+        mutable std::mutex _cameraDataMapMutex;
 
         CameraData& getCameraData(osg::Camera*) const;
 
@@ -190,4 +181,3 @@ namespace osgEarth { namespace Util
     };
 } }
 
-#endif // OSGEARTHUTIL_GEODETIC_GRATICULE_H

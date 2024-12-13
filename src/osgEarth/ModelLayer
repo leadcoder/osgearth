@@ -16,9 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-
-#ifndef OSGEARTH_MODEL_LAYER_H
-#define OSGEARTH_MODEL_LAYER_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/VisibleLayer>
@@ -33,13 +31,6 @@ namespace osgEarth
 {
     class Map;
 
-    struct ModelLayerCallback : public VisibleLayerCallback
-    {
-        // Nothing - placeholder
-        typedef void (ModelLayerCallback::*MethodPtr)(class ModelLayer* layer);
-    };
-
-
     /**
      * Layer that contains an OSG scene graph
      */
@@ -47,7 +38,7 @@ namespace osgEarth
     {
     public: // serialization
         class OSGEARTH_EXPORT Options : public VisibleLayer::Options {
-        public:        
+        public:
             META_LayerOptions(osgEarth, Options, VisibleLayer::Options);
             OE_OPTION(URI, url);
             OE_OPTION(float, lodScale);
@@ -62,7 +53,7 @@ namespace osgEarth
             OE_OPTION(ModelSourceOptions, driver);
             virtual Config getConfig() const;
         private:
-            void fromConfig( const Config& conf );
+            void fromConfig(const Config& conf);
         };
 
     public:
@@ -105,7 +96,7 @@ namespace osgEarth
         const unsigned& getMaskMinLevel() const;
 
         //! Whether lighting should affect the model graph
-        void setLightingEnabled( bool value );
+        void setLightingEnabled(bool value);
         bool isLightingEnabled() const;
 
         //! Whether to generate shaders or use the default shaders
@@ -148,13 +139,9 @@ namespace osgEarth
         Revision                      _modelSourceRev;
         osg::ref_ptr<CacheSettings>   _cacheSettings;
         osg::ref_ptr<osg::Group>      _root;
-
-        void fireCallback(ModelLayerCallback::MethodPtr method);
     };
 
-    typedef std::vector< osg::ref_ptr<ModelLayer> > ModelLayerVector;
+    using ModelLayerVector = std::vector< osg::ref_ptr<ModelLayer> >;
 }
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::ModelLayer::Options);
-
-#endif // OSGEARTH_MODEL_LAYER_H

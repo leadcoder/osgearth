@@ -16,18 +16,19 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#include <osgEarth/Capabilities>
-#include <osgEarth/Version>
-#include <osgEarth/SpatialReference>
-#include <osgEarth/GEOS>
+#include "Capabilities"
+#include "SpatialReference"
+#include "GEOS"
 #include "Registry"
+#include "Notify"
+
 #include <osg/FragmentProgram>
 #include <osg/GL2Extensions>
 #include <osg/Version>
 #include <osgViewer/Version>
+
 #include <gdal.h>
 #include <sstream>
-#include <osgEarth/Notify>
 
 using namespace osgEarth;
 
@@ -65,7 +66,7 @@ namespace
 	        si.readDISPLAY();
 	        si.setUndefinedScreenDetailsToDefaultScreen();
 
-            osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
+            osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits(osg::DisplaySettings::instance());
     	    traits->hostName = si.hostName;
 	        traits->displayNum = si.displayNum;
 	        traits->screenNum = si.screenNum;
@@ -77,13 +78,15 @@ namespace
             traits->doubleBuffer = false;
             traits->sharedContext = 0;
             traits->pbuffer = false;
+
+            // Note: these only work when OSG_GL3_FEATURES is defined (since GL < 3 just gives you the highest version context it can)
             traits->glContextVersion = osg::DisplaySettings::instance()->getGLContextVersion();
             traits->glContextProfileMask = osg::DisplaySettings::instance()->getGLContextProfileMask();
 
             // Intel graphics adapters dont' support pbuffers, and some of their drivers crash when
             // you try to create them. So by default we will only use the unmapped/pbuffer method
             // upon special request.
-            if ( getenv( "OSGEARTH_USE_PBUFFER_TEST" ) )
+            if ( getenv( "OSGEARTH_USE_PBUFFER_TEST") )
             {
                 traits->pbuffer = true;
                 OE_INFO << LC << "Activating pbuffer test for graphics capabilities" << std::endl;
@@ -165,12 +168,6 @@ Capabilities::Capabilities() :
     _renderer("Unknown"),
     _version("3.30")
 {
-    // require OSG be built with GL3 support
-#ifndef OSG_GL3_AVAILABLE
-    OE_WARN << LC << "Warning, OpenSceneGraph does not define OSG_GL3_AVAILABLE; "
-        "the application may not function properly" << std::endl;
-#endif
-
     // little hack to force the osgViewer library to link so we can create a graphics context
     osgViewerGetVersion();
 
@@ -206,11 +203,11 @@ Capabilities::Capabilities() :
 
     if (isHeadless)
     {
-        OE_INFO << LC << "** Simulating headless mode **" << std::endl;
+        OE_INFO << LC << "Simulating headless mode" << std::endl;
     }
     else if (isAndroid)
     {
-        OE_INFO << LC << "Using defaults for Android" << std::endl;
+        OE_DEBUG << LC << "Using defaults for Android" << std::endl;
     }
     else
     {
@@ -225,38 +222,40 @@ Capabilities::Capabilities() :
 
     if (gc != nullptr)
     {
-        OE_INFO << LC << "Capabilities: " << std::endl;
-
         const osg::GL2Extensions* GL2 = osg::GL2Extensions::Get( id, true );
 
-        OE_INFO << LC << "  osgEarth Version:  " << osgEarthGetVersion() << std::endl;
-
-#ifdef OSGEARTH_EMBED_GIT_SHA
-        OE_INFO << LC << "  osgEarth HEAD SHA: " << osgEarthGitSHA1() << std::endl;
-#endif
-
-        OE_INFO << LC << "  OSG Version:       " << osgGetVersion() << std::endl;
+        OE_INFO << LC << "osgEarth Version:  " << osgEarthGetVersion() << std::endl;
 
 #ifdef GDAL_RELEASE_NAME
-        OE_INFO << LC << "  GDAL Version:      " << GDAL_RELEASE_NAME << std::endl;
+        OE_INFO << LC << "GDAL Version:      " << GDAL_RELEASE_NAME << std::endl;
 #endif
 
-#ifdef GEOS_VERSION
-        OE_INFO << LC << "  GEOS Version:      " << GEOS_VERSION << std::endl;
+        OE_INFO << LC << "OSG Version:       " << osgGetVersion() << std::endl;
+
+#if OSG_GL3_FEATURES
+        OE_INFO << LC << "OSG GL3 Features:  yes" << std::endl;
+#else
+        OE_INFO << LC << "OSG GL3 Features:  no" << std::endl;
 #endif
+#ifdef OSG_GL_FIXED_FUNCTION_AVAILABLE
+        OE_INFO << LC << "OSG FFP Available: yes" << std::endl;
+#else
+        OE_INFO << LC << "OSG FFP Available: no" << std::endl;
+#endif
+
+        OE_INFO << LC << "CPU Cores:         " << _numProcessors << std::endl;
 
         _supportsGLSL = GL2->isGlslSupported;
         _GLSLversion = GL2->glslLanguageVersion;
 
-        _vendor = std::string( reinterpret_cast<const char*>(glGetString(GL_VENDOR)) );
-        OE_INFO << LC << "  GPU Vendor:        " << _vendor << std::endl;
+        _vendor = std::string(reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
+        OE_INFO << LC << "GL_VENDOR:         " << _vendor << std::endl;
 
         _renderer = std::string( reinterpret_cast<const char*>(glGetString(GL_RENDERER)) );
-        OE_INFO << LC << "  GPU Renderer:      " << _renderer << std::endl;
+        OE_INFO << LC << "GL_RENDERER:       " << _renderer << std::endl;
 
         _version = std::string( reinterpret_cast<const char*>(glGetString(GL_VERSION)) );
-        OE_INFO << LC << "  GL/Driver Version: " << _version << 
-            " (" << getGLSLVersionInt() << ")" << std::endl;
+        OE_INFO << LC << "GL_VERSION:        " << _version << std::endl;
 
         // Detect core profile by investigating GL_CONTEXT_PROFILE_MASK
         if ( GL2->glVersion < 3.2f )
@@ -269,7 +268,7 @@ Capabilities::Capabilities() :
             glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profileMask);
             _isCoreProfile = ((profileMask & GL_CONTEXT_CORE_PROFILE_BIT) != 0);
         }
-        OE_INFO << LC << "  GL Core Profile:   " << SAYBOOL(_isCoreProfile) << std::endl;
+        OE_INFO << LC << "GL CORE Profile:   " << SAYBOOL(_isCoreProfile) << std::endl;
 
         // this extension implies the availability of
         // GL_NV_vertex_buffer_unified_memory (bindless buffers)
@@ -280,11 +279,11 @@ Capabilities::Capabilities() :
             osg::isGLExtensionSupported(id, "GL_NV_bindless_multi_draw_indirect");
 
         glGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS_ARB, &_maxGPUTextureUnits );
-        OE_DEBUG << LC << "  Max GPU texture units = " << _maxGPUTextureUnits << std::endl;
+        OE_DEBUG << LC << "Max GPU texture units = " << _maxGPUTextureUnits << std::endl;
 
         GLint mvoc;
         glGetIntegerv(GL_MAX_VERTEX_VARYING_COMPONENTS_EXT, &mvoc);
-        OE_DEBUG << LC << "  Max varyings = " << mvoc << std::endl;
+        OE_DEBUG << LC << "Max varyings = " << mvoc << std::endl;
 
         glGetIntegerv( GL_MAX_TEXTURE_SIZE, &_maxTextureSize );
 #if !defined(OSG_GLES1_AVAILABLE) && !defined(OSG_GLES2_AVAILABLE) && !defined(OSG_GLES3_AVAILABLE)
@@ -301,11 +300,11 @@ Capabilities::Capabilities() :
             }
         }
 #endif
-        OE_DEBUG << LC << "  Max texture size = " << _maxTextureSize << std::endl;
+        OE_DEBUG << LC << "Max texture size = " << _maxTextureSize << std::endl;
 
         if ( _supportsGLSL )
         {
-            OE_DEBUG << LC << "  GLSL Version = " << getGLSLVersionInt() << std::endl;
+            OE_DEBUG << LC << "GLSL Version = " << getGLSLVersionInt() << std::endl;
         }
 
         _supportsDepthPackedStencilBuffer = osg::isGLExtensionSupported( id, "GL_EXT_packed_depth_stencil" ) ||
@@ -314,7 +313,7 @@ Capabilities::Capabilities() :
         _supportsDrawInstanced =
             _supportsGLSL &&
             osg::isGLExtensionOrVersionSupported( id, "GL_EXT_draw_instanced", 3.1f );
-        OE_DEBUG << LC << "  draw instanced = " << SAYBOOL(_supportsDrawInstanced) << std::endl;
+        OE_DEBUG << LC << "draw instanced = " << SAYBOOL(_supportsDrawInstanced) << std::endl;
 
 #if !defined(OSG_GLES3_AVAILABLE)
         _supportsNonPowerOfTwoTextures =
@@ -345,7 +344,7 @@ Capabilities::Capabilities() :
 
         // tetxure compression
         std::stringstream buf;
-        buf << "  Compression = ";
+        buf << "Compression = ";
         _supportsARBTC = osg::isGLExtensionSupported( id, "GL_ARB_texture_compression" );
         if (_supportsARBTC) buf << "ARB ";
 

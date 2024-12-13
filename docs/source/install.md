@@ -1,10 +1,10 @@
 # Getting started with osgEarth
 
 ## Installation
-The easiest way to install and use osgEarth is with the `vcpkg` package manager. There are two ways to go about it.
+The easiest way to install and use osgEarth is with the `vcpkg` package manager. There are two ways to go about it. But first...
 
 ### Method 1: Do it manually
-You can install osgEarth manually using this command:
+You can install osgEarth on Windows manually using this command:
 ```
 vcpkg install osgearth:x64-windows
 ```
@@ -30,7 +30,7 @@ Next you need to bootstrap CMake to use the vcpkg toolchain, using a command lik
 cmake ^
     -S %SOURCE_DIR% ^
     -B %BUILD_DIR% ^
-    -G "Visual Studio 16 2019" ^
+    -G "Visual Studio 17 2022" ^
     -A x64 ^
     -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
     -DCMAKE_INSTALL_PREFIX=%INSTALL_DIR% ^
@@ -49,23 +49,11 @@ cmake <build_dir>
 
 ## Sample CMakeLists.txt
 ```cmake
-cmake_minimum_required(VERSION 3.7)
-
-project(
-    myApp
-    VERSION 0.1.0
-    LANGUAGES CXX C
-)
-
-find_package(OpenSceneGraph REQUIRED COMPONENTS osg osgDB osgGA osgUtil osgViewer)
-
+cmake_minimum_required(VERSION 3.20)
+project(myApp)
 find_package(osgEarth CONFIG REQUIRED)
-
 add_executable(myApp main.cpp)
-
-target_link_libraries(myApp PRIVATE osgEarth)
-target_link_libraries(myApp PRIVATE ${OPENSCENEGRAPH_LIBRARIES})
-
+target_link_libraries(myApp PRIVATE osgEarth::osgEarth)
 install(TARGETS myApp RUNTIME DESTINATION bin)
 ```
 
@@ -74,7 +62,6 @@ install(TARGETS myApp RUNTIME DESTINATION bin)
 #include <osgEarth/MapNode>
 #include <osgEarth/TMS>
 #include <osgEarth/EarthManipulator>
-
 #include <osg/ArgumentParser>
 #include <osgViewer/Viewer>
 

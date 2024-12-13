@@ -36,73 +36,52 @@ FeatureCursor::~FeatureCursor()
     //nop
 }
 
-void
+unsigned
 FeatureCursor::fill(FeatureList& list)
 {
+    unsigned count = 0;
     while( hasMore() )
     {
-        list.push_back( nextFeature() );
+        auto f = nextFeature();
+        if (f)
+        {
+            list.push_back(f);
+            ++count;
+        }
     }
+    return count;
 }
 
-void
-FeatureCursor::fill(
-    FeatureList& list,
-    std::function<bool(const Feature*)> predicate)
+unsigned
+FeatureCursor::fill(FeatureList& list, std::function<bool(const Feature*)> predicate)
 {
+    unsigned count = 0;
     while (hasMore())
     {
         osg::ref_ptr<Feature> f = nextFeature();
-        if (predicate(f.get()))
+        if (f.valid() && predicate(f.get()))
+        {
             list.push_back(f);
+            ++count;
+        }
     }
-}
-
-//---------------------------------------------------------------------------
-
-FeatureListCursor::FeatureListCursor(const FeatureList& features) :
-FeatureCursor(0L),
-_features( features ),
-_clone   ( false )
-{
-    _iter = _features.begin();
-}
-
-FeatureListCursor::~FeatureListCursor()
-{
-    //nop
-}
-
-bool
-FeatureListCursor::hasMore() const
-{
-    return _iter != _features.end();
-}
-
-Feature*
-FeatureListCursor::nextFeature()
-{
-    Feature* r = _iter->get();
-    _iter++;
-    return _clone ? osg::clone(r, osg::CopyOp::DEEP_COPY_ALL) : r;
+    return count;
 }
 
 //---------------------------------------------------------------------------
 
 GeometryFeatureCursor::GeometryFeatureCursor(Geometry* geom) :
-FeatureCursor(NULL),
-_geom( geom )
+    FeatureCursor(NULL),
+    _geom(geom)
 {
     //nop
 }
 
-GeometryFeatureCursor::GeometryFeatureCursor(Geometry* geom,
-                                             const FeatureProfile* fp,
-                                             const FeatureFilterChain* filters) :
-FeatureCursor(NULL),
-_geom          ( geom ),
-_featureProfile( fp ),
-_filterChain   ( filters )
+GeometryFeatureCursor::GeometryFeatureCursor(Geometry* geom, const FeatureProfile* fp, const FeatureFilterChain& filters) :
+    FeatureCursor(NULL),
+    _geom(geom),
+    _featureProfile(fp),
+    _filterChain(filters)
 {
     //nop
 }
@@ -121,101 +100,27 @@ GeometryFeatureCursor::hasMore() const
 Feature*
 GeometryFeatureCursor::nextFeature()
 {
-    if ( hasMore() )
-    {        
-        _lastFeature = new Feature( _geom.get(), _featureProfile.valid() ? _featureProfile->getSRS() : 0L );
+    if (hasMore())
+    {
+        _lastFeature = new Feature(_geom.get(), _featureProfile.valid() ? _featureProfile->getSRS() : nullptr);
 
-        if ( _featureProfile && _featureProfile->geoInterp().isSet() )
+        if (_featureProfile && _featureProfile->geoInterp().isSet())
             _lastFeature->geoInterp() = _featureProfile->geoInterp().get();
 
         FilterContext cx;
-        cx.setProfile( _featureProfile.get() );
+        cx.setProfile(_featureProfile.get());
 
-        FeatureList list;
-        list.push_back( _lastFeature.get() );
+        FeatureList one = { _lastFeature };
 
-        if (_filterChain.valid())
+        cx = _filterChain.push(one, cx);
+
+        if (one.empty())
         {
-            for( FeatureFilterChain::const_iterator i = _filterChain->begin(); i != _filterChain->end(); ++i )
-            {
-                cx = i->get()->push( list, cx );
-            }
-        }
-
-        if ( list.empty() )
-        {
-            _lastFeature = 0L;
+            _lastFeature = nullptr;
         }
 
         _geom = 0L;
     }
 
     return _lastFeature.get();
-}
-
-//---------------------------------------------------------------------------
-
-FilteredFeatureCursor::FilteredFeatureCursor(
-    FeatureCursor* cursor,
-    FeatureFilterChain* chain) :
-
-    FeatureCursor(cursor ? cursor->getProgress() : nullptr),
-    _cursor(cursor),
-    _chain(chain),
-    _user_cx(nullptr)
-{
-    //nop
-}
-FilteredFeatureCursor::FilteredFeatureCursor(
-    FeatureCursor* cursor,
-    FeatureFilterChain* chain,
-    FilterContext* context) :
-
-    FeatureCursor(cursor->getProgress()),
-    _cursor(cursor),
-    _chain(chain),
-    _user_cx(context)
-{
-    //nop
-}
-
-bool
-FilteredFeatureCursor::hasMore() const
-{
-    if (!_cache.empty())
-        return true;
-
-    const int chunkSize = 500;
-
-    FilterContext temp_cx;
-    FilterContext& cx = _user_cx == nullptr ? temp_cx : *_user_cx;
-
-    while(_cursor->hasMore() && _cache.size() < chunkSize)
-    {
-        FeatureList local;
-
-        while(_cursor->hasMore() && local.size() < chunkSize)
-        {
-            local.push_back(_cursor->nextFeature());
-        }
-
-        for(FeatureFilterChain::const_iterator filter = _chain->begin();
-            filter != _chain->end();
-            ++filter)
-        {
-            cx = filter->get()->push(local, cx);
-        }
-
-        std::copy(local.begin(), local.end(), std::back_inserter(_cache));
-    }
-
-    return !_cache.empty();
-}
-
-Feature*
-FilteredFeatureCursor::nextFeature()
-{
-    Feature* feature = _cache.front().release();
-    _cache.pop_front();
-    return feature;
 }

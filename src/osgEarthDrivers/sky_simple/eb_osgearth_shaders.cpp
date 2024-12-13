@@ -10,6 +10,8 @@ header = R"(
 
 pbr = R"(
 
+uniform float oe_sky_maxAmbientIntensity = 0.75;
+
 // https://learnopengl.com/PBR/Lighting
 
 //const float PI = 3.14159265359;
@@ -56,13 +58,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
 
 #ifdef OE_USE_PBR
 // fragment stage global PBR params
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
 
 void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout vec3 ambience, inout vec3 COLOR)
 {
@@ -97,8 +93,11 @@ void atmos_pbr_spec(in vec3 vertex_dir, in vec3 vert_to_light, in vec3 N, inout 
 
     // Original equation for reference
     //vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
+    
+    // ambient intensity based on time of day
+    ambience = clamp(ambience + vec3(oe_sky_maxAmbientIntensity*NdotL), 0.0, 1.0);
 
-    COLOR = Lo;
+    COLOR = Lo * oe_pbr.ao;
 }
 #endif
 )";
@@ -197,7 +196,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    // COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
 #endif
 
     // limit to ambient floor:
@@ -315,7 +314,7 @@ void atmos_eb_ground_render_frag(inout vec4 COLOR)
 
 #ifdef OE_USE_PBR
     // diffuse contrast + brightness
-    COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    // COLOR.rgb = ((COLOR.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
 #endif
 
     // limit to ambient floor:

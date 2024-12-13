@@ -23,6 +23,7 @@
 #include <osgEarth/FeatureSource>
 #include <osgEarth/StyleSheet>
 #include <osgText/String>
+#include <osgEarth/BuildConfig>
 
 using namespace osgEarth;
 
@@ -39,6 +40,8 @@ using namespace osgEarth;
 #include <osgEarth/AGG.h>
 #include <osgEarth/BufferFilter>
 #include <osgEarth/ResampleFilter>
+
+#include <tuple>
 
 namespace osgEarth {
     namespace FeatureImageLayerImpl
@@ -487,7 +490,12 @@ namespace osgEarth {
                     ctx.scale(scale);
                     ctx.blitImage(BLPoint((double)g->left - GLYPH_PADDING, (double)(-g->top) - GLYPH_PADDING), sprite, glyphRect);
                     //ctx.blitImage(BLPoint(0, 0), sprite, glyphRect);
+
+#if BL_VERSION >= 2820
+                    ctx.resetTransform();
+#else
                     ctx.resetMatrix();
+#endif
 
 #if 0
                     // Draw the text bounding box
@@ -572,7 +580,12 @@ namespace osgEarth {
                                             ctx.translate(x, y);
                                             ctx.scale(scale);
                                             ctx.blitImage(BLPoint(-iconRect.w / 2.0, -iconRect.h / 2.0), sprite, iconRect);
+
+#if BL_VERSION >= 2820
+                                            ctx.resetTransform();
+#else
                                             ctx.resetMatrix();
+#endif
                                         }
                                     });
                             }
@@ -755,7 +768,7 @@ FeatureRasterizer::render_blend2d(
             double lineWidthValue = masterLine->stroke()->width().value();
 
             // if the width units are specified, convert to pixels
-            const optional<Units> widthUnits = masterLine->stroke()->widthUnits();
+            const optional<UnitsType> widthUnits = masterLine->stroke()->widthUnits();
 
             if (widthUnits.isSet() && widthUnits != Units::PIXELS)
             {
@@ -858,13 +871,13 @@ FeatureRasterizer::render_blend2d(
         // fashion will always be rendered in the same order when rendered in multiple neighboring tiles
         // so the decluttering algorithm will work consistently across tiles.
         FeatureList sortedFeatures(features);
-        sortedFeatures.sort([](const osg::ref_ptr< Feature >& a, const osg::ref_ptr< Feature >& b) {
+        std::sort(sortedFeatures.begin(), sortedFeatures.end(), [](auto& a, auto& b) {
             auto centerA = a->getGeometry()->getBounds().center();
             auto centerB = b->getGeometry()->getBounds().center();
             if (centerA.x() < centerB.x()) return true;
             if (centerA.x() > centerB.x()) return false;
             return centerA.y() < centerB.y();
-        });
+            });
 
         // Rasterize the symbols:
         for (const auto& feature : sortedFeatures)
@@ -1030,8 +1043,8 @@ FeatureRasterizer::render_agglite(
                 if (globalLineSymbol->stroke()->widthUnits().isSet() &&
                     globalLineSymbol->stroke()->widthUnits().get() != Units::PIXELS)
                 {
-                    const Units& featureUnits = featureSRS->getUnits();
-                    const Units& strokeUnits = globalLineSymbol->stroke()->widthUnits().value();
+                    auto& featureUnits = featureSRS->getUnits();
+                    auto& strokeUnits = globalLineSymbol->stroke()->widthUnits().value();
 
                     // if the units are different than those of the feature data, we need to
                     // do a units conversion.
@@ -1185,8 +1198,8 @@ FeatureRasterizer::render_agglite(
         if (globalLineSymbol->stroke()->widthUnits().isSet() &&
             globalLineSymbol->stroke()->widthUnits().get() != Units::PIXELS)
         {
-            const Units& featureUnits = featureSRS->getUnits();
-            const Units& strokeUnits = globalLineSymbol->stroke()->widthUnits().value();
+            auto& featureUnits = featureSRS->getUnits();
+            auto& strokeUnits = globalLineSymbol->stroke()->widthUnits().value();
 
             // if the units are different than those of the feature data, we need to
             // do a units conversion.
@@ -1249,8 +1262,6 @@ FeatureRasterizer::render(
         return;
 
     OE_PROFILING_ZONE;
-
-    OE_DEBUG << LC << "Rendering " << features.size() << " features" << std::endl;
 
     const SpatialReference* featureSRS = features.front()->getSRS();
     OE_SOFT_ASSERT_AND_RETURN(featureSRS != nullptr, void());
@@ -1320,7 +1331,7 @@ void
 FeatureStyleSorter::sort_usingEmbeddedStyles(
     const TileKey& key,
     const Distance& buffer,
-    FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     Session* session,
     FeatureStyleSorter::Function processFeaturesForStyle,
     ProgressCallback* progress) const
@@ -1328,17 +1339,16 @@ FeatureStyleSorter::sort_usingEmbeddedStyles(
     // Each feature has its own embedded style data, so use that:
     FilterContext context;
 
-    osg::ref_ptr<FeatureCursor> cursor = session->getFeatureSource()->createFeatureCursor(
-        key,
-        buffer,
-        filters,
-        &context,
-        progress);
+    Query query;
+    query.tileKey() = key;
+    query.buffer() = buffer;
+
+    osg::ref_ptr<FeatureCursor> cursor = session->getFeatureSource()->createFeatureCursor(query, filters, &context, progress);
 
     while (cursor.valid() && cursor->hasMore())
     {
-        osg::ref_ptr< Feature > feature = cursor->nextFeature();
-        if (feature.valid())
+        auto feature = cursor->nextFeature();
+        if (feature)
         {
             FeatureList data;
             data.push_back(feature);
@@ -1351,7 +1361,7 @@ void
 FeatureStyleSorter::sort_usingSelectors(
     const TileKey& key,
     const Distance& buffer,
-    FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     Session* session,
     FeatureStyleSorter::Function processFeaturesForStyle,
     ProgressCallback* progress) const
@@ -1376,8 +1386,11 @@ FeatureStyleSorter::sort_usingSelectors(
             getFeatures(session, defaultQuery, buffer, key.getExtent(), filters, features, progress);
             if (!features.empty())
             {
-                std::unordered_map<std::string, Style> literal_styles;
-                std::map<const Style*, FeatureList> style_buckets;
+                //std::unordered_map<std::string, Style> literal_styles;
+                std::unordered_map<std::string, std::pair<Style, int>> literal_styles;
+                //std::map<const Style*, FeatureList> style_buckets;
+                // keep ordered.
+                std::map<int, std::pair<const Style*, FeatureList>> style_buckets;
 
                 for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
                 {
@@ -1387,8 +1400,8 @@ FeatureStyleSorter::sort_usingSelectors(
                     if (!styleString.empty() && styleString != "null")
                     {
                         // resolve the style:
-                        //Style combinedStyle;
                         const Style* resolved_style = nullptr;
+                        int resolved_index = 0;
 
                         // if the style string begins with an open bracket, it's an inline style definition.
                         if (styleString.length() > 0 && styleString[0] == '{')
@@ -1396,34 +1409,47 @@ FeatureStyleSorter::sort_usingSelectors(
                             Config conf("style", styleString);
                             conf.setReferrer(sel.styleExpression().get().uriContext().referrer());
                             conf.set("type", "text/css");
-                            Style& literal_style = literal_styles[conf.toJSON()];
-                            if (literal_style.empty())
-                                literal_style = Style(conf);
-                            resolved_style = &literal_style;
+                            auto& literal_style_and_index = literal_styles[conf.toJSON()];
+                            if (literal_style_and_index.first.empty())
+                            {
+                                literal_style_and_index.first = Style(conf);
+                                // literal styles always come AFTER sheet styles
+                                literal_style_and_index.second = literal_styles.size() + session->styles()->getStyles().size();
+                            }
+                            resolved_style = &literal_style_and_index.first;
+                            resolved_index = literal_style_and_index.second;
                         }
 
                         // otherwise, look up the style in the stylesheet. Do NOT fall back on a default
-                        // style in this case: for style expressions, the user must be explicity about
+                        // style in this case: for style expressions, the user must be explicit about
                         // default styling; this is because there is no other way to exclude unwanted
                         // features.
                         else
                         {
-                            const Style* selected_style = session->styles()->getStyle(styleString, false);
-                            if (selected_style)
-                                resolved_style = selected_style;
+                            auto style_and_index = session->styles()->getStyleAndIndex(styleString);
+
+                            //const Style* selected_style = session->styles()->getStyle(styleString, false);
+                            if (style_and_index.first)
+                            {
+                                resolved_style = style_and_index.first;
+                                resolved_index = style_and_index.second;
+                            }
                         }
 
                         if (resolved_style)
                         {
-                            style_buckets[resolved_style].push_back(feature);
+                            auto& bucket = style_buckets[resolved_index];
+                            bucket.first = resolved_style;
+                            bucket.second.emplace_back(feature);
                         }
                     }
                 }
 
+                // in order:
                 for (auto& iter : style_buckets)
                 {
-                    const Style* style = iter.first;
-                    FeatureList& list = iter.second;
+                    const Style* style = iter.second.first;
+                    FeatureList& list = iter.second.second;
                     processFeaturesForStyle(*style, list, progress);
                 }
             }
@@ -1448,7 +1474,7 @@ FeatureStyleSorter::sort_usingOneStyle(
     const Style& style,
     const TileKey& key,
     const Distance& buffer,
-    FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     Session* session,
     Function processFeaturesForStyle,
     ProgressCallback* progress) const
@@ -1467,7 +1493,7 @@ FeatureStyleSorter::sort(
     const TileKey& key,
     const Distance& buffer,
     Session* session,
-    FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     Function processFeaturesForStyle,
     ProgressCallback* progress) const
 {
@@ -1532,7 +1558,7 @@ FeatureStyleSorter::getFeatures(
     const Query& query,
     const Distance& buffer,
     const GeoExtent& workingExtent,
-    FeatureFilterChain* filters,
+    const FeatureFilterChain& filters,
     FeatureList& features,
     ProgressCallback* progress) const
 {
@@ -1573,21 +1599,10 @@ FeatureStyleSorter::getFeatures(
             
             if (localQuery.tileKey().isSet())
             {
-                cursor = session->getFeatureSource()->createFeatureCursor(
-                    localQuery.tileKey().get(),
-                    buffer,
-                    filters,
-                    &context,
-                    progress);
+                localQuery.buffer() = buffer;
             }
-            else
-            {
-                cursor = session->getFeatureSource()->createFeatureCursor(
-                    localQuery,
-                    filters,
-                    &context,
-                    progress);
-            }
+
+            cursor = session->getFeatureSource()->createFeatureCursor(localQuery, filters, &context, progress);
 
             while (cursor.valid() && cursor->hasMore())
             {

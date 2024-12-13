@@ -1,5 +1,49 @@
 # Release Notes
 
+## Version 3.7 (October 2024)
+
+Release Highlights:
+
+* New: `osgEarthImGui` NodeKit - new library that encapsulates all support for built-in ImGui control panels as seen in the `osgearth_imgui` application
+* New: Support for self-hosted Cesium Ion servers
+* New: Support for Microsoft Azure Maps image layers
+* Revamped CMake packaging setup for easier deployment of osgEarth-based applications
+* Performance improvements:faster image mosaicing, mercator image sampling
+* Updated vcpkg support
+
+## Version 3.6.1 (July 2024)
+
+Bug fix release:
+
+* Support Blend2D 0.11.4
+* Revert a TileMesher update that broke TerrainConstraints in come cases
+* Fix a bug in Profile affecting antimeridian cursors
+
+## Version 3.6 (June 2024)
+
+Release Highlights:
+
+* C++14 is now the minimum requirement to build osgEarth
+* New CMake system embracing modern CMake practices
+* BuildConfig header now makes build-time options available to the developer
+* Replaced the job pool system (with weejobs)
+* The legacy osgEarth::Util::Controls library is now cmake-optional and off by default
+* Updates to the ImGui panels
+* New meshoptimizer plugin
+* Lots of bug fixes and performance improvements
+* Workaround for Mesa 23.1.4 driver bug(s)
+
+## Version 3.5 (October 2023)
+
+Release Highlights:
+
+* New `osgEarthCesium` nodekit using the cesium-native SDK for 3D-Tiles integration
+* Upgrades to the `TerrainConstraintLayer` for better meshing, performance, and support for 3D model constraints
+* New `TerrainMeshLayer` for "bring your own" terrain surface meshing
+* Integration of [spdlog](https://github.com/gabime/spdlog) logging SDK (optional)
+* Various updates to the `osgearth_imgui` panels
+* Updated [Triton](https://sundog-soft.com/features/ocean-and-water-rendering-with-triton/) and [Silverlining](https://sundog-soft.com/features/real-time-3d-clouds/) shader sets
+
 ## Version 3.4 (May 2023)
 
 Version 3.4 is an incremental bugfix and maintenance release.

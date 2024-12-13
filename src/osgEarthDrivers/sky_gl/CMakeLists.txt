@@ -1,17 +1,10 @@
-SET(TARGET_SRC 
-    GLSkyDriver.cpp
-    GLSkyNode.cpp
-    GLSkyExtension.cpp
-)
-SET(TARGET_H
-    GLSkyOptions
-	GLSkyNode
-)
-
-SETUP_PLUGIN(osgearth_sky_gl)
-
-# to install public driver includes:
-SET(LIB_NAME sky_gl)
-SET(LIB_PUBLIC_HEADERS GLSkyOptions)
-
-INCLUDE(ModuleInstallOsgEarthDriverIncludes OPTIONAL)
+add_osgearth_plugin(
+    TARGET osgdb_osgearth_sky_gl
+    HEADERS
+        GLSkyNode
+    PUBLIC_HEADERS
+        GLSkyOptions
+    SOURCES
+        GLSkyDriver.cpp
+        GLSkyNode.cpp
+        GLSkyExtension.cpp )

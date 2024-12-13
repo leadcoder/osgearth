@@ -1282,7 +1282,7 @@ LineDrawable::dirty()
     }
 }
 
-osg::observer_ptr<osg::StateSet> LineDrawable::s_gpuStateSet;
+//osg::observer_ptr<osg::StateSet> LineDrawable::s_gpuStateSet;
 
 void
 LineDrawable::setupShaders()
@@ -1291,11 +1291,25 @@ LineDrawable::setupShaders()
     // shared by all LineDrawable instances so OSG will sort them together.
     if (_useGPU && !_gpuStateSet.valid())
     {
+        _gpuStateSet = Registry::instance()->getOrCreate<osg::StateSet>("oe.LineDrawable_StateSet", []()
+            {
+                auto ss = new osg::StateSet();
+                VirtualProgram* vp = VirtualProgram::getOrCreate(ss);
+                vp->setName("osgEarth::LineDrawable");
+                Shaders shaders;
+                shaders.load(vp, shaders.LineDrawable);
+                vp->addBindAttribLocation("oe_LineDrawable_prev", LineDrawable::PreviousVertexAttrLocation);
+                vp->addBindAttribLocation("oe_LineDrawable_next", LineDrawable::NextVertexAttrLocation);
+                ss->getOrCreateUniform("oe_LineDrawable_limits", osg::Uniform::FLOAT_VEC2)->set(osg::Vec2f(-1, -1));
+                ss->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+                return ss;
+            });
+#if 0
         if (s_gpuStateSet.lock(_gpuStateSet) == false)
         {
             // serialize access and double-check:
-            static Threading::Mutex s_mutex(OE_MUTEX_NAME);
-            Threading::ScopedMutexLock lock(s_mutex);
+            static std::mutex s_mutex;
+            std::lock_guard<std::mutex> lock(s_mutex);
 
             if (s_gpuStateSet.lock(_gpuStateSet) == false)
             {
@@ -1311,7 +1325,14 @@ LineDrawable::setupShaders()
                 s_gpuStateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
             }
         }
+#endif
     }
+}
+
+void
+LineDrawable::traverse(osg::NodeVisitor& nv)
+{
+    _geom->accept(nv);
 }
 
 void
@@ -1330,22 +1351,65 @@ LineDrawable::accept(osg::NodeVisitor& nv)
 
         if (!_current)
         {
-            ScopedMutexLock lock(_mutex);
+            std::lock_guard<std::mutex> lock(_mutex);
             if (!_current)
                 initialize();
         }
 
+        // Since we are hiding the Geometry below this "phantom" drawable,
+        // we must duplicate what OSG would normally do with the various
+        // visitors here so that statesets and callbacks all continue to 
+        // work as usual.
+
         osgUtil::CullVisitor* cv = shade? Culling::asCullVisitor(nv) : 0L;
+        auto stateset = getStateSet();
 
         nv.pushOntoNodePath(this);
 
-        if (cv)
+        if (cv) // CULL_VISITOR
+        {
+            // push the global GPU shader stateset
             cv->pushStateSet(_gpuStateSet.get());
 
-        nv.apply(*this);
+            // and push this drawable's local stateset
+            if (stateset) cv->pushStateSet(stateset);
 
-        if (cv)
+            // handle cull callbacks
+            if (getCullCallback())
+                getCullCallback()->run(this, &nv);
+            else
+                traverse(nv);
+
+            // pop them both
+            if (stateset) cv->popStateSet();
             cv->popStateSet();
+        }
+
+        else if (nv.getVisitorType() == nv.UPDATE_VISITOR)
+        {
+            if (stateset && stateset->requiresUpdateTraversal())
+            {
+                stateset->runUpdateCallbacks(&nv);
+            }
+
+            // simulate the behavior in UpdateVisitor::apply
+            auto callback = getUpdateCallback();
+            if (callback)
+            {
+                callback->run(this, &nv);
+            }
+            else if (getNumChildrenRequiringUpdateTraversal() > 0)
+            {
+                traverse(nv);
+            }
+        }
+
+        else
+        {
+            // other visitor types (intersect, compute bound, etc)
+            // call apply here to invoke the default usual Node::accept() behavior.
+            nv.apply(*this);
+        }
 
         nv.popFromNodePath();
     }

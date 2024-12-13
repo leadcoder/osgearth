@@ -1,4 +1,13 @@
-set(TARGET_LIBRARIES_VARS OSGDB_LIBRARY OSGUTIL_LIBRARY OSG_LIBRARY OSGVIEWER_LIBRARY OPENTHREADS_LIBRARY)
+add_osgearth_app(
+    TARGET osgearth_imgui
+    SOURCES osgearth_imgui.cpp
+    LIBRARIES osgEarthImGui
+    FOLDER Tools )
 
-set(TARGET_SRC osgearth_imgui.cpp)
-SETUP_IMGUI_APPLICATION(osgearth_imgui)
+if(OSGEARTH_BUILD_PROCEDURAL_NODEKIT)
+    target_link_libraries(osgearth_imgui PRIVATE osgEarthProcedural)
+endif()
+
+if(OSGEARTH_BUILD_CESIUM_NODEKIT)
+    target_link_libraries(osgearth_imgui PRIVATE osgEarthCesium)
+endif()

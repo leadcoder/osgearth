@@ -84,15 +84,8 @@ TerrainEngineNode::getResources() const
 
 
 TerrainEngineNode::TerrainEngineNode() :
-_dirtyCount              ( 0 ),
-_requireElevationTextures( false ),
-_requireNormalTextures   ( false ),
-_requireLandCoverTextures( false ),
-_requireParentTextures   ( false ),
-_requireElevationBorder  ( false ),
-_requireFullDataAtFirstLOD( false ),
-_updateScheduled( false ),
-_createTileModelCallbacksMutex(OE_MUTEX_NAME)
+    _dirtyCount(0),
+    _updateScheduled(false)
 {
     // register for event traversals so we can properly reset the dirtyCount
     ADJUST_EVENT_TRAV_COUNT(this, 1);
@@ -106,7 +99,18 @@ _createTileModelCallbacksMutex(OE_MUTEX_NAME)
 
 TerrainEngineNode::~TerrainEngineNode()
 {
-    OE_DEBUG << LC << "~TerrainEngineNode\n";
+    //nop
+}
+
+namespace
+{
+    struct RequestRedraw
+    {
+        void operator()(osg::View* view) {
+            osgGA::GUIActionAdapter* aa = dynamic_cast<osgGA::GUIActionAdapter*>(view);
+            if (aa) aa->requestRedraw();
+        }
+    };
 }
 
 void
@@ -142,7 +146,7 @@ TerrainEngineNode::setMap(const Map* map, const TerrainOptions& options)
     _map = map;
 
     // store a const copy of the terrain options
-    _options = options;
+    _optionsConcrete = options;
 
     // Create a terrain utility interface. This interface can be used
     // to query the in-memory terrain graph, subscribe to tile events, etc.
@@ -174,6 +178,16 @@ TerrainEngineNode::setMap(const Map* map, const TerrainOptions& options)
             this->setEllipsoidModel(nullptr);
         }
     }
+
+    // Hide the terrain engine if it's marked as not visible.  This is mostly used when
+    // rendering whole earth layers like Google Earth tiles and you don't want to see the globe.
+    if (!*options.visible())
+    {
+        setNodeMask(0);
+    }
+
+    // invoke the callback for a subclass to do its thing
+    onSetMap();
 }
 
 osg::BoundingSphere
@@ -214,14 +228,13 @@ TerrainEngineNode::createTileModel(const Map* map,
 {
     if ( !_tileModelFactory.valid() )
         return nullptr;
-    TerrainEngineRequirements* requirements = this;
 
     // Ask the factory to create a new tile model:
     osg::ref_ptr<TerrainTileModel> model = _tileModelFactory->createTileModel(
         map,
         key,
         manifest,
-        requirements,
+        getRequirements(),
         progress);
 
     if ( model.valid() )
@@ -321,18 +334,6 @@ TerrainEngineNode::traverse( osg::NodeVisitor& nv )
     osg::CoordinateSystemNode::traverse( nv );
 }
 
-ComputeRangeCallback*
-TerrainEngineNode::getComputeRangeCallback() const
-{
-    return _computeRangeCallback.get();
-}
-
-void
-TerrainEngineNode::setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback)
-{
-    _computeRangeCallback = computeRangeCallback;
-}
-
 TerrainEngineNode*
 TerrainEngineNode::create(const TerrainOptions& options )
 {
@@ -344,12 +345,16 @@ TerrainEngineNode::create(const TerrainOptions& options )
     if ( driver.empty() )
         driver = Registry::instance()->getDefaultTerrainEngineDriverName();
 
-    std::string driverExt = std::string( ".osgearth_engine_" ) + driver;
-    osg::ref_ptr<osg::Object> object = osgDB::readRefObjectFile( driverExt );
-    node = dynamic_cast<TerrainEngineNode*>( object.release() );
-    if ( !node )
+    std::string driverExt = std::string("osgearth_engine_") + driver;
+    auto rw = osgDB::Registry::instance()->getReaderWriterForExtension(driverExt);
+    if (rw)
     {
-        OE_WARN << "WARNING: Failed to load terrain engine driver for \"" << driver << "\"" << std::endl;
+        osg::ref_ptr<osg::Object> object = rw->readObject("." + driverExt).getObject();
+        node = dynamic_cast<TerrainEngineNode*>(object.release());
+        if (!node)
+        {
+            OE_WARN << "WARNING: Failed to load terrain engine driver for \"" << driver << "\"" << std::endl;
+        }
     }
 
     return node.release();

@@ -36,18 +36,12 @@ using namespace osgEarth::REX;
 #define GL_ELEMENT_ARRAY_UNIFIED_NV 0x8F1F
 #endif
 
+// Uncomment this to reset all buffer base index bindings after rendering.
+// It's unlikely this is necessary, but it's here just we find otherwise.
+//#define RESET_BUFFER_BASE_BINDINGS
 
 
-LayerDrawable::LayerDrawable() :
-_renderType(Layer::RENDERTYPE_TERRAIN_SURFACE),
-_drawOrder(0),
-_surfaceDrawOrder(0),
-_layer(0L),
-_visibleLayer(0L),
-_imageLayer(0L),
-_patchLayer(0L),
-_clearOsgState(false),
-_draw(true)
+LayerDrawable::LayerDrawable()
 {
     // Since we refresh the render state in the CULL traversal, we must
     // set the variance to dynamic to prevent overlap with DRAW
@@ -144,6 +138,10 @@ LayerDrawableNVGL::LayerDrawableNVGL() :
     LayerDrawable()
 {
     setName("LayerDrawableNVGL");
+
+    // Make sure our structures are aligned to 16 bytes
+    OE_HARD_ASSERT(sizeof(GL4GlobalData) % 16 == 0);
+    OE_HARD_ASSERT(sizeof(GL4Tile) % 16 == 0);
 }
 LayerDrawableNVGL::~LayerDrawableNVGL()
 {
@@ -194,7 +192,7 @@ LayerDrawableNVGL::refreshRenderState()
         TextureArena* textures = _context->textures();
 
         unsigned tile_num = 0;
-        
+
         _rs.tiles.clear();
 
         for (auto& tile : _tiles)
@@ -260,7 +258,7 @@ LayerDrawableNVGL::refreshRenderState()
             }
 
             // LandCover sampler:
-            if (_context->options().useLandCover() == true)
+            if (_context->options().getUseLandCover() == true)
             {
                 buf.landcoverIndex = -1;
                 if (tile._sharedSamplers != nullptr /* && is normalmapping active */)
@@ -306,9 +304,9 @@ LayerDrawableNVGL::refreshRenderState()
             buf.drawOrder = _surfaceDrawOrder;
         }
 
-         _rs.tiles.swap(_tiles); // hopefully uses std::move
-        
-         _tiles.clear();
+        _rs.tiles.swap(_tiles); // hopefully uses std::move
+
+        _tiles.clear();
 
         // This will trigger a GPU upload on the next draw
         _rs.dirty = true;
@@ -347,13 +345,15 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
 
         gl.tiles = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
         gl.tiles->bind();
-        gl.tiles->debugLabel("REX geometry", "Tiles SSBO");
+        gl.tiles->debugLabel("Terrain geometry", "Tiles SSBO");
 
         // preallocate space for a bunch of tiles (just for fun)
         gl.tiles->bufferData(
             512 * sizeof(GL4Tile),
             nullptr,
             GL_DYNAMIC_DRAW);
+
+        gl.tiles->unbind();
     }
 
     if (renderTerrainSurface)
@@ -362,7 +362,7 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
         {
             gl.commands = GLBuffer::create(GL_DRAW_INDIRECT_BUFFER, state);
             gl.commands->bind();
-            gl.commands->debugLabel("REX geometry", "GL_DRAW_INDIRECT_BUFFER");
+            gl.commands->debugLabel("Terrain geometry", "GL_DRAW_INDIRECT_BUFFER");
             // preallocate space for a bunch of draw commands (just for fun)
             gl.commands->bufferData(
                 512 * sizeof(DrawElementsIndirectBindlessCommandNV),
@@ -370,23 +370,18 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
                 GL_DYNAMIC_DRAW);
             gl.commands->unbind();
 
-            osg::setGLExtensionFuncPtr(
-                gl.glMultiDrawElementsIndirectBindlessNV,
-                "glMultiDrawElementsIndirectBindlessNV");
+            osg::setGLExtensionFuncPtr(gl.glMultiDrawElementsIndirectBindlessNV, "glMultiDrawElementsIndirectBindlessNV");
             OE_HARD_ASSERT(gl.glMultiDrawElementsIndirectBindlessNV != nullptr);
 
             // OSG bug: glVertexAttribFormat is mapped to the wrong function :( so
             // we have to look it up fresh.
-            osg::setGLExtensionFuncPtr(
-                gl.glVertexAttribFormat,
-                "glVertexAttribFormat");
+            osg::setGLExtensionFuncPtr(gl.glVertexAttribFormat, "glVertexAttribFormat");
             OE_HARD_ASSERT(gl.glVertexAttribFormat != nullptr);
 
             // Needed for core profile
             void(GL_APIENTRY * glEnableClientState_)(GLenum);
             osg::setGLExtensionFuncPtr(glEnableClientState_, "glEnableClientState");
             OE_HARD_ASSERT(glEnableClientState_ != nullptr);
-
 
             // Set up a VAO that we'll use to render with bindless NV.
             gl.vao = GLVAO::create(state);
@@ -395,7 +390,7 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
             gl.vao->bind();
 
             // after the bind, please
-            gl.vao->debugLabel("REX geometry", "VAO");
+            gl.vao->debugLabel("Terrain geometry", "VAO");
 
             // set up the VAO for NVIDIA bindless buffers
             glEnableClientState_(GL_VERTEX_ATTRIB_ARRAY_UNIFIED_NV);
@@ -409,16 +404,14 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
                 offsetof(GL4Vertex, neighborPosition),
                 offsetof(GL4Vertex, neighborNormal)
             };
+
             for (unsigned location = 0; location < 5; ++location)
             {
                 gl.glVertexAttribFormat(location, 3, GL_FLOAT, GL_FALSE, offsets[location]);
                 gl.ext->glVertexAttribBinding(location, 0);
                 gl.ext->glEnableVertexAttribArray(location);
+                gl.ext->glBindVertexBuffer(location, 0, offsets[location], sizeof(GL4Vertex));
             }
-
-            // bind a "dummy buffer" that will record the stride, which is
-            // just the size of our vertex structure.
-            gl.ext->glBindVertexBuffer(0, 0, 0, sizeof(GL4Vertex));
 
             // Finish recording
             gl.vao->unbind();
@@ -430,7 +423,7 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
 
             // Encode morphing constants, one per LOD
             const SelectionInfo& info = _context->getSelectionInfo();
-            for (unsigned lod = 0; lod < 19; ++lod)
+            for (unsigned lod = 0; lod < info.getNumLODs(); ++lod)
             {
                 float end = info.getLOD(lod)._morphEnd;
                 float start = info.getLOD(lod)._morphStart;
@@ -442,7 +435,7 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
             gl.shared = GLBuffer::create(GL_SHADER_STORAGE_BUFFER, state);
 
             gl.shared->bind();
-            gl.shared->debugLabel("REX geometry", "Global data SSBO");
+            gl.shared->debugLabel("Terrain geometry", "Global data SSBO");
             gl.shared->bufferStorage(sizeof(GL4GlobalData), &buf, 0); // permanent
             gl.shared->unbind();
         }
@@ -472,11 +465,12 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
             {
                 SharedGeometry* geom = tile._geom.get();
                 auto& command = geom->getOrCreateNVGLCommand(state);
-                if (command.vertexBuffer.address != 0 && command.indexBuffer.address != 0)
-                    _rs.commands.push_back(command);
+                _rs.commands.push_back(command);
             }
 
             gl.commands->uploadData(_rs.commands);
+
+            OE_SOFT_ASSERT(_rs.commands.size() == _rs.tiles.size());
         }
     }
 
@@ -490,29 +484,24 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
     // Bind the tiles data to its layout(binding=X) in the shader.
     gl.tiles->bindBufferBase(31);
 
-
     if (renderTerrainSurface)
     {
         // Bind the command buffer for rendering.
         gl.commands->bind();
 
         // Bind the shared data to its layout(binding=X) in the shader.
-        // For shared data we only need to do this once per pass
-        if (_surfaceDrawOrder == 0)
-        {
-            gl.shared->bindBufferBase(30);
-        }
+        gl.shared->bindBufferBase(30);
 
         gl.vao->bind();
 
         GLenum primitive_type =
-            _context->options().gpuTessellation() == true ?
+            _context->options().getGPUTessellation() == true ?
             GL_PATCHES : GL_TRIANGLES;
 
         GLenum element_type =
             sizeof(DrawElementsBase::value_type) == sizeof(short) ?
             GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
-        
+
         gl.glMultiDrawElementsIndirectBindlessNV(
             primitive_type,
             element_type,
@@ -523,10 +512,11 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
 
         gl.vao->unbind();
 
-        if (_clearOsgState)
-        {
-            gl.commands->unbind();
-        }
+        gl.commands->unbind();
+
+#ifdef RESET_BUFFER_BASE_BINDINGS
+        gl.ext->glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 30, 0); // unbind shared data
+#endif
     }
 
     else if (_patchLayer && _patchLayer->getRenderer())
@@ -543,6 +533,11 @@ LayerDrawableNVGL::drawImplementation(osg::RenderInfo& ri) const
 
         _patchLayer->getRenderer()->draw(ri, batch);
     }
+
+#ifdef RESET_BUFFER_BASE_BINDINGS
+    gl.ext->glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 31, 0); // tiles data
+    gl.ext->glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 29, 0); // texture arena
+#endif
 
     LayerDrawable::drawImplementation(ri);
 }

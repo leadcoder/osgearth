@@ -26,11 +26,13 @@
 #include "TerrainCuller"
 #include "RexTerrainEngineNode"
 
+#include <osgEarth/TerrainTileModel>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/ImageUtils>
 #include <osgEarth/Utils>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/Metrics>
+#include <osgEarth/Notify>
 
 using namespace osgEarth::REX;
 using namespace osgEarth;
@@ -50,28 +52,11 @@ namespace
     };
 }
 
-TileNode::TileNode(
-    const TileKey& key,
-    TileNode* parent,
-    EngineContext* context,
-    Cancelable* progress) :
-
+TileNode::TileNode(const TileKey& key, TileNode* parent, EngineContext* context, Cancelable* progress) :
     _key(key),
     _parentTile(parent),
     _context(context),
-    _loadsInQueue(0u),
-    _childrenReady(false),
-    _lastTraversalTime(0.0),
     _lastTraversalFrame(0),
-    _lastTraversalRange(FLT_MAX),
-    _empty(false), // an "empty" node exists but has no geometry or children
-    _imageUpdatesActive(false),
-    _doNotExpire(false),
-    _revision(0),
-    _mutex("TileNode(OE)"),
-    _loadQueue("TileNode LoadQueue(OE)"),
-    _createChildAsync(true),
-    _nextLoadManifestPtr(nullptr),
     _loadPriority(0.0f)
 {
     OE_HARD_ASSERT(context != nullptr);
@@ -88,12 +73,6 @@ TileNode::TileNode(
 
     double x = (double)_key.getTileX();
     double y = (double)(th - _key.getTileY() - 1);
-
-    //_tileKeyValue.set(
-    //    (float)(int)fmod(x, m),
-    //    (float)(int)fmod(y, m),
-    //    (float)_key.getLOD(),
-    //    -1.0f);
 
     _tileKeyValue.set(
         (float)(x-tw/2), //(int)fmod(x, m),
@@ -135,7 +114,7 @@ TileNode::createGeometry(Cancelable* progress)
 
     _empty = false;
 
-    unsigned tileSize = options().tileSize().get();
+    unsigned tileSize = _context->options().getTileSize();
 
     // Get a shared geometry from the pool that corresponds to this tile key:
     osg::ref_ptr<SharedGeometry> geom;
@@ -144,11 +123,11 @@ TileNode::createGeometry(Cancelable* progress)
         _key,
         tileSize,
         map.get(),
-        options(),
+        _context->options(),
         geom,
         progress);
 
-    if (progress && progress->isCanceled())
+    if (progress && progress->canceled())
         return;
 
     if (geom.valid())
@@ -239,7 +218,6 @@ TileNode::initializeData()
     _context->tiles()->add( this );
 
     // tell the world.
-    OE_DEBUG << LC << "notify (create) key " << getKey().str() << std::endl;
     _context->getEngine()->getTerrain()->notifyTileUpdate(getKey(), this);
 }
 
@@ -263,9 +241,9 @@ TileNode::isDormant() const
     unsigned frame = _context->getClock()->getFrame();
     double now = _context->getClock()->getTime();
 
-    bool dormant = 
-        frame - _lastTraversalFrame > std::max(options().minExpiryFrames().get(), minMinExpiryFrames) &&
-        now - _lastTraversalTime > options().minExpiryTime().get();
+    bool dormant =
+        frame - _lastTraversalFrame > std::max(_context->options().getMinExpiryFrames(), minMinExpiryFrames) &&
+        now - _lastTraversalTime > _context->options().getMinExpiryTime();
 
     return dormant;
 }
@@ -361,34 +339,51 @@ TileNode::shouldSubDivide(TerrainCuller* culler, const SelectionInfo& selectionI
 
     EngineContext* context = culler->getEngineContext();
     
-    if (currLOD < selectionInfo.getNumLODs() && currLOD != selectionInfo.getNumLODs()-1)
+    if (currLOD < selectionInfo.getNumLODs() && 
+        currLOD != selectionInfo.getNumLODs()-1 &&
+        currLOD < _context->options().getMaxLOD())
     {
         // In PSOS mode, subdivide when the on-screen size of a tile exceeds the maximum
         // allowable on-screen tile size in pixels.
-        if (options().rangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN)
+        if (_context->options().getLODMethod() == LODMethod::SCREEN_SPACE)
         {
-            float tileSizeInPixels = -1.0;
+            // assume the imagery of a tile to be this dimension (pixels). If so, once the
+            // size of tile geometry on screen exceeds that, it's time to subdivide.
+            float tileImagerySize = _context->options().getTilePixelSize();
 
-            if (context->getEngine()->getComputeRangeCallback())
-            {
-                tileSizeInPixels = (*context->getEngine()->getComputeRangeCallback())(this, *culler->_cv);
-            }    
+            float tileGeometrySizeInPixels = -1.0;
 
-            if (tileSizeInPixels <= 0.0)
+            if (context->getEngine()->getComputeTilePixelSizeCallback())
             {
-                tileSizeInPixels = _surface->getPixelSizeOnScreen(culler);
+                tileGeometrySizeInPixels = (context->getEngine()->getComputeTilePixelSizeCallback())(this, *culler->_cv);
+            }
+
+            if (tileGeometrySizeInPixels <= 0.0)
+            {
+                tileGeometrySizeInPixels = _surface->getPixelSizeOnScreen(culler);
             }
         
-            float effectivePixelSize =
-                options().tilePixelSize().get() + options().screenSpaceError().get();
+            // SSE is the amount of error we are willing to tolerate in the screen space size
+            float pixelSizeThreshold = tileImagerySize + _context->options().getScreenSpaceError();
 
-            return (tileSizeInPixels > effectivePixelSize);
+            return (tileGeometrySizeInPixels > pixelSizeThreshold);
         }
 
         // In DISTANCE-TO-EYE mode, use the visibility ranges precomputed in the SelectionInfo.
         else
         {
-            float range = context->getSelectionInfo().getRange(_subdivideTestKey);
+            float range = -1.0f;
+
+            if (context->getEngine()->getComputeTileRangeCallback())
+            {
+                range = (context->getEngine()->getComputeTileRangeCallback())(this, *culler->_cv);
+            }
+
+            if (range < 0.0f)
+            {
+                range = context->getSelectionInfo().getRange(_subdivideTestKey);
+            }
+
 #if 1
             // slightly slower than the alternate block below, but supports a user overriding
             // CullVisitor::getDistanceToViewPoint -gw
@@ -444,10 +439,10 @@ TileNode::cull(TerrainCuller* culler)
     bool canCreateChildren = childrenInRange;
 
     // whether it is OK to load data (if necessary)
-    bool canLoadData = 
+    bool canLoadData =
         _doNotExpire ||
-        _key.getLOD() == options().firstLOD().get() ||
-        _key.getLOD() >= options().minLOD().get();
+        _key.getLOD() >= _context->options().getFirstLOD();
+        //_key.getLOD() >= _context->options().getMinLOD();
 
     // whether to accept the current surface node and not the children.
     bool canAcceptSurface = false;
@@ -464,7 +459,7 @@ TileNode::cull(TerrainCuller* culler)
     else
     {
         // Don't load data OR geometry in progressive mode until the parent is up to date
-        if (options().progressive() == true)
+        if (_context->options().getProgressive() == true)
         {
             TileNode* parent = getParentTile();
             if (parent && parent->dirty() && parent->nextLoadIsProgressive())
@@ -671,36 +666,113 @@ TileNode::update(osg::NodeVisitor& nv)
 bool
 TileNode::createChildren()
 {
-    if (_createChildAsync)
+    if (_context->options().getCreateTilesAsync() == false)
     {
-        if (_createChildResults.empty())
+        // synchronous mode: do it now.
+        for (unsigned quadrant = 0; quadrant < 4; ++quadrant)
+        {
+            TileKey childkey = getKey().createChildKey(quadrant);
+            osg::ref_ptr<TileNode> child = createChild(childkey, nullptr);
+            addChild(child);
+            child->initializeData();
+            child->refreshAllLayers();
+        }
+
+        return true;
+    }
+
+    if (_context->options().getCreateTilesGrouped() == true)
+    {
+        // create all 4 children in a single job.
+        if (_createChildrenFutureResult.empty())
+        {
+            EngineContext* context(_context.get());
+            osg::observer_ptr<TileNode> tile_weakptr(this);
+
+            auto createChildrenOperation = [context, tile_weakptr](auto& state)
+                {
+                    CreateChildrenResult result;
+
+                    osg::ref_ptr<TileNode> tile;
+                    if (tile_weakptr.lock(tile) && !state.canceled())
+                    {
+                        for (unsigned q = 0; q < 4; ++q)
+                        {
+                            auto childkey = tile->getKey().createChildKey(q);
+                            result[q] = tile->createChild(childkey, &state);
+                            //result.emplace_back(tile->createChild(childkey, &state));
+                        }
+                    }
+
+                    if (state.canceled())
+                    {
+                        //result.clear();
+                        for (int i = 0; i < 4; ++i) result[i] = {};
+                    }
+
+                    return result;
+                };
+
+            jobs::context c{ _key.str() };
+            c.pool = jobs::get_pool(ARENA_CREATE_CHILD);
+            c.pool->set_can_steal_work(false);
+            _createChildrenFutureResult = jobs::dispatch(createChildrenOperation, c);
+        }
+
+        else if (_createChildrenFutureResult.available())
+        {
+            // all 4 children MUST be present AND valid to continue
+            if (_createChildrenFutureResult.value().size() == 4 &&
+                _createChildrenFutureResult.value()[0].valid() &&
+                _createChildrenFutureResult.value()[1].valid() &&
+                _createChildrenFutureResult.value()[2].valid() &&
+                _createChildrenFutureResult.value()[3].valid())
+            {
+                for (int i = 0; i < 4; ++i)
+                {
+                    auto& child = _createChildrenFutureResult.value()[i];
+                    addChild(child);
+                    child->initializeData();
+                    child->refreshAllLayers();
+                }
+            }
+
+            _createChildrenFutureResult.reset();
+        }
+
+        // true if the result is empty (i.e., the job is complete)
+        return _createChildrenFutureResult.empty();
+    }
+
+    else // if create each tile separately
+    {
+        // create each child is a separate job.
+        if (_createChildResults[0].empty())
         {
             TileKey parentkey(_key);
             EngineContext* context(_context.get());
-
             for (unsigned quadrant = 0; quadrant < 4; ++quadrant)
             {
                 TileKey childkey = getKey().createChildKey(quadrant);
                 osg::observer_ptr<TileNode> tile_weakptr(this);
 
-                auto createChildOperation = [context, tile_weakptr, childkey](Cancelable* state)
-                {
-                    CreateChildResult result;
+                auto createChildOperation = [context, tile_weakptr, childkey](Cancelable& state)
+                    {
+                        CreateChildResult result;
 
-                    osg::ref_ptr<TileNode> tile;
-                    if (tile_weakptr.lock(tile) && !state->isCanceled())
-                        result = tile->createChild(childkey, state);
+                        osg::ref_ptr<TileNode> tile;
+                        if (tile_weakptr.lock(tile) && !state.canceled())
+                            result = tile->createChild(childkey, &state);
 
-                    return result;
-                };
+                        return result;
+                    };
 
-                Job job;
-                job.setArena(ARENA_CREATE_CHILD);
-                job.setName(childkey.str());
+                jobs::context c;
+                c.name = childkey.str();
+                c.pool = jobs::get_pool(ARENA_CREATE_CHILD);
+                c.pool->set_can_steal_work(false);
 
-                _createChildResults.emplace_back(
-                    job.dispatch<CreateChildResult>(createChildOperation)
-                );
+                _createChildResults[quadrant] = jobs::dispatch(createChildOperation, c);
             }
         }
 
@@ -710,38 +782,27 @@ TileNode::createChildren()
 
             for (int i = 0; i < 4; ++i)
             {
-                if (_createChildResults[i].isAvailable())
+                if (_createChildResults[i].available())
+                {
                     ++numChildrenReady;
+                }
             }
 
             if (numChildrenReady == 4)
             {
                 for (int i = 0; i < 4; ++i)
                 {
-                    osg::ref_ptr<TileNode> child = _createChildResults[i].get();
+                    osg::ref_ptr<TileNode> child = _createChildResults[i].value();
                     addChild(child);
                     child->initializeData();
                     child->refreshAllLayers();
+                    _createChildResults[i].reset();
                 }
-
-                _createChildResults.clear();
             }
         }
-    }
 
-    else
-    {
-        for (unsigned quadrant = 0; quadrant < 4; ++quadrant)
-        {
-            TileKey childkey = getKey().createChildKey(quadrant);
-            osg::ref_ptr<TileNode> child = createChild(childkey, nullptr);
-            addChild(child);
-            child->initializeData();
-            child->refreshAllLayers();
-        }
+        return _createChildResults[0].empty();
     }
-
-    return _createChildResults.empty();
 }
 
 TileNode*
@@ -756,14 +817,12 @@ TileNode::createChild(const TileKey& childkey, Cancelable* progress)
         progress);
 
     return 
-        progress && progress->isCanceled() ? nullptr
+        progress && progress->canceled() ? nullptr
         : node.release();
 }
 
 void
-TileNode::merge(
-    const TerrainTileModel* model,
-    const CreateTileManifest& manifest)
+TileNode::merge(const TerrainTileModel* model, const CreateTileManifest& manifest)
 {
     bool newElevationData = false;
     const RenderBindings& bindings = _context->getRenderBindings();
@@ -786,15 +845,14 @@ TileNode::merge(
     {
         // loop over all the layers included in the new data model and
         // add them to our render model (or update them if they already exist)
-        for(const auto& colorLayer : model->colorLayers())
+        for(const auto& colorLayer : model->colorLayers)
         {
-            auto& layer = colorLayer.layer();
+            auto& layer = colorLayer.layer;
             if (!layer.valid())
                 continue;
 
             // Look up the parent pass in case we need it
-            RenderingPass* pass = 
-                _renderModel.getPass(layer->getUID());
+            RenderingPass* pass = _renderModel.getPass(layer->getUID());
 
             const RenderingPass* parentPass =
                 getParentTile() ? getParentTile()->_renderModel.getPass(layer->getUID()) :
@@ -814,9 +872,9 @@ TileNode::merge(
 
                 pass->setSampler(
                     SamplerBinding::COLOR,
-                    colorLayer.texture(),
-                    colorLayer.matrix(),
-                    colorLayer.revision());
+                    colorLayer.texture,
+                    colorLayer.matrix,
+                    colorLayer.revision);
 
                 // If this is a new rendering pass, just copy the color into the color-parent.
                 if (isNewPass && bindings[SamplerBinding::COLOR_PARENT].isActive())
@@ -827,7 +885,7 @@ TileNode::merge(
                 // check to see if this data requires an image update traversal.
                 if (_imageUpdatesActive == false)
                 {
-                    _imageUpdatesActive = colorLayer.texture()->needsUpdates();
+                    _imageUpdatesActive = colorLayer.texture->needsUpdates();
                 }
 
                 if (imageLayer->getAsyncLoading())
@@ -847,14 +905,14 @@ TileNode::merge(
                     else
                     {
                         // note: this can happen with an async layer load
-                        OE_DEBUG << "no parent pass in my pass. key=" << model->key().str() << std::endl;
+                        //OE_DEBUG << "no parent pass in my pass. key=" << model->key.str() << std::endl;
                     }
 
                     // check whether it's actually a futuretexture.
                     // if it's not, it is likely an empty texture and we'll ignore it
-                    if (dynamic_cast<FutureTexture*>(colorLayer.texture()->osgTexture().get()))
+                    if (dynamic_cast<FutureTexture*>(colorLayer.texture->osgTexture().get()))
                     {
-                        pass->sampler(SamplerBinding::COLOR)._futureTexture = colorLayer.texture();
+                        pass->sampler(SamplerBinding::COLOR)._futureTexture = colorLayer.texture;
                     }
 
                     // require an update pass to process the future texture
@@ -869,7 +927,7 @@ TileNode::merge(
                 if (!pass)
                 {
                     pass = &_renderModel.addPass();
-                    pass->setLayer(colorLayer.layer().get());
+                    pass->setLayer(colorLayer.layer.get());
                 }
 
                 uidsLoaded.insert(pass->sourceUID());
@@ -887,7 +945,7 @@ TileNode::merge(
                 manifest.includes(myPass.layer()) &&
                 !uidsLoaded.contains(myPass.sourceUID()))
             {
-                OE_DEBUG << LC << "Releasing orphaned layer " << myPass.layer()->getName() << std::endl;
+                //OE_DEBUG << LC << "Releasing orphaned layer " << myPass.layer()->getName() << std::endl;
 
                 // release the GL objects associated with this pass.
                 // taking this out...can cause "flashing" issues
@@ -919,12 +977,12 @@ TileNode::merge(
     const SamplerBinding& elevation = bindings[SamplerBinding::ELEVATION];
     if (elevation.isActive())
     {
-        if (model->elevation().texture())
+        if (model->elevation.texture)
         {
             _renderModel.setSharedSampler(
                 SamplerBinding::ELEVATION,
-                model->elevation().texture(),
-                model->elevation().revision());
+                model->elevation.texture,
+                model->elevation.revision);
 
             updateElevationRaster();
 
@@ -949,12 +1007,12 @@ TileNode::merge(
     const SamplerBinding& normals = bindings[SamplerBinding::NORMAL];
     if (normals.isActive())
     {
-        if (model->normalMap().texture())
+        if (model->normalMap.texture)
         {
             _renderModel.setSharedSampler(
                 SamplerBinding::NORMAL,
-                model->normalMap().texture(),
-                model->normalMap().revision());
+                model->normalMap.texture,
+                model->normalMap.revision);
 
             updateNormalMap();
         }
@@ -974,12 +1032,12 @@ TileNode::merge(
     const SamplerBinding& landCover = bindings[SamplerBinding::LANDCOVER];
     if (landCover.isActive())
     {
-        if (model->landCover().texture())
+        if (model->landCover.texture)
         {
             _renderModel.setSharedSampler(
                 SamplerBinding::LANDCOVER,
-                model->landCover().texture(),
-                model->landCover().revision());
+                model->landCover.texture,
+                model->landCover.revision);
         }
 
         else if (
@@ -995,13 +1053,13 @@ TileNode::merge(
     // Other Shared Layers:
     uidsLoaded.clear();
 
-    for(unsigned index : model->sharedLayerIndices())
+    for(unsigned index : model->sharedLayerIndices)
     {
-        auto& sharedLayer = model->colorLayers()[index];
-        if (sharedLayer.texture())
+        auto& sharedLayer = model->colorLayers[index];
+        if (sharedLayer.texture)
         {
             // locate the shared binding corresponding to this layer:
-            UID uid = sharedLayer.layer()->getUID();
+            UID uid = sharedLayer.layer->getUID();
             unsigned bindingIndex = INT_MAX;
             for(unsigned i=SamplerBinding::SHARED; i<bindings.size() && bindingIndex==INT_MAX; ++i)
             {
@@ -1015,11 +1073,8 @@ TileNode::merge(
             {
                 _renderModel.setSharedSampler(
                     bindingIndex,
-                    sharedLayer.texture(),
-                    sharedLayer.revision());
-                //osg::Texture* tex = layerModel->getTexture();
-                //int revision = layerModel->getRevision();
-                //_renderModel.setSharedSampler(bindingIndex, tex, revision);
+                    sharedLayer.texture,
+                    sharedLayer.revision);
 
                 uidsLoaded.insert(uid);
             }
@@ -1267,20 +1322,20 @@ TileNode::load(TerrainCuller* culler)
     _loadPriority = priority;
 
     // Check the status of the load
-    ScopedMutexLock lock(_loadQueue);
+    std::lock_guard<std::mutex> lock(_loadQueue.mutex());
 
     if (_loadQueue.empty() == false)
     {
         LoadTileDataOperationPtr& op = _loadQueue.front();
 
-        if (op->_result.isAbandoned())
+        if (op->_result.empty())
         {
             // Actually this means that the task has not yet been dispatched,
             // so assign the priority and do it now.
             op->dispatch();
         }
 
-        else if (op->_result.isAvailable())
+        else if (op->_result.available())
         {
             // The task completed, so submit it to the merger.
             // (We can't merge here in the CULL traversal)
@@ -1327,14 +1382,19 @@ TileNode::removeSubTiles()
     }
     this->removeChildren(0, this->getNumChildren());
 
-    _createChildResults.clear();
+    _createChildrenFutureResult.reset();
+
+    _createChildResults[0].reset();
+    _createChildResults[1].reset();
+    _createChildResults[2].reset();
+    _createChildResults[3].reset();
 }
 
 
 void
 TileNode::notifyOfArrival(TileNode* that)
 {
-    if (options().normalizeEdges() == true)
+    if (_context->options().getNormalizeEdges() == true)
     {
         if (_key.createNeighborKey(1, 0) == that->getKey())
             _eastNeighbor = that;
@@ -1349,7 +1409,7 @@ TileNode::notifyOfArrival(TileNode* that)
 void
 TileNode::updateNormalMap()
 {
-    if (options().normalizeEdges() == false)
+    if (_context->options().getNormalizeEdges() == false)
         return;
 
     Sampler& thisNormalMap = _renderModel._sharedSamplers[SamplerBinding::NORMAL];
@@ -1386,7 +1446,6 @@ TileNode::updateNormalMap()
         {
             readThat(pixel, 0, t);
             writeThis(pixel, width-1, t);
-            //writeThis(readThat(0, t), width-1, t);
         }
 
         thisImage->dirty();
@@ -1427,16 +1486,16 @@ TileNode::updateNormalMap()
     //OE_INFO << LC << _key.str() << " : updated normal map.\n";
 }
 
-const TerrainOptions&
-TileNode::options() const
-{
-    return _context->options();
-}
+//const TerrainOptions&
+//TileNode::options() const
+//{
+//    return _context->options();
+//}
 
 bool
 TileNode::nextLoadIsProgressive() const
 {
     return
-        (options().progressive() == true) &&
+        (_context->options().getProgressive()) &&
         (_nextLoadManifestPtr == nullptr) || (!_nextLoadManifestPtr->progressive().isSetTo(false));
 }

@@ -28,6 +28,7 @@
 #include <osgEarth/ImageUtils>
 #include <osgEarth/DrapeableNode>
 #include <osgEarth/VirtualProgram>
+#include <osgEarth/Registry>
 #include <osg/Geode>
 #include <osg/ShapeDrawable>
 #include <osg/Texture2D>
@@ -45,9 +46,7 @@ namespace
     void clampLatitude(osg::Vec2d& l)
     {
         l.y() = osg::clampBetween( l.y(), -90.0, 90.0);
-    }    
-
-    static Distance default_geometryResolution(5.0, Units::DEGREES);
+    }
 
     const char* imageVS =
         "out vec2 oe_ImageOverlay_texcoord; \n"
@@ -70,21 +69,21 @@ namespace
 
 OSGEARTH_REGISTER_ANNOTATION( imageoverlay, osgEarth::ImageOverlay );
 
-osg::ref_ptr<VirtualProgram> ImageOverlay::_program;
+#define DEFAULT_GEOM_RESOLUTION Distance(5.0, Units::DEGREES)
 
 ImageOverlay::ImageOverlay(const Config& conf, const osgDB::Options* readOptions) :
-AnnotationNode(conf, readOptions),
-_lowerLeft    (10, 10),
-_lowerRight   (20, 10),
-_upperRight   (20, 20),
-_upperLeft    (10, 20),
-_dirty        (false),
-_alpha        (1.0f),
-_minFilter    (osg::Texture::LINEAR_MIPMAP_LINEAR),
-_magFilter    (osg::Texture::LINEAR),
-_texture      (0),
-_geometryResolution(default_geometryResolution),
-_draped(true)
+    AnnotationNode(conf, readOptions),
+    _lowerLeft(10, 10),
+    _lowerRight(20, 10),
+    _upperRight(20, 20),
+    _upperLeft(10, 20),
+    _dirty(false),
+    _alpha(1.0f),
+    _minFilter(osg::Texture::LINEAR_MIPMAP_LINEAR),
+    _magFilter(osg::Texture::LINEAR),
+    _texture(0),
+    _geometryResolution(DEFAULT_GEOM_RESOLUTION),
+    _draped(true)
 {
     construct();
 
@@ -138,7 +137,7 @@ _draped(true)
 
     if (conf.hasValue("geometry_resolution"))
     {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(conf.value("geometry_resolution"), value, units, Units::DEGREES))
             _geometryResolution.set(value, units);
     }
@@ -192,7 +191,7 @@ ImageOverlay::getConfig() const
 
     conf.set("draped", _draped);
 
-    if (_geometryResolution != default_geometryResolution)
+    if (_geometryResolution != DEFAULT_GEOM_RESOLUTION)
     {
         conf.set("geometry_resolution", _geometryResolution.asParseableString());
     }
@@ -204,25 +203,27 @@ ImageOverlay::getConfig() const
 
 
 ImageOverlay::ImageOverlay(MapNode* mapNode, osg::Image* image) :
-AnnotationNode(),
-_lowerLeft    (10, 10),
-_lowerRight   (20, 10),
-_upperRight   (20, 20),
-_upperLeft    (10, 20),
-_image        (image),
-_dirty        (false),
-_alpha        (1.0f),
-_minFilter    (osg::Texture::LINEAR_MIPMAP_LINEAR),
-_magFilter    (osg::Texture::LINEAR),
-_texture      (0),
-_geometryResolution(default_geometryResolution),
-_draped(true)
-{        
+    AnnotationNode(),
+    _lowerLeft(10, 10),
+    _lowerRight(20, 10),
+    _upperRight(20, 20),
+    _upperLeft(10, 20),
+    _image(image),
+    _dirty(false),
+    _alpha(1.0f),
+    _minFilter(osg::Texture::LINEAR_MIPMAP_LINEAR),
+    _magFilter(osg::Texture::LINEAR),
+    _texture(0),
+    _geometryResolution(DEFAULT_GEOM_RESOLUTION),
+    _draped(true)
+{
     construct();
 
-    ImageOverlay::setMapNode(mapNode);
-
-    compile();
+    if (mapNode)
+    {
+        ImageOverlay::setMapNode(mapNode);
+        compile();
+    }
 }
 
 void
@@ -234,24 +235,19 @@ ImageOverlay::construct()
     DrapeableNode* d = new DrapeableNode();
     d->setDrapingEnabled(*_draped);
     addChild( d );
-    
-    if (!_program.valid())
-    {
-        static Threading::Mutex mutex(OE_MUTEX_NAME);
-        mutex.lock();
-        if (_program.valid() == false)
+
+    auto vp = Registry::instance()->getOrCreate<VirtualProgram>("oe.vp.imageoverlay", []()
         {
-            _program = new VirtualProgram;
-            _program->setInheritShaders(true);
-            _program->setFunction("oe_ImageOverlay_VS", imageVS, VirtualProgram::LOCATION_VERTEX_MODEL);
-            _program->setFunction("oe_ImageOverlay_FS", imageFS, VirtualProgram::LOCATION_FRAGMENT_COLORING);
-        }
-        mutex.unlock();
-    }
+            auto vp = new VirtualProgram;
+            vp->setInheritShaders(true);
+            vp->setFunction("oe_ImageOverlay_VS", imageVS, VirtualProgram::LOCATION_VERTEX_MODEL);
+            vp->setFunction("oe_ImageOverlay_FS", imageFS, VirtualProgram::LOCATION_FRAGMENT_COLORING);
+            return vp;
+        });
 
     _root = new osg::Group();
     osg::StateSet *ss = _root->getOrCreateStateSet();
-    ss->setAttributeAndModes(_program.get(), osg::StateAttribute::ON);
+    ss->setAttributeAndModes(vp, osg::StateAttribute::ON);
     ss->addUniform(new osg::Uniform("oe_ImageOverlay_tex", 0));
     ss->addUniform(new osg::Uniform("oe_ImageOverlay_alpha", *_alpha));
     ss->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
@@ -263,7 +259,7 @@ ImageOverlay::construct()
 void
 ImageOverlay::compile()
 {
-    Threading::ScopedMutexLock lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
     if (_root->getNumChildren() > 0)
     {
@@ -360,6 +356,8 @@ namespace
 
 osg::Node* ImageOverlay::createNode()
 {
+    OE_SOFT_ASSERT_AND_RETURN(getMapNode(), new osg::Group());
+
     const SpatialReference* mapSRS = getMapNode()->getMapSRS();
     auto geoSRS = mapSRS->getGeodeticSRS();
 
@@ -376,13 +374,13 @@ osg::Node* ImageOverlay::createNode()
 
     osgEarth::Bounds bounds;
 
-    double minX = osg::minimum(_lowerLeft.x(), osg::minimum(_lowerRight.x(), osg::minimum(_upperLeft.x(), _upperRight.x())));
-    double minY = osg::minimum(_lowerLeft.y(), osg::minimum(_lowerRight.y(), osg::minimum(_upperLeft.y(), _upperRight.y())));
-    double maxX = osg::maximum(_lowerLeft.x(), osg::maximum(_lowerRight.x(), osg::maximum(_upperLeft.x(), _upperRight.x())));
-    double maxY = osg::maximum(_lowerLeft.y(), osg::maximum(_lowerRight.y(), osg::maximum(_upperLeft.y(), _upperRight.y())));
+    double minX = std::min(_lowerLeft.x(), std::min(_lowerRight.x(), std::min(_upperLeft.x(), _upperRight.x())));
+    double minY = std::min(_lowerLeft.y(), std::min(_lowerRight.y(), std::min(_upperLeft.y(), _upperRight.y())));
+    double maxX = std::max(_lowerLeft.x(), std::max(_lowerRight.x(), std::max(_upperLeft.x(), _upperRight.x())));
+    double maxY = std::max(_lowerLeft.y(), std::max(_lowerRight.y(), std::max(_upperLeft.y(), _upperRight.y())));
 
-    int numCols = osg::maximum(2, (int)((maxX - minX) / targetDegrees) + 1);
-    int numRows = osg::maximum(2, (int)((maxY - minY) / targetDegrees) + 1);
+    unsigned numCols = std::max(2, (int)((maxX - minX) / targetDegrees) + 1);
+    unsigned numRows = std::max(2, (int)((maxY - minY) / targetDegrees) + 1);
 
     float dx = 1.0 / (float)(numCols - 1);
     float dy = 1.0 / (float)(numRows - 1);
@@ -451,9 +449,6 @@ osg::Node* ImageOverlay::createNode()
             de->push_back(lr);  de->push_back(ur); de->push_back(ul);
         }
     }
-
-
-
 
     return transform;
 }
@@ -794,7 +789,7 @@ ImageOverlay::traverse(osg::NodeVisitor &nv)
 void ImageOverlay::dirty()
 {
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
         _dirty = true;
     }
 

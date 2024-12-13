@@ -83,14 +83,13 @@ namespace osgEarth { namespace Debug
 Config
 DebugImageLayer::Options::getMetadata()
 {
-    return Config::readJSON( OE_MULTILINE(
+    return Config::readJSON(R"(
         { "name" : "Debug",
           "properties": [
             { "name": "color_code", "description": "", "type": "string", "default": "" },
             { "name": "invert_y", "description": "Whether to invert the tilekey Y coordinate", "type": "boolean", "default": "false" },
           ]
-        }
-    ) );
+        } )");
 }
 
 Config
@@ -106,9 +105,6 @@ DebugImageLayer::Options::getConfig() const
 void
 DebugImageLayer::Options::fromConfig(const Config& conf)
 {
-    _colorCode.init("#000000");
-    _invertY.init(false);
-
     conf.get("color", _colorCode);
     conf.get("invert_y", _invertY);
     conf.get("show_tessellation", showTessellation());
@@ -266,11 +262,13 @@ DebugImageLayer::createImageImplementation(const TileKey& key, ProgressCallback*
     osgText::FontResolution resolution(res, res);
     for (unsigned i = 0; i < text.length(); ++i)
     {
-        if (text[i] == '\n') {
+        if (text[i] == '\n')
+        {
             y += res + 10;
             x = 10;
         }
-        else {
+        else if (_font.valid())
+        {
             //TODO: if SDF is in play, need to 'render' the SDF to a normal image
             // in copySubImageAndColorize -gw
             osgText::Glyph* glyph = _font->getGlyph(resolution, text[i]);

@@ -1,3 +1,5 @@
-set(TARGET_LIBRARIES_VARS OSG_LIBRARY OSGDB_LIBRARY OSGUTIL_LIBRARY OSGVIEWER_LIBRARY)
-set(TARGET_SRC osgearth_windows.cpp)
-SETUP_IMGUI_APPLICATION(osgearth_windows)
+add_osgearth_app(
+    TARGET osgearth_windows
+    SOURCES osgearth_windows.cpp
+    LIBRARIES osgEarthImGui
+    FOLDER Tests)

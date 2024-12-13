@@ -87,9 +87,10 @@ AltitudeFilter::pushAndDontClamp( FeatureList& features, FilterContext& cx )
         gpuClamping && 
         _altitude->clamping() == _altitude->CLAMP_TO_TERRAIN;
 
-    for( FeatureList::iterator i = features.begin(); i != features.end(); ++i )
+    for(auto feature : features)
     {
-        Feature* feature = i->get();
+        if (!feature)
+            continue;
         
         // run a symbol script if present.
         if ( _altitude.valid() && _altitude->script().isSet() )
@@ -234,7 +235,7 @@ AltitudeFilter::pushAndClamp( FeatureList& features, FilterContext& cx )
             offsetZ = feature->eval( offsetExpr, &cx );
 
         osgEarth::Bounds bounds = feature->getGeometry()->getBounds();
-        const osg::Vec3d center = bounds.center();
+        auto center = bounds.center();
         GeoPoint centroid(featureSRS.get(), center.x(), center.y());
         double   centroidElevation = 0.0;
 

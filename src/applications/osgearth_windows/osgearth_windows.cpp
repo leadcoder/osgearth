@@ -19,7 +19,7 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#include <osgEarth/ImGui/ImGuiApp>
+#include <osgEarthImGui/ImGuiApp>
 
 #include <osgViewer/CompositeViewer>
 #include <osgEarth/EarthManipulator>
@@ -39,7 +39,7 @@ usage(const char* name)
     OE_NOTICE
         << "\nUsage: " << name << " file.earth"
         << "\n          --views [num] : Number of windows to open"
-        << "\n          --shared      : Use a shared graphics context"
+        << "\n          --shared      : Share a single OSG graphics context across all windows (forces SingleThreaded mode)"
         << "\n          --updates [num] : Number of update traversals"
         << "\n"
         << MapNodeHelper().usage() << std::endl;
@@ -61,7 +61,6 @@ struct App
         _viewer(args),
         _size(800)
     {
-        //_viewer.setThreadingModel(_viewer.SingleThreaded);
         _sharedGC = args.read("--shared");
     }
 
@@ -101,7 +100,6 @@ struct App
 
         osgViewer::View* view = new osgViewer::View();
         view->getCamera()->setGraphicsContext(gc);
-        //osg::GraphicsContext::incrementContextIDUsageCount(gc->getState()->getContextID());
 
         view->getCamera()->setViewport(0, 0, width, height);
         view->getCamera()->setProjectionMatrixAsPerspective(45, 1, 1, 10);
@@ -124,10 +122,10 @@ struct App
     }
 };
 
-struct GCPanel : public GUI::BaseGUI
+struct GCPanel : public ImGuiPanel
 {
     App& _app;
-    GCPanel(App& app) : GUI::BaseGUI("GCs"), _app(app) { }
+    GCPanel(App& app) : ImGuiPanel("GCs"), _app(app) { }
 
     void draw(osg::RenderInfo& ri) override
     {
@@ -161,10 +159,10 @@ struct GCPanel : public GUI::BaseGUI
     }
 };
 
-struct ViewerPanel : public GUI::BaseGUI
+struct ViewerPanel : public ImGuiPanel
 {
     App& _app;
-    ViewerPanel(App& app) : GUI::BaseGUI("Views"), _app(app) { }
+    ViewerPanel(App& app) : ImGuiPanel("Views"), _app(app) { }
 
     void draw(osg::RenderInfo& ri) override
     {
@@ -246,9 +244,19 @@ main(int argc, char** argv)
     App app(arguments);
 
     // Setup the viewer for imgui
-    app._viewer.setRealizeOperation(new GUI::ApplicationGUI::RealizeOperation);
+    app._viewer.setRealizeOperation(new ImGuiAppEngine::RealizeOperation);
 
-    app._node = MapNodeHelper().loadWithoutControls(arguments, &app._viewer);
+    // Force SingleThreaded mode if we are sharing a GC and have more than one view.
+    // OSG cannot share a GC across multiple draw threads.
+    // https://groups.google.com/g/osg-users/c/hZEOr-Hb2kM/m/AiYZvRDLCAAJ
+    if (app._sharedGC)
+    {
+        app._viewer.setThreadingModel(osgViewer::ViewerBase::SingleThreaded);
+        OE_WARN << "Forcing --SingleThreaded mode because we are sharing an OSG Graphics Context (GC), "
+            "and OSG does not support multi-threading of a shared GC" << std::endl;
+    }
+
+    app._node = MapNodeHelper().load(arguments, &app._viewer);
     if (!app._node.get())
         return usage(argv[0]);
 
@@ -264,20 +272,19 @@ main(int argc, char** argv)
     if (arguments.read("--gui"))
     {
         // install the Gui.
-        GUI::ApplicationGUI* gui = new GUI::ApplicationGUI();
-        gui->addAllBuiltInTools();
-        gui->add(new ViewerPanel(app), true);
-        gui->add(new GCPanel(app), true);
-        view->getEventHandlers().push_front(gui);
+        auto* engine = new ImGuiAppEngine(arguments);
+        engine->add(new ViewerPanel(app), true);
+        engine->add(new GCPanel(app), true);
+        view->getEventHandlers().push_front(engine);
     }
 
     OE_NOTICE << "Press 'n' to create a new view" << std::endl;
-    EventRouter::get(view).onKeyPress(EventRouter::KEY_N, [&]() { 
+    EventRouter::get(view).onKeyPress(EventRouter::KEY_N, [&](...) { 
         std::cout << "Creating new view" << std::endl;
         app.addView(Stringify()<<"View " << app._viewer.getNumViews()); });
 
     OE_NOTICE << "Press 'r' to call releaseGLObjects" << std::endl;
-    EventRouter::get(view).onKeyPress(EventRouter::KEY_R, [&]() { 
+    EventRouter::get(view).onKeyPress(EventRouter::KEY_R, [&](...) { 
         app.releaseGLObjects(nullptr);
     });
 

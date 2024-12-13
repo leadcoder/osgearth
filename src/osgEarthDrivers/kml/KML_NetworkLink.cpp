@@ -54,7 +54,7 @@ KML_NetworkLink::build( xml_node<>* node, KMLContext& cx )
         if ( !llaBox )
             return;
 
-        const SpatialReference* geoSRS = cx._mapNode->getMapSRS()->getGeographicSRS();
+        const SpatialReference* geoSRS = cx._srs;
 
         GeoExtent llaExtent(
             geoSRS,
@@ -98,13 +98,6 @@ KML_NetworkLink::build( xml_node<>* node, KMLContext& cx )
         plod->setCenter( lodCenter );
         plod->setRadius( d );
 
-        osgDB::Options* options = Registry::instance()->cloneOrCreateOptions();
-        options->setPluginData( "osgEarth::MapNode", cx._mapNode );
-        plod->setDatabaseOptions( options );
-
-        OE_DEBUG << LC << 
-            "PLOD: radius = " << d << ", minRange=" << minRange << ", maxRange=" << maxRange << std::endl;
-
         cx._groupStack.top()->addChild( plod );
     }
 
@@ -113,9 +106,9 @@ KML_NetworkLink::build( xml_node<>* node, KMLContext& cx )
         osg::ProxyNode* proxy = new osg::ProxyNode();
         proxy->setFileName( 0, href );                
 
-        osgDB::Options* options = Registry::instance()->cloneOrCreateOptions();
-        options->setPluginData( "osgEarth::MapNode", cx._mapNode );
-        proxy->setDatabaseOptions( options );
+        //osgDB::Options* options = Registry::instance()->cloneOrCreateOptions();
+        //options->setPluginData( "osgEarth::MapNode", cx._mapNode );
+        //proxy->setDatabaseOptions( options );
 
         cx._groupStack.top()->addChild( proxy );
     }

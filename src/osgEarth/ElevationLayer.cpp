@@ -26,7 +26,7 @@
 
 using namespace osgEarth;
 
-#define LC "[ElevationLayer] \"" << getName() << "\" : "
+#define LC "[" << className() << "] \"" << getName() << "\" "
 
 //#define ANALYZE
 
@@ -47,9 +47,6 @@ ElevationLayer::Options::getConfig() const
 void
 ElevationLayer::Options::fromConfig( const Config& conf )
 {
-    _offset.init( false );
-    _noDataPolicy.init( NODATA_INTERPOLATE );
-
     conf.get("vdatum", verticalDatum() );
     conf.get("vsrs", verticalDatum() );    // back compat
     conf.get("offset", offset() );
@@ -104,7 +101,8 @@ ElevationLayer::init()
 {
     TileLayer::init();
 
-    _sentry.setName("ElevationLayer " + getName());
+    // open and visible are the same thing for elevation layers
+    _visibleTiedToOpen = true;
 
     // override with a different default tile size since elevation
     // tiles need overlapping edges
@@ -129,15 +127,15 @@ ElevationLayer::init()
     setRenderType(RENDERTYPE_NONE);
 }
 
-void
-ElevationLayer::setVisible(bool value)
-{
-    VisibleLayer::setVisible(value);
-    if (value)
-        open();
-    else
-        close();
-}
+//void
+//ElevationLayer::setVisible(bool value)
+//{
+//    VisibleLayer::setVisible(value);
+//    if (value)
+//        open();
+//    else
+//        close();
+//}
 
 void
 ElevationLayer::setVerticalDatum(const std::string& value)
@@ -189,7 +187,6 @@ ElevationLayer::normalizeNoDataValues(osg::HeightField* hf) const
             float& value = *i;
             if ( osg::isNaN(value) || osg::equivalent(value, getNoDataValue()) || value < getMinValidValue() || value > getMaxValidValue() )
             {
-                OE_DEBUG << "Replaced " << value << " with NO_DATA_VALUE" << std::endl;
                 value = NO_DATA_VALUE;
             }
         }
@@ -276,7 +273,7 @@ ElevationLayer::assembleHeightField(const TileKey& key,
 
             if ( isKeyInLegalRange(layerKey) )
             {
-                Threading::ScopedReadLock lock(layerMutex());
+                Threading::ScopedReadLock lock(inUseMutex());
                 GeoHeightField hf = createHeightFieldImplementation(layerKey, progress);
                 if (hf.valid())
                 {
@@ -400,29 +397,33 @@ ElevationLayer::createHeightFieldInKeyProfile(const TileKey& key, ProgressCallba
     // at the same time. This helps a lot with elevation data since
     // the many queries cross tile boundaries (like calculating 
     // normal maps)
-    ScopedGate<TileKey> gate(_sentry, key, [&]() {
-        return _memCache.valid();
-    });
-
-    // Check the memory cache first
-    bool fromMemCache = false;
+    auto& policy = getCacheSettings()->cachePolicy().get();
+    auto* cacheBin = policy.isCacheEnabled() ? getCacheBin(key.getProfile()) : nullptr;
 
     // cache key combines the key with the full signature (incl vdatum)
     // the cache key combines the Key and the horizontal profile.
-    std::string cacheKey = Cache::makeCacheKey(
-        Stringify() << key.str() << "-" << std::hex << key.getProfile()->getHorizSignature(),
-        "elevation");
-    const CachePolicy& policy = getCacheSettings()->cachePolicy().get();
+    auto cacheKey = Cache::makeCacheKey(key.str() + "-" + key.getProfile()->getHorizSignature(), "elevation");
+    std::string memCacheKey;
 
-    char memCacheKey[64];
+    // see if there's a persistent cache.
+    bool memCacheAvailable = _memCache.valid();
+
+    // Prevent multiple threads from creating the same object at the same time
+    // IF there is a cache present. The gate goes here so that the first thread
+    // to enter has a chance to write to a cache, allowing the followers to read
+    // from that cache immediately when unblocked.
+    // 
+    // NOTE! This can cause deadlock. Cause: the ElevationPool has a r/w lock that it
+    // uses when synchronizing and refreshing from the Map. If this functions is called
+    // from the ElevationPool and this gate locks while holding that read lock, all
+    // other threads will be blocked and you get deadlock.T
+    //ScopedGate<TileKey> gate(_sentry, key, memCacheAvailable || diskCacheAvailable);
 
     // Try the L2 memory cache first:
+    bool fromMemCache = false;
     if ( _memCache.valid() )
     {
-        sprintf(memCacheKey, "%d/%s/%s",
-            getRevision(),
-            key.str().c_str(),
-            key.getProfile()->getHorizSignature().c_str());
+        memCacheKey = std::to_string(getRevision()) + cacheKey;
 
         CacheBin* bin = _memCache->getOrCreateDefaultBin();
         ReadResult cacheResult = bin->readObject(memCacheKey, 0L);
@@ -439,9 +440,6 @@ ElevationLayer::createHeightFieldInKeyProfile(const TileKey& key, ProgressCallba
     // Next try the main cache:
     if ( !result.valid() )
     {
-        // See if there's a persistent cache.
-        CacheBin* cacheBin = getCacheBin( key.getProfile() );
-
         // validate the existance of a valid layer profile.
         if ( !policy.isCacheOnly() && !getProfile() )
         {
@@ -455,9 +453,9 @@ ElevationLayer::createHeightFieldInKeyProfile(const TileKey& key, ProgressCallba
 
         osg::ref_ptr< osg::HeightField > cachedHF;
 
-        if ( cacheBin && policy.isCacheReadable() )
+        if (cacheBin != nullptr && policy.isCacheReadable())
         {
-            ReadResult r = cacheBin->readObject(cacheKey, 0L);
+            ReadResult r = cacheBin->readObject(cacheKey, nullptr);
             if ( r.succeeded() )
             {
                 bool expired = policy.isExpired(r.lastModifiedTime());
@@ -490,7 +488,7 @@ ElevationLayer::createHeightFieldInKeyProfile(const TileKey& key, ProgressCallba
 
             if (key.getProfile()->isHorizEquivalentTo(profile.get()))
             {
-                Threading::ScopedReadLock lock(layerMutex());
+                Threading::ScopedReadLock lock(inUseMutex());
                 result = createHeightFieldImplementation(key, progress);
             }
             else
@@ -545,20 +543,18 @@ ElevationLayer::createHeightFieldInKeyProfile(const TileKey& key, ProgressCallba
 
             // If we have a cacheable heightfield, and it didn't come from the cache
             // itself, cache it now.
-            if ( hf.valid()    &&
-                 cacheBin      &&
-                 !fromCache    &&
-                 policy.isCacheWriteable() )
+            if (hf.valid() &&
+                !fromCache &&
+                cacheBin && policy.isCacheWriteable() )
             {
                 OE_PROFILING_ZONE_NAMED("cache write");
-                cacheBin->write(cacheKey, hf.get(), 0L);
+                cacheBin->write(cacheKey, hf.get(), nullptr);
             }
 
             // If we have an expired heightfield from the cache and were not able to create
             // any new data, just return the cached data.
             if (!hf.valid() && cachedHF.valid())
             {
-                OE_DEBUG << LC << "Using cached but expired heightfield for " << key.str() << std::endl;
                 hf = cachedHF;
             }
 
@@ -596,7 +592,7 @@ ElevationLayer::writeHeightField(const TileKey& key, const osg::HeightField* hf,
 {
     if (isWritingSupported() && isWritingRequested())
     {
-        Threading::ScopedReadLock lock(layerMutex());
+        Threading::ScopedReadLock lock(inUseMutex());
         return writeHeightFieldImplementation(key, hf, progress);
     }
     return Status::ServiceUnavailable;
@@ -669,14 +665,30 @@ osg::MixinVector< osg::ref_ptr<ElevationLayer> >( rhs )
 
 namespace
 {
-    struct LayerData {
+    struct LayerData
+    {
         osg::ref_ptr<ElevationLayer> layer;
         TileKey key;
-        bool isFallback;
-        int index;
+        bool isFallback = false;
+        int index = 0;
     };
 
-    typedef std::vector<LayerData> LayerDataVector;
+    using LayerDataVector = std::vector<LayerData>;
+
+    // thread-local working space to prevent constant reallocation
+    struct Workspace
+    {
+        LayerDataVector contenders;
+        LayerDataVector offsets;
+
+        GeoHeightFieldVector heightFields;
+        std::vector<TileKey> heightFieldActualKeys;
+        GeoHeightFieldVector offsetFields;
+        std::vector<bool>  heightFallback;
+        std::vector<bool>  heightFailed;
+        std::vector<bool>  offsetFailed;
+    };
+    //thread_local Workspace s_per_thread_workspace;
 }
 
 bool
@@ -705,8 +717,12 @@ ElevationLayerVector::populateHeightField(
     }
 
     // Collect the valid layers for this tile.
-    LayerDataVector contenders;
-    LayerDataVector offsets;
+    Workspace w;
+#if 0
+    auto& w = s_per_thread_workspace;
+    w.contenders.clear();
+    w.offsets.clear();
+#endif
 
 #ifdef ANALYZE
     struct LayerAnalysis {
@@ -777,8 +793,8 @@ ElevationLayerVector::populateHeightField(
             {
                 if ( layer->isOffset() )
                 {
-                    offsets.push_back(LayerData());
-                    LayerData& ld = offsets.back();
+                    w.offsets.push_back(LayerData());
+                    LayerData& ld = w.offsets.back();
                     ld.layer = layer;
                     ld.key = bestKey;
                     ld.isFallback = bestKey != mappedKey;
@@ -786,8 +802,8 @@ ElevationLayerVector::populateHeightField(
                 }
                 else
                 {
-                    contenders.push_back(LayerData());
-                    LayerData& ld = contenders.back();
+                    w.contenders.push_back(LayerData());
+                    LayerData& ld = w.contenders.back();
                     ld.layer = layer;
                     ld.key = bestKey;
                     ld.isFallback = bestKey != mappedKey;
@@ -802,13 +818,13 @@ ElevationLayerVector::populateHeightField(
     }
 
     // nothing? bail out.
-    if ( contenders.empty() && offsets.empty() )
+    if ( w.contenders.empty() && w.offsets.empty() )
     {
         return false;
     }
 
     // if everything is fallback data, bail out.
-    if ( contenders.size() + offsets.size() == numFallbackLayers )
+    if ( w.contenders.size() + w.offsets.size() == numFallbackLayers )
     {
         return false;
     }
@@ -835,11 +851,11 @@ ElevationLayerVector::populateHeightField(
 
     // If we only have a single contender layer, and the tile is the same size as the requested
     // heightfield then we just use it directly and avoid having to resample it
-    if (contenders.size() == 1 && offsets.empty())
+    if (w.contenders.size() == 1 && w.offsets.empty())
     {
-        ElevationLayer* layer = contenders[0].layer.get();
+        ElevationLayer* layer = w.contenders[0].layer.get();
 
-        GeoHeightField layerHF = layer->createHeightField(contenders[0].key, progress);
+        GeoHeightField layerHF = layer->createHeightField(w.contenders[0].key, progress);
         if (layerHF.valid())
         {
             if (layerHF.getHeightField()->getNumColumns() == hf->getNumColumns() &&
@@ -856,7 +872,7 @@ ElevationLayerVector::populateHeightField(
 
                 if (resolutions)
                 {
-                    std::pair<double,double> res = contenders[0].key.getResolution(hf->getNumColumns());
+                    std::pair<double,double> res = w.contenders[0].key.getResolution(hf->getNumColumns());
                     for(unsigned i=0; i<hf->getNumColumns()*hf->getNumRows(); ++i)
                         (*resolutions)[i] = res.second;
                 }
@@ -868,18 +884,18 @@ ElevationLayerVector::populateHeightField(
     if (requiresResample)
     {
         // We will load the actual heightfields on demand. We might not need them all.
-        GeoHeightFieldVector heightFields(contenders.size());
-        std::vector<TileKey> heightFieldActualKeys(contenders.size());
-        GeoHeightFieldVector offsetFields(offsets.size());
-        std::vector<bool>    heightFallback(contenders.size(), false);
-        std::vector<bool>    heightFailed(contenders.size(), false);
-        std::vector<bool>    offsetFailed(offsets.size(), false);
+        w.heightFields.assign(w.contenders.size(), {});
+        w.heightFieldActualKeys.assign(w.contenders.size(), {});
+        w.offsetFields.assign(w.offsets.size(), {});
+        w.heightFallback.assign(w.contenders.size(), false);
+        w.heightFailed.assign(w.contenders.size(), false);
+        w.offsetFailed.assign(w.offsets.size(), false);
 
         // Initialize the actual keys to match the contender keys.
         // We'll adjust these as necessary if we need to fall back
-        for(unsigned i=0; i<contenders.size(); ++i)
+        for(unsigned i=0; i< w.contenders.size(); ++i)
         {
-            heightFieldActualKeys[i] = contenders[i].key;
+            w.heightFieldActualKeys[i] = w.contenders[i].key;
         }
 
         // The maximum number of heightfields to keep in this local cache
@@ -907,17 +923,17 @@ ElevationLayerVector::populateHeightField(
 
                 osg::Vec3 normal_sum(0, 0, 0);
 
-                for (int i = 0; i < contenders.size() && resolvedIndex < 0; ++i)
+                for (int i = 0; i < w.contenders.size() && resolvedIndex < 0; ++i)
                 {
-                    ElevationLayer* layer = contenders[i].layer.get();
-                    TileKey& contenderKey = contenders[i].key;
-                    int index = contenders[i].index;
+                    ElevationLayer* layer = w.contenders[i].layer.get();
+                    TileKey& contenderKey = w.contenders[i].key;
+                    int index = w.contenders[i].index;
 
-                    if (heightFailed[i])
+                    if (w.heightFailed[i])
                         continue;
 
-                    GeoHeightField& layerHF = heightFields[i];
-                    TileKey& actualKey = heightFieldActualKeys[i];
+                    GeoHeightField& layerHF = w.heightFields[i];
+                    TileKey& actualKey = w.heightFieldActualKeys[i];
 
                     if (!layerHF.valid())
                     {
@@ -936,15 +952,15 @@ ElevationLayerVector::populateHeightField(
                         if (layerHF.valid())
                         {
                             //TODO: check this. Should it be actualKey != keyToUse...?
-                            heightFallback[i] =
-                                contenders[i].isFallback ||
+                            w.heightFallback[i] =
+                                w.contenders[i].isFallback ||
                                 (actualKey != contenderKey);
 
                             numHeightFieldsInCache++;
                         }
                         else
                         {
-                            heightFailed[i] = true;
+                            w.heightFailed[i] = true;
 #ifdef ANALYZE
                             layerAnalysis[layer].failed = true;
                             layerAnalysis[layer].actualKeyValid = actualKey->valid();
@@ -956,7 +972,7 @@ ElevationLayerVector::populateHeightField(
 
                     if (layerHF.valid())
                     {
-                        bool isFallback = heightFallback[i];
+                        bool isFallback = w.heightFallback[i];
 #ifdef ANALYZE
                         layerAnalysis[layer].fallback = isFallback;
 #endif
@@ -995,39 +1011,39 @@ ElevationLayerVector::populateHeightField(
                     if (numHeightFieldsInCache >= maxHeightFields)
                     {
                         //OE_NOTICE << "Clearing cache" << std::endl;
-                        for (unsigned int k = 0; k < heightFields.size(); k++)
+                        for (unsigned int k = 0; k < w.heightFields.size(); k++)
                         {
-                            heightFields[k] = GeoHeightField::INVALID;
-                            heightFallback[k] = false;
+                            w.heightFields[k] = GeoHeightField::INVALID;
+                            w.heightFallback[k] = false;
                         }
                         numHeightFieldsInCache = 0;
                     }
                 }
 
-                for (int i = offsets.size() - 1; i >= 0; --i)
+                for (int i = w.offsets.size() - 1; i >= 0; --i)
                 {
                     if (progress && progress->isCanceled())
                         return false;
 
                     // Only apply an offset layer if it sits on top of the resolved layer
                     // (or if there was no resolved layer).
-                    if (resolvedIndex >= 0 && offsets[i].index < resolvedIndex)
+                    if (resolvedIndex >= 0 && w.offsets[i].index < resolvedIndex)
                         continue;
 
-                    TileKey& contenderKey = offsets[i].key;
+                    TileKey& contenderKey = w.offsets[i].key;
 
-                    if (offsetFailed[i] == true)
+                    if (w.offsetFailed[i] == true)
                         continue;
 
-                    GeoHeightField& layerHF = offsetFields[i];
+                    GeoHeightField& layerHF = w.offsetFields[i];
                     if (!layerHF.valid())
                     {
-                        ElevationLayer* offset = offsets[i].layer.get();
+                        ElevationLayer* offset = w.offsets[i].layer.get();
 
                         layerHF = offset->createHeightField(contenderKey, progress);
                         if (!layerHF.valid())
                         {
-                            offsetFailed[i] = true;
+                            w.offsetFailed[i] = true;
                             continue;
                         }
                     }
@@ -1060,8 +1076,8 @@ ElevationLayerVector::populateHeightField(
 
 #ifdef ANALYZE
     {
-        static Threading::Mutex m;
-        Threading::ScopedMutexLock lock(m);
+        static std::mutex m;
+        std::lock_guard<std::mutex> lock(m);
         std::cout << key.str() << ": ";
         for (std::map<ElevationLayer*, LayerAnalysis>::const_iterator i = layerAnalysis.begin();
             i != layerAnalysis.end(); ++i)

@@ -16,8 +16,6 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#undef min
-#undef max
 #include <osgEarth/EarthManipulator>
 #include <osgEarth/GeoMath>
 #include <osgEarth/TerrainEngineNode>
@@ -289,15 +287,15 @@ _min_distance                   ( 1.0 ),
 _max_distance                   ( DBL_MAX ),
 _tether_mode                    ( TETHER_CENTER ),
 _arc_viewpoints                 ( true ),
-_auto_vp_duration               ( false ),
-_min_vp_duration_s              ( 3.0 ),
-_max_vp_duration_s              ( 8.0 ),
+_auto_vp_duration               ( true ),
+_min_vp_duration_s              ( 1.0 ),
+_max_vp_duration_s              ( 3.0 ),
 _orthoTracksPerspective         ( true ),
 _terrainAvoidanceEnabled        ( true ),
 _terrainAvoidanceMinDistance    ( 1.0 ),
 _throwingEnabled                ( false ),
-_throwDecayRate                 ( 0.05 ),
-_zoomToMouse                    ( false )
+_throwDecayRate                 ( 0.175 ),
+_zoomToMouse                    ( true )
 {
     //NOP
 }
@@ -539,8 +537,8 @@ EarthManipulator::Settings::setAutoViewpointDurationEnabled( bool value )
 void
 EarthManipulator::Settings::setAutoViewpointDurationLimits( double minSeconds, double maxSeconds )
 {
-    _min_vp_duration_s = osg::clampAbove( minSeconds, 0.0 );
-    _max_vp_duration_s = osg::clampAbove( maxSeconds, _min_vp_duration_s );
+    _min_vp_duration_s = std::max( minSeconds, 0.0 );
+    _max_vp_duration_s = std::max( maxSeconds, _min_vp_duration_s );
     dirty();
 }
 
@@ -634,6 +632,7 @@ EarthManipulator::configureDefaultSettings()
 
     options.clear();
     options.add( OPTION_CONTINUOUS, true );
+    options.add(OPTION_SCALE_Y, 5.0);
 
     // zoom as you hold the right button:
     _settings->bindMouse( ACTION_ZOOM, osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON, 0L, options );
@@ -684,7 +683,6 @@ EarthManipulator::configureDefaultSettings()
     _settings->bindMultiDrag( ACTION_ROTATE, options );
     _settings->bindTouchDrag( ACTION_PAN, options );
 
-    //_settings->setThrowingEnabled( false );
     _settings->setLockAzimuthWhilePanning( true );
 }
 
@@ -716,7 +714,7 @@ EarthManipulator::applySettings( Settings* settings )
     if ( !osg::equivalent(new_pitch_deg, old_pitch_deg) )
     {
         Viewpoint vp = getViewpoint();
-        vp.pitch()->set(new_pitch_deg, Units::DEGREES);
+        vp.pitch() = Angle(new_pitch_deg, Units::DEGREES);
         setViewpoint( vp );
     }
 }
@@ -795,10 +793,10 @@ EarthManipulator::established()
         {
             Viewpoint vp;
             vp.focalPoint() = GeoPoint(_srs.get(), -90.0, 0, 0, ALTMODE_ABSOLUTE);
-            vp.heading()->set( 0.0, Units::DEGREES );
-            vp.pitch()->set( -89.0, Units::DEGREES );
-            vp.range()->set( _srs->getEllipsoid().getRadiusEquator() * 3.0, Units::METERS );
-            vp.positionOffset()->set(0,0,0);
+            vp.heading() = Angle(0.0, Units::DEGREES );
+            vp.pitch() = Angle(-89.0, Units::DEGREES );
+            vp.range() = Distance(_srs->getEllipsoid().getRadiusEquator() * 3.0, Units::METERS );
+            vp.positionOffset() = osg::Vec3d(0,0,0);
             setHomeViewpoint( vp );
         }
         else
@@ -806,10 +804,10 @@ EarthManipulator::established()
             Viewpoint vp;
             const Profile* profile = _mapNode->getMap()->getProfile();
             vp.focalPoint() = profile->getExtent().getCentroid();
-            vp.range()->set(2.0 * std::max(profile->getExtent().width(), profile->getExtent().height()), Units::METERS);
-            vp.positionOffset()->set(0, 0, 0);
-            vp.heading()->set(0.0, Units::DEGREES);
-            vp.pitch()->set(-90.0, Units::DEGREES);
+            vp.range() = Distance(2.0 * std::max(profile->getExtent().width(), profile->getExtent().height()), Units::METERS);
+            vp.positionOffset() = osg::Vec3d(0, 0, 0);
+            vp.heading() = Angle(0.0, Units::DEGREES);
+            vp.pitch() = Angle(-90.0, Units::DEGREES);
             setHomeViewpoint( vp );
         }
     }
@@ -950,34 +948,40 @@ EarthManipulator::getViewpoint() const
         vp = _setVP1.get();
 
         if (vp.getNode().valid())
-            vp.focalPoint()->fromWorld(_srs.get(), computeWorld(vp.getNode().get()));
+        {
+            GeoPoint point;
+            point.fromWorld(_srs.get(), computeWorld(vp.getNode().get()));
+            vp.focalPoint() = point;
+        }
         else
+        {
             vp.focalPoint().unset();
+        }
     }
 
     // Transitioning? Capture the last calculated intermediate position.
     else if ( isSettingViewpoint() )
     {
-        vp.focalPoint()->fromWorld( _srs.get(), _center );
+        vp.focalPoint().mutable_value().fromWorld( _srs.get(), _center );
     }
 
     // If we are stationary:
     else
     {
-        vp.focalPoint()->fromWorld( _srs.get(), _center );
+        vp.focalPoint().mutable_value().fromWorld( _srs.get(), _center );
     }
 
     // Always update the local offsets.
     double localAzim, localPitch;
     getEulerAngles( _rotation, &localAzim, &localPitch );
 
-    vp.heading() = Angle(localAzim,  Units::RADIANS).to(Units::DEGREES);
-    vp.pitch()   = Angle(localPitch, Units::RADIANS).to(Units::DEGREES);
-    vp.range()->set( _distance, Units::METERS );
+    vp.heading() = Angle(localAzim, Units::RADIANS).to(Units::DEGREES);
+    vp.pitch() = Angle(localPitch, Units::RADIANS).to(Units::DEGREES);
+    vp.range() = Distance(_distance, Units::METERS);
 
     if ( _posOffset.x() != 0.0 || _posOffset.y() != 0.0 || _posOffset.z() != 0.0 )
     {
-        vp.positionOffset()->set(_posOffset);
+        vp.positionOffset() = _posOffset;
     }
 
     return vp;
@@ -1018,28 +1022,24 @@ EarthManipulator::setViewpoint(const Viewpoint& vp, double duration_seconds)
         getEulerAngles( _rotation, &defAzim, &defPitch );
 
         if ( !_setVP1->heading().isSet() )
-            _setVP1->heading() = Angle(defAzim, Units::RADIANS);
+            _setVP1.mutable_value().heading() = Angle(defAzim, Units::RADIANS);
 
         if ( !_setVP1->pitch().isSet() )
-            _setVP1->pitch() = Angle(defPitch, Units::RADIANS);
+            _setVP1.mutable_value().pitch() = Angle(defPitch, Units::RADIANS);
 
         if ( !_setVP1->range().isSet() )
-            _setVP1->range() = Distance(_distance, Units::METERS);
+            _setVP1.mutable_value().range() = Distance(_distance, Units::METERS);
 
         if ( !_setVP1->nodeIsSet() && !_setVP1->focalPoint().isSet() )
         {
             osg::ref_ptr<osg::Node> vpNode = _setVP0->getNode();
             if (vpNode.valid())
-                _setVP1->setNode(vpNode.get());
+                _setVP1.mutable_value().setNode(vpNode.get());
             else
-                _setVP1->focalPoint() = _setVP0->focalPoint().get();
+                _setVP1.mutable_value().focalPoint() = _setVP0->focalPoint().get();
         }
 
-        _setVPDuration.set( osg::maximum(duration_seconds, 0.0), Units::SECONDS );
-
-        OE_DEBUG << LC << "setViewpoint:\n"
-            << "    from " << _setVP0->toString() << "\n"
-            << "    to   " << _setVP1->toString() << "\n";
+        _setVPDuration.set( std::max(duration_seconds, 0.0), Units::SECONDS );
 
         // access the new tether node if it exists:
         osg::ref_ptr<osg::Node> endNode = _setVP1->getNode();
@@ -1115,7 +1115,7 @@ EarthManipulator::setViewpoint(const Viewpoint& vp, double duration_seconds)
         else
         {
             // Immediate transition? Just do it now.
-            _setVPStartTime->set( _time_s_now, Units::SECONDS );
+            _setVPStartTime = Duration(_time_s_now, Units::SECONDS);
             setViewpointFrame( _time_s_now );
         }
 
@@ -1143,7 +1143,7 @@ EarthManipulator::setViewpointFrame(double time_s)
 {
     if ( !_setVPStartTime.isSet() )
     {
-        _setVPStartTime->set( time_s, Units::SECONDS );
+        _setVPStartTime = Duration(time_s, Units::SECONDS);
         return 0.0;
     }
     else
@@ -1167,7 +1167,7 @@ EarthManipulator::setViewpointFrame(double time_s)
         // Remaining time is the full duration minus the time since initiation:
         double elapsed = time_s - _setVPStartTime->as(Units::SECONDS);
         double duration = _setVPDuration.as(Units::SECONDS);
-        double t = osg::minimum(1.0, duration > 0.0 ? elapsed/duration : 1.0);
+        double t = std::min(1.0, duration > 0.0 ? elapsed/duration : 1.0);
         double tp = t;
 
         if ( _setVPArcHeight > 0.0 )
@@ -1308,9 +1308,13 @@ EarthManipulator::clearViewpoint()
     _setVP0.unset();
     _setVP1.unset();
 
+    if (breakingTether)
+    {
+        collapseTetherRotationIntoRotation();
+    }
+
     // Restore the matrix values in a neutral state.
     recalculateCenterFromLookVector();
-    //resetLookAt();
 
     // Fire the callback to indicate a tethering break.
     if ( _tetherCallback.valid() && breakingTether )
@@ -1362,8 +1366,6 @@ void EarthManipulator::collisionDetect()
             setByLookAtRaw(ip + adjVector * eps, _center, eyeUp);
             _rotation = rotation;
         }
-
-        //OE_INFO << "hit at " << ip.x() << ", " << ip.y() << ", " << ip.z() << "\n";
     }
 }
 
@@ -1585,11 +1587,11 @@ EarthManipulator::updateProjection(osg::Camera* eventCamera)
 
                 eventCamera->setProjectionMatrix(orthoProj);
 
-                OE_DEBUG << "ORTHO: "
-                    << "ar = " << ar << ", width=" << vp->width() << ", height=" << vp->height()
-                    << ", dist = " << _distance << ", vfov=" << _lastKnownVFOV
-                    << ", X = " << x << ", Y = " << y
-                    << std::endl;
+                //OE_DEBUG << "ORTHO: "
+                //    << "ar = " << ar << ", width=" << vp->width() << ", height=" << vp->height()
+                //    << ", dist = " << _distance << ", vfov=" << _lastKnownVFOV
+                //    << ", X = " << x << ", Y = " << y
+                //    << std::endl;
             }
         }
     }
@@ -1607,8 +1609,8 @@ EarthManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapt
 
     osg::View* view = aa.asView();
 
-    //double time_s_now = osg::Timer::instance()->time_s();
-    _time_s_now = view->getFrameStamp()->getReferenceTime();
+    _time_s_now = ea.getTime();
+    //_time_s_now = view->getFrameStamp()->getReferenceTime();
 
     if ( ea.getEventType() == osgGA::GUIEventAdapter::FRAME )
     {
@@ -1637,15 +1639,15 @@ EarthManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapt
             else if ( isSettingViewpoint() && !isTethering() )
             {
                 if ( _frameCount < 2 )
-                    _setVPStartTime->set(_time_s_now, Units::SECONDS);
+                    _setVPStartTime = Duration(_time_s_now, Units::SECONDS);
             }
 
             if (_thrown)
             {
                 double decayFactor = 1.0 - _settings->getThrowDecayRate();
 
-                _throw_dx = osg::absolute(_throw_dx) > osg::absolute(_dx * 0.01) ? _throw_dx * decayFactor : 0.0;
-                _throw_dy = osg::absolute(_throw_dy) > osg::absolute(_dy * 0.01) ? _throw_dy * decayFactor : 0.0;
+                _throw_dx = std::abs(_throw_dx) > std::abs(_dx * 0.01) ? _throw_dx * decayFactor : 0.0;
+                _throw_dy = std::abs(_throw_dy) > std::abs(_dy * 0.01) ? _throw_dy * decayFactor : 0.0;
 
                 if (_throw_dx == 0.0 && _throw_dy == 0.0)
                     _thrown = false;
@@ -2609,15 +2611,6 @@ EarthManipulator::rotate( double dx, double dy )
     double minp = osg::DegreesToRadians( osg::clampAbove(_settings->getMinPitch(), -89.9) );
     double maxp = osg::DegreesToRadians( osg::clampBelow(_settings->getMaxPitch(),  89.9) );
 
-#if 0
-    OE_NOTICE << LC
-        << "LocalPitch=" << osg::RadiansToDegrees(_local_pitch)
-        << ", dy=" << osg::RadiansToDegrees(dy)
-        << ", dy+lp=" << osg::RadiansToDegrees(_local_pitch+dy)
-        << ", limits=" << osg::RadiansToDegrees(minp) << "," << osg::RadiansToDegrees(maxp)
-        << std::endl;
-#endif
-
     // clamp pitch range:
     double oldPitch;
     getEulerAngles( _rotation, 0L, &oldPitch );
@@ -2750,6 +2743,8 @@ EarthManipulator::zoom( double dx, double dy, osg::View* in_view )
         {
             // projected map. This will a simple linear interpolation
             // of the eyepoint along the path between the eye and the target.
+            recalculateCenterFromLookVector();
+
             osg::Vec3d eye, at, up;
             getWorldInverseMatrix().getLookAt(eye, at, up);
 
@@ -2770,8 +2765,9 @@ EarthManipulator::zoom( double dx, double dy, osg::View* in_view )
     else
     {
         // if the user's mouse isn't over the earth, just zoom in to the center of the screen
+        recalculateCenterFromLookVector();
         double scale = 1.0f + dy;
-        setDistance( _distance * scale );
+        setDistance(_distance * scale);
         collisionDetect();
     }
 }
@@ -2873,7 +2869,7 @@ EarthManipulator::handlePointAction( const Action& action, float mx, float my, o
             case ACTION_GOTO:
             {
                 Viewpoint here = getViewpoint();
-                here.focalPoint()->fromWorld(_srs.get(), point);
+                here.focalPoint().mutable_value().fromWorld(_srs.get(), point);
 
                 //osg::Vec3d pointVP;
                 //here.getSRS()->transformFromWorld(point, pointVP);
@@ -2901,7 +2897,7 @@ EarthManipulator::handlePointAction( const Action& action, float mx, float my, o
 void
 EarthManipulator::handleContinuousAction( const Action& action, osg::View* view )
 {
-    double t_factor = (_time_s_now - _last_continuous_action_time)/0.016666666;
+    double t_factor = (_time_s_now - _last_continuous_action_time) * 60.0;
     _last_continuous_action_time = _time_s_now;
     handleMovementAction( action._type, _continuous_dx * t_factor, _continuous_dy * t_factor, view );
 }
@@ -3076,8 +3072,6 @@ EarthManipulator::recalculateRoll()
 
     if (sideVector.length()<0.1)
     {
-        //OE_INFO<<"Side vector short "<<sideVector.length()<<std::endl;
-
         sideVector = upVector^localUp;
         sideVector.normalize();
 
@@ -3416,7 +3410,6 @@ EarthManipulator::drag(double dx, double dy, osg::View* theView)
         osg::Vec3d earthOrigin = zero * viewMat;
         const osg::Vec3d endDrag = calcTangentPoint(zero, earthOrigin, radiusEquator, winpt);
         worldEndDrag = endDrag * viewMatInv;
-        //OE_INFO << "tangent: " << worldEndDrag << "\n";
     }
 
     if (_srs->isGeographic())

@@ -1,53 +1,55 @@
 # osgEarth Core Library
 
-IF(OSGEARTH_BUILD_SHARED_LIBS)
-    ADD_DEFINITIONS(-DOSGEARTH_LIBRARY)
-ELSE ()
-    ADD_DEFINITIONS(-DOSGEARTH_LIBRARY_STATIC)
-ENDIF()
+if(OSGEARTH_BUILD_SHARED_LIBS)
+    add_definitions(-DOSGEARTH_LIBRARY)
+else()
+    add_definitions(-DOSGEARTH_LIBRARY_STATIC)
+endif()
 
-# Add __STDC_FORMAT_MACROS for use of PRIu64 macro
-ADD_DEFINITIONS(-D__STDC_FORMAT_MACROS)
+# Dependencies ...................................................
 
-# CURL options
-OPTION(CURL_IS_STATIC "on if curl is a static lib " ON)
-MARK_AS_ADVANCED(CURL_IS_STATIC)
+# required
+find_package(CURL REQUIRED)
+find_package(GDAL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
-# NVTT mipmap generation
-option(OSGEARTH_ENABLE_NVTT_CPU_MIPMAPS "Use NVTT, if available, to generate texture mipmaps on the CPU" OFF)
-mark_as_advanced(OSGEARTH_ENABLE_NVTT_CPU_MIPMAPS)
-if(OSGEARTH_ENABLE_NVTT_CPU_MIPMAPS)
-    add_definitions(-DOSGEARTH_ENABLE_NVTT_CPU_MIPMAPS)
-endif(OSGEARTH_ENABLE_NVTT_CPU_MIPMAPS)
+# optional
+find_package(geos QUIET)
+find_package(blend2d QUIET)
+find_package(blosc QUIET)
+find_package(spdlog QUIET)
+find_package(meshoptimizer QUIET)
 
-# TinyXML options
-ADD_DEFINITIONS(-DTIXML_USE_STL)
+if(OSGEARTH_BUILD_ZIP_PLUGIN)
+    find_package(LibZip QUIET)
+endif()
+
+if(OSGEARTH_PROTOBUF_FORCE_CONFIG_MODE)
+    # https://stackoverflow.com/a/56896032/4218920
+    set(protobuf_MODULE_COMPATIBLE ON CACHE BOOL "")
+    find_package(Protobuf CONFIG QUIET)
+else()
+    find_package(Protobuf QUIET)
+endif()
+
+
+# Other options ...................................................
+
+# support for the old Controls API (superceded by imgui)
+if(OSGEARTH_BUILD_LEGACY_CONTROLS_API)
+    set(OSGEARTH_HAVE_LEGACY_CONTROLS_API ON) # for BuildConfig
+    add_definitions(-DOSGEARTH_HAVE_CONTROLS_API) # for backwards compat
+endif()
 
 # Builds the HTTPClient with WIN_INET instead of CURL
 option(OSGEARTH_ENABLE_WININET_FOR_HTTP "Whether to use the WinInet library for HTTP requests (instead of cURL)" OFF)
 mark_as_advanced(OSGEARTH_ENABLE_WININET_FOR_HTTP)
 if (OSGEARTH_ENABLE_WININET_FOR_HTTP)
-    ADD_DEFINITIONS(-DOSGEARTH_USE_WININET_FOR_HTTP)
-endif ()
+    add_definitions(-DOSGEARTH_USE_WININET_FOR_HTTP)
+endif()
 
-IF(WIN32)
-    IF(MSVC)
-        SET(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:MSVCRT")
-    ENDIF(MSVC)
-    IF(CURL_IS_STATIC)
-        ADD_DEFINITIONS(-DCURL_STATICLIB)
-        SET(TARGET_EXTERNAL_LIBRARIES ws2_32 winmm wldap32)
-    ENDIF(CURL_IS_STATIC)
-    LIST(APPEND TARGET_EXTERNAL_LIBRARIES psapi)
-ENDIF(WIN32)
 
-# Generate the BuildConfig header.
-set(OSGEARTH_SOVERSION_VALUE "${OSGEARTH_SOVERSION}")
-set(OSGEARTH_BUILDCONFIG_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/BuildConfig.h")
-message(STATUS "Creating ${OSGEARTH_BUILDCONFIG_HEADER}")
-configure_file(
-    BuildConfig.h.in
-    ${OSGEARTH_BUILDCONFIG_HEADER})
+# Source code .....................................................
 
 # Name all the library files
 SET(LIB_NAME osgEarth)
@@ -61,6 +63,7 @@ set(TARGET_GLSL
     DrawInstancedAttribute.glsl
     GPUClamping.glsl
     GPUClamping.lib.glsl
+    HexTiling.glsl
     Instancing.glsl
     LineDrawable.glsl
     MetadataNode.glsl
@@ -83,460 +86,410 @@ set(TARGET_GLSL
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
 set(TARGET_IN
-    BuildConfig.h.in
+    BuildConfig.in    
+    Version.in
     Shaders.cpp.in)
 
 configure_shaders(
     Shaders.cpp.in
     ${SHADERS_CPP}
     ${TARGET_GLSL} )
-
-SET(HEADER_PATH ${OSGEARTH_SOURCE_DIR}/include/${LIB_NAME})
-
-SET(LIB_PUBLIC_HEADERS
+    
+SET(TARGET_H    
+    AGG.h
+    AltitudeFilter
+    AltitudeSymbol
+    AnnotationData
+    AnnotationLayer
+    AnnotationNode
+    AnnotationRegistry
+    AnnotationSettings
+    AnnotationUtils
     ArcGISServer
     ArcGISTilePackage
+    AtlasBuilder
+    AttributesFilter
+    AutoClipPlaneHandler
+    AutoScaleCallback
+    AzureMaps
+    BboxDrawable
+    BBoxSymbol
+    BillboardResource
+    BillboardSymbol
     Bing
     Bounds
+    BufferFilter
+    BuildGeometryFilter
+    BuildTextFilter
     Cache
     CacheBin
     CachePolicy
     CacheSeed
+    Callbacks
     Callouts
     CameraUtils
     Capabilities
-    CesiumIon
     CascadeDrapingDecorator
+    CentroidFilter
+    CesiumIon
     Chonk
-    Clamping
+    CircleNode
     ClampableNode
+    ClampCallback
+    Clamping
     ClampingTechnique
+    ClipSpace
+    ClusterNode
     Color
     ColorFilter
     Common
     Composite
+    CompressedArray
+    CompositeTiledModelLayer
     Config
     Containers
+    ContourMap
+    ConvertTypeFilter
     Coverage
     CoverageLayer
+    CoverageSymbol
+    CropFilter
+    CssUtils
     Cube
     CullingUtils
     DateTime
     DateTimeRange
+    DebugImageLayer
     DecalLayer
     DepthOffset
+    Draggers
     DrapeableNode
     DrapingCullSet
     DrapingTechnique
     DrawInstanced
+    EarthManipulator
     ECEF
     Elevation
     ElevationLayer
     ElevationLOD
     ElevationPool
-    ElevationRanges
     ElevationQuery
+    ElevationRanges
+    EllipseNode
     Ellipsoid
     Endian
-    Export
-    Extension
-    FadeEffect
-    FileUtils
-    FrameClock
-    GDAL
-    GDALDEM
-    GeoCommon
-    GeoData
-    Geoid
-    GeoMath
-    GeoTransform
-    GeometryClamper
-    GeometryCloud
-    GLSLChunker
-    GLUtils
-    HeightFieldUtils
-    Horizon
-    HorizonClipPlane
-    HTTPClient
-    ImageLayer
-    ImageMosaic
-    ImageToHeightFieldConverter
-    ImageUtils
-    InstanceBuilder
-    InstanceCloud
-    IntersectionPicker
-    IOTypes
-    JoinPointsLinesFilter
-    JsonUtils
-    LandCover
-    LandCoverLayer
-    Layer
-    LayerReference
-    LayerShader
-    Lighting
-    LineDrawable
-    LineFunctor
-    LoadableNode
-    Locators
-    LocalTangentPlane
-    MaterialLoader
-    Math
-    Map
-    MapboxGLImageLayer
-    MapboxGLGlyphManager
-    MapCallback
-    MapInfo
-    MapModelChange
-    MapNode
-    MapNodeObserver
-    Memory
-    MemCache
-    MetaTile
-    Metrics
-    MBTiles
-    ModelLayer
-    ModelSource
-    NativeProgramAdapter
-    NetworkMonitor
-    NodeUtils
-    Notify
-    optional
-    ObjectIDPicker
-    ObjectIndex
-    OverlayDecorator
-    PagedNode
-    PatchLayer
-    PhongLightingEffect
-    Picker
-    PluginLoader
-    PointDrawable
-    PowerlineLayer
-    PrimitiveIntersector
-    Profile
-    Progress
-    Random
-    RefinePolicy
-    Registry
-    ResourceReleaser
-    Revisioning
-    SceneGraphCallback
-    ScreenSpaceLayout
-    ScreenSpaceLayoutImpl
-    ScreenSpaceLayoutDeclutter
-    ScreenSpaceLayoutCallout
-    SDF
-    Shaders
-    ShaderFactory
-    ShaderGenerator
-    ShaderLayer
-    ShaderLoader
-    ShaderMerger
-    ShaderUtils
-    SelectExtentTool
-    SimplexNoise
-    SpatialReference
-    StateSetCache
-    StateTransition
-    Status
-    StringUtils
-    TDTiles
-    TimeSeriesImage
-    Terrain
-    TerrainEffect
-    TerrainOptions
-    TerrainEngineNode
-    TerrainEngineRequirements
-    TerrainResources
-    TerrainTileModel
-    TerrainTileModelFactory
-    TerrainTileNode
-    Tessellator
-    Text
-    TextureBuffer
-    ThreeDTilesLayer
-    TileEstimator
-    TileKey
-    TileLayer
-    TileHandler
-    TileMesher
-    TileRasterizer
-    TiledFeatureModelGraph
-    TiledFeatureModelLayer
-    TileSource
-    TileSourceElevationLayer
-    TileSourceImageLayer
-    TileVisitor
-    TileCache
-    TimeControl
-    Threading
-    TMS
-    Units
-    URI
-    Utils
-    Version
-    VerticalDatum
-    VideoLayer
-    Viewpoint
-    VirtualProgram
-    VisibleLayer
-    WMS
-    XmlUtils
-    XYZ
-    XYZModelGraph
-    XYZModelLayer
-
-    ActivityMonitorTool
-    AutoClipPlaneHandler
-    AutoScaleCallback
-    AtlasBuilder
-    ClipSpace
-    Common
-    Controls
-    ContourMap
-    ClampCallback
-    ClusterNode
-    DebugImageLayer
-    EarthManipulator
     Ephemeris
     ExampleResources
     Export
-    FlatteningLayer
-    Formatter
-    FractalElevationLayer
-    GARSGraticule
-    GeodeticGraticule
-    GeodeticLabelingEngine
-    GraticuleLabelingEngine
-    HTM
-    LatLongFormatter
-    LineOfSight
-    LinearLineOfSight
-    LogarithmicDepthBuffer
-    MeasureTool
-    MGRSFormatter
-    MGRSGraticule
-    MouseCoordsTool
-    RadialLineOfSight
-    RTTPicker
-    Shaders
-    Shadowing
-    SimpleOceanLayer
-    SimplePager
-    Sky
-    SkyView
-    StarData
-    TerrainProfile
-    TextureArena
-    TileIndex
-    TileIndexBuilder
-    TFSPackager
-    TMSBackFiller
-    TopologyGraph
-    UTMGraticule
-    UTMLabelingEngine
-    ViewFitter
-
-    AltitudeFilter
-    AttributesFilter
-    BufferFilter
-    BuildGeometryFilter
-    BuildTextFilter
-    CentroidFilter
-    Common
-    ConvertTypeFilter
-    CropFilter
+    Expression
+    Extension
     ExtrudeGeometryFilter
+    ExtrusionSymbol
+    FadeEffect
     Feature
     FeatureCursor
     FeatureDisplayLayout
     FeatureElevationLayer
     FeatureImageLayer
-    FeatureSDFLayer
-    FeatureRasterizer
     FeatureIndex
-    TerrainConstraintLayer
     FeatureModelGraph
     FeatureModelLayer
     FeatureModelSource
+    FeatureNode
+    FeatureRasterizer
+    FeatureSDFLayer
     FeatureSource
     FeatureSourceIndexNode
+    FileUtils
+    Fill
     Filter
     FilterContext
     FilteredFeatureSource
-    GeometryCompiler
-    GeometryUtils
-    ImageToFeatureLayer
-    InstanceCloud
-    MetadataNode
-    MVT
-    OgrUtils
-    OGRFeatureSource
-    PolygonizeLines
-    ResampleFilter
-    ScaleFilter
-    Session
-    ScatterFilter
-    Script
-    ScriptEngine
-    ScriptFilter
-    Shaders
-    SubstituteModelFilter
-    TessellateOperator
-    TextSymbolizer
-    TFS
-    TransformFilter
-    WingedEdgeMesh
-    WireLines
-    XYZFeatureSource
-    WFS
-
-    AGG.h
-    AltitudeSymbol
-    BBoxSymbol
-    BillboardResource
-    BillboardSymbol
-    Common
-    CoverageSymbol
-    CssUtils
-    Expression
-    ExtrusionSymbol
-    Fill
+    FlatteningLayer
+    Formatter
+    FractalElevationLayer
+    FrameClock
+    GARSGraticule
+    GDAL
+    GDALDEM
+    GeoCommon
+    GeoData
+    GeodeticGraticule
+    GeodeticLabelingEngine
+    Geoid
+    GeoMath
     Geometry
+    GeometryClamper
+    GeometryCloud
+    GeometryCompiler
     GeometryFactory
-    GEOS
     GeometryRasterizer
+    GeometryUtils
+    GeoPositionNode
+    GeoPositionNodeAutoScaler
+    GEOS
+    GeoTransform
+    GLSLChunker
+    GLUtils
+    GraticuleLabelingEngine
+    HeightFieldUtils
+    Horizon
+    HorizonClipPlane
+    HTM
+    HTTPClient
     IconResource
     IconSymbol
+    ImageLayer
+    ImageMosaic
+    ImageOverlay
+    ImageOverlayEditor
+    ImageToFeatureLayer
+    ImageToHeightFieldConverter
+    ImageUtils
+    InstanceBuilder
+    InstanceCloud
     InstanceResource
     InstanceSymbol
+    IntersectionPicker
+    IOTypes
+    JoinPointsLinesFilter
+    JsonUtils
+    LabelNode
+    LandCover
+    LandCoverLayer
+    LatLongFormatter
+    Layer
+    LayerReference
+    LayerShader
+    Lighting
+    LinearLineOfSight
+    LineDrawable
+    LineFunctor
+    LineOfSight
     LineSymbol
+    LoadableNode
+    LocalGeometryNode
+    LocalTangentPlane
+    Locators
+    LODGenerator
+    LogarithmicDepthBuffer
+    Map
+    MapboxGLGlyphManager
+    MapboxGLImageLayer
+    MapCallback
+    MapModelChange
+    MapNode
+    MapNodeObserver
+    MaterialLoader
+    Math
+    MBTiles
+    MeasureTool
+    MemCache
+    MemoryUtils
     MeshConsolidator
     MeshFlattener
     MeshSubdivider
+    MetadataNode
+    MetaTile
+    Metrics
+    MGRSFormatter
+    MGRSGraticule
+    ModelLayer
+    ModelNode
     ModelResource
+    ModelSource
     ModelSymbol
+    MVT
+    NativeProgramAdapter
+    NetworkMonitor
+    NodeUtils
+    NoiseTextureFactory
+    Notify
+    ObjectIDPicker
+    ObjectIndex
+    OGRFeatureSource
+    OgrUtils
+    optional
+    OverlayDecorator
+    PagedNode
+    PatchLayer
+    PBRMaterial
+    PhongLightingEffect
+    Picker
+    PlaceNode
+    PluginLoader
+    PointDrawable
     PointSymbol
+    PolygonizeLines
     PolygonSymbol
+    PowerlineLayer
+    PrimitiveIntersector
+    Profile
+    Progress
     Query
+    RadialLineOfSight
+    Random
+    RectangleNode
+    RefinePolicy
+    Registry
     RenderSymbol
+    ResampleFilter
     Resource
     ResourceCache
     ResourceLibrary
+    Revisioning
+    RTTPicker
+    ScaleFilter
+    ScatterFilter
+    SceneGraphCallback
+    ScreenSpaceLayout
+    ScreenSpaceLayoutCallout
+    ScreenSpaceLayoutDeclutter
+    ScreenSpaceLayoutImpl
+    Script
+    ScriptEngine
+    ScriptFilter
+    SDF
+    SDF
+    SelectExtentTool
+    Session
+    ShaderFactory
+    ShaderGenerator
+    ShaderLayer
+    ShaderLoader
+    ShaderMerger
+    Shaders
+    ShaderUtils
+    Shadowing
+    SimpleOceanLayer
+    SimplePager
+    SimplexNoise
+    SimplifyFilter
     Skins
+    Sky
+    SkyView
+    SpatialReference
+    StarData
+    StateSetCache
+    StateTransition
+    Status
+    StringUtils
     Stroke
     Style
     StyleSelector
     StyleSheet
+    SubstituteModelFilter
     Symbol
     Tags
-    TextSymbol
-
-    AnnotationSettings
-    AnnotationData
-    AnnotationLayer
-    AnnotationNode
-    AnnotationRegistry
-    AnnotationUtils
-	BboxDrawable
-    CircleNode
-    Common
-    Draggers
-    EllipseNode
-    Export
-    FeatureNode
-    GeoPositionNode
-    GeoPositionNodeAutoScaler
-    LocalGeometryNode
-    ImageOverlay
-    ImageOverlayEditor
-    LabelNode
-    ModelNode
-    PlaceNode
-    RectangleNode
-    TrackNode
-    WindLayer
+    TDTiles
+    Terrain
+    TerrainConstraintLayer
+    TerrainEffect
+    TerrainEngineNode
+    TerrainEngineRequirements
     TerrainLayer
+    TerrainMeshLayer
+    TerrainOptions
+    TerrainProfile
+    TerrainResources
+    TerrainTileModel
+    TerrainTileModelFactory
+    TerrainTileNode
+    TessellateOperator
+    Tessellator
+    Text
+    TextSymbol
+    TextSymbolizer
+    TextureArena
+    TextureBuffer
+    TFS
+    TFSPackager
+    Threading
+    ThreeDTilesLayer
+    TileCache
+    TiledFeatureModelLayer
+    TiledModelLayer
+    TileEstimator
+    TileHandler
+    TileIndex
+    TileIndexBuilder    
+    TileKey
+    TileLayer
+    TileMesher
+    TileRasterizer
+    TileSource
+    TileSourceElevationLayer
+    TileSourceImageLayer
+    TileVisitor
+    TimeControl
+    TimeSeriesImage
+    TMS
+    TMSBackFiller
+    TopologyGraph
+    TrackNode
+    TransformFilter
+    Units
+    URI
+    Utils
+    UTMGraticule
+    UTMLabelingEngine
+    VerticalDatum
+    VideoLayer
+    ViewFitter
+    Viewpoint
+    VirtualProgram
+    VisibleLayer
+    WFS
+    WindLayer
+    WireLines
+    WMS
+    XmlUtils
+    XYZ
+    XYZFeatureSource
+    XYZModelLayer
 
     rtree.h
-
-    FileGDBFeatureSource
-
-    SDF
+    weemesh.h
+    weejobs.h
+    
+    tinyxml/tinyxml.h
+    tinyxml/tinystr.h
 
     ${OSGEARTH_BUILDCONFIG_HEADER}
+    ${OSGEARTH_VERSION_HEADER}
 )
 
-if(OSGEARTH_ENABLE_IMGUI)
-    set(LIB_PUBLIC_HEADERS_IMGUI
-        ImGui/ImGui
-        ImGui/ImGuiApp
-        ImGui/AnnotationsGUI
-        ImGui/ContentBrowserGUI
-        ImGui/LayersGUI
-        ImGui/NetworkMonitorGUI
-        ImGui/NotifyGUI
-        ImGui/PickerGUI
-        ImGui/SceneGraphGUI
-        ImGui/SearchGUI
-        ImGui/TextureInspectorGUI
-        ImGui/ViewpointsGUI
-        ImGui/SystemGUI
-        ImGui/EnvironmentGUI
-        ImGui/ShaderGUI
-        ImGui/TerrainGUI
-        ImGui/CameraGUI
-        ImGui/RenderingGUI
-        )
-endif()
-
-
-IF (NOT TINYXML_FOUND)
-    SET(LIB_PUBLIC_HEADERS
-        ${LIB_PUBLIC_HEADERS}
-        tinystr.h
-        tinyxml.h
-        weemesh.h
-    )
-ENDIF (NOT TINYXML_FOUND)
-
-IF (NOT TINYXML_FOUND)
-    SET(TINYXML_SRC
-        tinystr.cpp
-        tinyxml.cpp
-        tinyxmlerror.cpp
-        tinyxmlparser.cpp
-    )
-ENDIF (NOT TINYXML_FOUND)
-
-
-
-SET(VERSION_GIT_SOURCE "")
-find_package(Git)
-if (GIT_FOUND)
-    option(OSGEARTH_EMBED_GIT_SHA "Encode the SHA in the Version header code" OFF)
-    if(OSGEARTH_EMBED_GIT_SHA)
-        include(GetGitRevisionDescription)
-        get_git_head_revision(GIT_REFSPEC OSGEARTH_GIT_SHA1)
-        if(OSGEARTH_GIT_SHA1)
-            message(STATUS "Embedding git SHA = ${OSGEARTH_GIT_SHA1}")
-            ADD_DEFINITIONS(-DOSGEARTH_EMBED_GIT_SHA)
-
-            # auto-generate the VersionGit file to include the git SHA1 variable.
-            configure_file(
-                "${CMAKE_CURRENT_SOURCE_DIR}/VersionGit.cpp.in"
-                "${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp"
-                @ONLY)
-
-            set(VERSION_GIT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp")
-        endif()
-    endif()
+if(OSGEARTH_BUILD_LEGACY_CONTROLS_API)
+    list(APPEND TARGET_H
+        ActivityMonitorTool
+        MouseCoordsTool
+        Controls)
 endif()
 
 set(TARGET_SRC
+    AltitudeFilter.cpp
+    AltitudeSymbol.cpp
+    AnnotationData.cpp
+    AnnotationLayer.cpp
+    AnnotationNode.cpp
+    AnnotationRegistry.cpp
+    AnnotationSettings.cpp
+    AnnotationUtils.cpp
     ArcGISServer.cpp
     ArcGISTilePackage.cpp
+    AtlasBuilder.cpp
+    AttributesFilter.cpp
+    AutoClipPlaneHandler.cpp    
+    AzureMaps.cpp
+    BboxDrawable.cpp
+    BBoxSymbol.cpp
+    BillboardResource.cpp
+    BillboardSymbol.cpp
     Bing.cpp
     Bounds.cpp
+    BufferFilter.cpp
+    BuildGeometryFilter.cpp
+    BuildTextFilter.cpp
     Cache.cpp
     CacheBin.cpp
     CachePolicy.cpp
@@ -544,439 +497,447 @@ set(TARGET_SRC
     Callouts.cpp
     CameraUtils.cpp
     Capabilities.cpp
-    CesiumIon.cpp
     CascadeDrapingDecorator.cpp
+    CentroidFilter.cpp
+    CesiumIon.cpp
     Chonk.cpp
-    Clamping.cpp
+    CircleNode.cpp
     ClampableNode.cpp
+    ClampCallback.cpp
+    Clamping.cpp
     ClampingTechnique.cpp
+    ClipSpace.cpp
+    ClusterNode.cpp
     Color.cpp
     ColorFilter.cpp
     Composite.cpp
+    CompositeTiledModelLayer.cpp
     Compressors.cpp
+    CompressedArray.cpp
     Config.cpp
+    ContourMap.cpp
+    ConvertTypeFilter.cpp
     CoverageLayer.cpp
+    CoverageSymbol.cpp
+    CropFilter.cpp
+    CssUtils.cpp
     Cube.cpp
     CullingUtils.cpp
     DateTime.cpp
     DateTimeRange.cpp
+    DebugImageLayer.cpp
     DecalLayer.cpp
     DepthOffset.cpp
+    Draggers.cpp
     DrapeableNode.cpp
     DrapingCullSet.cpp
     DrapingTechnique.cpp
     DrawInstanced.cpp
+    EarthManipulator.cpp
     ECEF.cpp
     Elevation.cpp
     ElevationLayer.cpp
     ElevationLOD.cpp
     ElevationPool.cpp
-    ElevationRanges.cpp
     ElevationQuery.cpp
+    ElevationRanges.cpp
+    EllipseNode.cpp
     Ellipsoid.cpp
+    Ephemeris.cpp
+    ExampleResources.cpp
+    Expression.cpp
     Extension.cpp
+    ExtrudeGeometryFilter.cpp
+    ExtrusionSymbol.cpp
     FadeEffect.cpp
+    Feature.cpp
+    FeatureCursor.cpp
+    FeatureDisplayLayout.cpp
+    FeatureElevationLayer.cpp
+    FeatureImageLayer.cpp
+    FeatureModelGraph.cpp
+    FeatureModelLayer.cpp
+    FeatureModelSource.cpp
+    FeatureNode.cpp
+    FeatureRasterizer.cpp
+    FeatureSDFLayer.cpp
+    FeatureSource.cpp
+    FeatureSourceIndexNode.cpp
+    FileGDBFeatureSource.cpp
     FileUtils.cpp
+    Fill.cpp
+    Filter.cpp
+    FilterContext.cpp
+    FilteredFeatureSource.cpp
+    FlatteningLayer.cpp
+    FractalElevationLayer.cpp
     FrameClock.cpp
+    GARSGraticule.cpp
     GDAL.cpp
     GDALDEM.cpp
     GeoData.cpp
+    GeodeticGraticule.cpp
+    GeodeticLabelingEngine.cpp
     Geoid.cpp
     GeoMath.cpp
-    GeoTransform.cpp
+    Geometry.cpp
     GeometryClamper.cpp
     GeometryCloud.cpp
+    GeometryCompiler.cpp
+    GeometryFactory.cpp
+    GeometryRasterizer.cpp
+    GeometryUtils.cpp
+    GeoPositionNode.cpp
+    GeoPositionNodeAutoScaler.cpp
+    GEOS.cpp
+    GeoTransform.cpp
     GLSLChunker.cpp
     GLUtils.cpp
+    GraticuleLabelingEngine.cpp
     HeightFieldUtils.cpp
     Horizon.cpp
     HorizonClipPlane.cpp
+    HTM.cpp
     HTTPClient.cpp
+    IconResource.cpp
+    IconSymbol.cpp
     ImageLayer.cpp
     ImageMosaic.cpp
+    ImageOverlay.cpp
+    ImageOverlayEditor.cpp
+    ImageToFeatureLayer.cpp
     ImageToHeightFieldConverter.cpp
     ImageUtils.cpp
     InstanceBuilder.cpp
     InstanceCloud.cpp
+    InstanceResource.cpp
+    InstanceSymbol.cpp
     IntersectionPicker.cpp
     IOTypes.cpp
     JoinPointsLinesFilter.cpp
     JsonUtils.cpp
+    LabelNode.cpp
     LandCover.cpp
     LandCoverLayer.cpp
+    LatLongFormatter.cpp
     Layer.cpp
     LayerShader.cpp
     Lighting.cpp
+    LinearLineOfSight.cpp
     LineDrawable.cpp
+    LineSymbol.cpp
+    LocalGeometryNode.cpp
     LocalTangentPlane.cpp
-    Math.cpp
+    LODGenerator.cpp
+    LogarithmicDepthBuffer.cpp
     Map.cpp
-    MapboxGLImageLayer.cpp
     MapboxGLGlyphManager.cpp
+    MapboxGLImageLayer.cpp
     MapCallback.cpp
-    MapInfo.cpp
     MapNode.cpp
     MaterialLoader.cpp
+    Math.cpp
+    MBTiles.cpp
+    MeasureTool.cpp
     MemCache.cpp
-    Memory.cpp
+    MemoryUtils.cpp
+    MeshConsolidator.cpp
+    MeshFlattener.cpp
+    MeshSubdivider.cpp
+    MetadataNode.cpp
     MetaTile.cpp
     Metrics.cpp
-    MBTiles.cpp
+    MGRSFormatter.cpp
+    MGRSGraticule.cpp
     ModelLayer.cpp
+    ModelNode.cpp
+    ModelResource.cpp
     ModelSource.cpp
+    ModelSymbol.cpp
+    MVT.cpp
     NetworkMonitor.cpp
     NodeUtils.cpp
+    NoiseTextureFactory.cpp
     Notify.cpp
     ObjectIDPicker.cpp
     ObjectIndex.cpp
+    OGRFeatureSource.cpp
+    OgrUtils.cpp
     OverlayDecorator.cpp
     PagedNode.cpp
     PatchLayer.cpp
+    PBRMaterial.cpp
     PhongLightingEffect.cpp
+    PlaceNode.cpp
     PointDrawable.cpp
+    PointSymbol.cpp
+    PolygonizeLines.cpp
+    PolygonSymbol.cpp
     PowerlineLayer.cpp
     PrimitiveIntersector.cpp
     Profile.cpp
     Progress.cpp
+    Query.cpp
+    RadialLineOfSight.cpp
     Random.cpp
+    RectangleNode.cpp
     Registry.cpp
-    ResourceReleaser.cpp
+    RenderSymbol.cpp
+    ResampleFilter.cpp
+    Resource.cpp
+    ResourceCache.cpp
+    ResourceLibrary.cpp
     Revisioning.cpp
+    RTTPicker.cpp
+    ScaleFilter.cpp
+    ScatterFilter.cpp
     SceneGraphCallback.cpp
     ScreenSpaceLayout.cpp
+    ScriptEngine.cpp
+    ScriptFilter.cpp
     SDF.cpp
+    SDF.cpp
+    SelectExtentTool.cpp
+    Session.cpp
     ShaderFactory.cpp
     ShaderGenerator.cpp
     ShaderLayer.cpp
     ShaderLoader.cpp
     ShaderMerger.cpp
     ShaderUtils.cpp
-    SelectExtentTool.cpp
+    Shadowing.cpp
+    SimpleOceanLayer.cpp
+    SimplePager.cpp
     SimplexNoise.cpp
+    SimplifyFilter.cpp
+    Skins.cpp
+    Sky.cpp
+    SkyView.cpp
     SpatialReference.cpp
     StateSetCache.cpp
     Status.cpp
     StringUtils.cpp
-    TDTiles.cpp
-    TimeSeriesImage.cpp
-    Terrain.cpp
-    TerrainOptions.cpp
-    TerrainEngineNode.cpp
-    TerrainResources.cpp
-    TerrainTileModel.cpp
-    TerrainTileModelFactory.cpp
-    Tessellator.cpp
-    Text.cpp
-    TextureArena.cpp
-    TextureBuffer.cpp
-    ThreeDTilesLayer.cpp
-    TextureBufferSerializer.cpp
-    TileEstimator.cpp
-    TileKey.cpp
-    TileLayer.cpp
-    TileHandler.cpp
-    TileMesher.cpp
-    TileRasterizer.cpp
-    TiledFeatureModelGraph.cpp
-    TiledFeatureModelLayer.cpp
-    TileVisitor.cpp
-    TileSource.cpp
-    TileSourceElevationLayer.cpp
-    TileSourceImageLayer.cpp
-    TileCache.cpp
-    TimeControl.cpp
-    Threading.cpp
-    TMS.cpp
-    Units.cpp
-    URI.cpp
-    Utils.cpp
-    Version.cpp
-    VerticalDatum.cpp
-    VideoLayer.cpp
-    Viewpoint.cpp
-    VirtualProgram.cpp
-    VisibleLayer.cpp
-    WMS.cpp
-    XmlUtils.cpp
-    XYZ.cpp
-    XYZModelGraph.cpp
-    XYZModelLayer.cpp
-
-    ActivityMonitorTool.cpp
-    AtlasBuilder.cpp
-    AutoClipPlaneHandler.cpp
-    ClampCallback.cpp
-    ClipSpace.cpp
-    ClusterNode.cpp
-    Controls.cpp
-    ContourMap.cpp
-    DebugImageLayer.cpp
-    EarthManipulator.cpp
-    Ephemeris.cpp
-    ExampleResources.cpp
-    FlatteningLayer.cpp
-    FractalElevationLayer.cpp
-    GARSGraticule.cpp
-    GeodeticGraticule.cpp
-    GeodeticLabelingEngine.cpp
-    GraticuleLabelingEngine.cpp
-    HTM.cpp
-    LatLongFormatter.cpp
-    LinearLineOfSight.cpp
-    LogarithmicDepthBuffer.cpp
-    MeasureTool.cpp
-    MGRSFormatter.cpp
-    MGRSGraticule.cpp
-    MouseCoordsTool.cpp
-    RadialLineOfSight.cpp
-    RTTPicker.cpp
-    Shadowing.cpp
-    SimpleOceanLayer.cpp
-    SimplePager.cpp
-    Sky.cpp
-    SkyView.cpp
-    TerrainProfile.cpp
-    TileIndex.cpp
-    TileIndexBuilder.cpp
-    TFSPackager.cpp
-    TMSBackFiller.cpp
-    TopologyGraph.cpp
-    UTMGraticule.cpp
-    UTMLabelingEngine.cpp
-    ViewFitter.cpp
-
-    AltitudeFilter.cpp
-    AttributesFilter.cpp
-    BufferFilter.cpp
-    BuildGeometryFilter.cpp
-    BuildTextFilter.cpp
-    CentroidFilter.cpp
-    ConvertTypeFilter.cpp
-    CropFilter.cpp
-    ExtrudeGeometryFilter.cpp
-    Feature.cpp
-    FeatureCursor.cpp
-    FeatureDisplayLayout.cpp
-    FeatureElevationLayer.cpp
-    FeatureImageLayer.cpp
-    FeatureRasterizer.cpp
-    FeatureSDFLayer.cpp
-    TerrainConstraintLayer.cpp
-    FeatureModelGraph.cpp
-    FeatureModelLayer.cpp
-    FeatureModelSource.cpp
-    FeatureSource.cpp
-    FeatureSourceIndexNode.cpp
-    Filter.cpp
-    FilterContext.cpp
-    FilteredFeatureSource.cpp
-    GeometryCompiler.cpp
-    GeometryUtils.cpp
-    ImageToFeatureLayer.cpp
-    MVT.cpp
-    MetadataNode.cpp
-    OgrUtils.cpp
-    OGRFeatureSource.cpp
-    PolygonizeLines.cpp
-    ResampleFilter.cpp
-    ScaleFilter.cpp
-    Session.cpp
-    ScatterFilter.cpp
-    ScriptEngine.cpp
-    ScriptFilter.cpp
-    SubstituteModelFilter.cpp
-    TessellateOperator.cpp
-    TextSymbolizer.cpp
-    TFS.cpp
-    TransformFilter.cpp
-    WireLines.cpp
-    XYZFeatureSource.cpp
-    WFS.cpp
-
-    AltitudeSymbol.cpp
-    BBoxSymbol.cpp
-    BillboardResource.cpp
-    BillboardSymbol.cpp
-    CoverageSymbol.cpp
-    CssUtils.cpp
-    Expression.cpp
-    ExtrusionSymbol.cpp
-    Fill.cpp
-    Geometry.cpp
-    GeometryFactory.cpp
-    GEOS.cpp
-    GeometryRasterizer.cpp
-    IconResource.cpp
-    IconSymbol.cpp
-    InstanceResource.cpp
-    InstanceSymbol.cpp
-    LineSymbol.cpp
-    MeshConsolidator.cpp
-    MeshFlattener.cpp
-    MeshSubdivider.cpp
-    ModelResource.cpp
-    ModelSymbol.cpp
-    PointSymbol.cpp
-    PolygonSymbol.cpp
-    Query.cpp
-    RenderSymbol.cpp
-    Resource.cpp
-    ResourceCache.cpp
-    ResourceLibrary.cpp
-    Skins.cpp
     Stroke.cpp
     Style.cpp
     StyleSelector.cpp
     StyleSheet.cpp
+    SubstituteModelFilter.cpp
     Symbol.cpp
+    TDTiles.cpp
+    Terrain.cpp
+    TerrainConstraintLayer.cpp
+    TerrainEngineNode.cpp
+    TerrainMeshLayer.cpp
+    TerrainOptions.cpp
+    TerrainProfile.cpp
+    TerrainResources.cpp
+    TerrainTileModel.cpp
+    TerrainTileModelFactory.cpp
+    TessellateOperator.cpp
+    Tessellator.cpp
+    Text.cpp
     TextSymbol.cpp
-
-    AnnotationSettings.cpp
-    AnnotationData.cpp
-    AnnotationLayer.cpp
-    AnnotationNode.cpp
-    AnnotationRegistry.cpp
-    AnnotationUtils.cpp
-	BboxDrawable.cpp
-    CircleNode.cpp
-    Draggers.cpp
-    EllipseNode.cpp
-    FeatureNode.cpp
-    GeoPositionNode.cpp
-    GeoPositionNodeAutoScaler.cpp
-    LocalGeometryNode.cpp
-    ImageOverlay.cpp
-    ImageOverlayEditor.cpp
-    LabelNode.cpp
-    RectangleNode.cpp
-    ModelNode.cpp
-    PlaceNode.cpp
+    TextSymbolizer.cpp
+    TextureArena.cpp
+    TextureBuffer.cpp
+    TextureBufferSerializer.cpp
+    TFS.cpp
+    TFSPackager.cpp
+    Threading.cpp
+    ThreeDTilesLayer.cpp
+    TileCache.cpp
+    TiledFeatureModelLayer.cpp
+    TiledModelLayer.cpp
+    TileEstimator.cpp
+    TileHandler.cpp
+    TileIndex.cpp
+    TileIndexBuilder.cpp
+    TileKey.cpp
+    TileLayer.cpp
+    TileMesher.cpp
+    TileRasterizer.cpp
+    TileSource.cpp
+    TileSourceElevationLayer.cpp
+    TileSourceImageLayer.cpp
+    TileVisitor.cpp
+    TimeControl.cpp
+    TimeSeriesImage.cpp
+    TMS.cpp
+    TMSBackFiller.cpp
+    TopologyGraph.cpp
     TrackNode.cpp
+    TransformFilter.cpp
+    Units.cpp
+    URI.cpp
+    Utils.cpp
+    UTMGraticule.cpp
+    UTMLabelingEngine.cpp
+    Version.cpp
+    VerticalDatum.cpp
+    VideoLayer.cpp
+    ViewFitter.cpp
+    Viewpoint.cpp
+    VirtualProgram.cpp
+    VisibleLayer.cpp
+    WFS.cpp
     WindLayer.cpp
-
-    SDF.cpp
-
-    FileGDBFeatureSource.cpp
-
+    WireLines.cpp
+    WMS.cpp
+    XmlUtils.cpp
+    XYZ.cpp
+    XYZFeatureSource.cpp
+    XYZModelLayer.cpp
+    
+    tinyxml/tinyxml.cpp
+    tinyxml/tinyxmlerror.cpp
+    tinyxml/tinystr.cpp
+    tinyxml/tinyxmlparser.cpp
+    
     ${SHADERS_CPP}
 )
 
-# MSVC 2017 and 2019 need /bigobj on debug build
-if(MSVC AND MSVC_VERSION LESS 1930)
-    add_compile_options("$<$<CONFIG:Debug>:/bigobj>")    
+# whether to build the osgEarth::Util::Controls API, which has been
+# mostly replaced by ImGui
+if(OSGEARTH_BUILD_LEGACY_CONTROLS_API)
+    list(APPEND TARGET_SRC
+        ActivityMonitorTool.cpp
+        MouseCoordsTool.cpp
+        Controls.cpp)
 endif()
 
-IF(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
-  IF(NOT OUT_OF_SOURCE_BUILD)
-    INCLUDE_DIRECTORIES(${Protobuf_INCLUDE_DIR})
-  ELSE()
-    INCLUDE_DIRECTORIES(${Protobuf_INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-  ENDIF()
 
-  PROTOBUF_GENERATE_CPP(PROTO_VECTOR_TILE_CPP PROTO_VECTOR_TILE_H vector_tile.proto)
-  PROTOBUF_GENERATE_CPP(PROTO_GLYPHS_CPP PROTO_GLYPHS_H glyphs.proto)
-  SET(LIB_PUBLIC_HEADERS
-    ${LIB_PUBLIC_HEADERS}
-    ${PROTO_VECTOR_TILE_H}
-    ${PROTO_GLYPHS_H}
-  )
-  SET(TARGET_SRC
-    ${TARGET_SRC}
-    ${PROTO_VECTOR_TILE_CPP}
-    ${PROTO_GLYPHS_CPP}
-  )
-ENDIF()
+# generate the google protocol buffers headers and sources
+if(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)    
+    protobuf_generate_cpp(PROTO_VECTOR_TILE_CPP PROTO_VECTOR_TILE_H vector_tile.proto) 
+    protobuf_generate_cpp(PROTO_GLYPHS_CPP PROTO_GLYPHS_H glyphs.proto)    
+    list(APPEND TARGET_H ${PROTO_VECTOR_TILE_H} ${PROTO_GLYPHS_H})
+    list(APPEND TARGET_SRC ${PROTO_VECTOR_TILE_CPP} ${PROTO_GLYPHS_CPP})
+    
+    if (OSGEARTH_OUT_OF_SOURCE_BUILD)
+        # for an out-of-source build, the binary folder will include any protobuf-generated
+        # header files; therefore we need to include them:
+        include_directories(${CMAKE_CURRENT_BINARY_DIR})
+    endif()
+endif()
 
 if(OSGEARTH_ENABLE_GEOCODER)
-    set(TARGET_SRC ${TARGET_SRC} Geocoder.cpp)
-    set(LIB_PUBLIC_HEADERS ${LIB_PUBLIC_HEADERS} Geocoder)
+    set(OSGEARTH_HAVE_GEOCODER ON)
+    list(APPEND TARGET_H Geocoder)
+    list(APPEND TARGET_SRC Geocoder.cpp)
 endif()
 
-message(STATUS "Building ${LIB_NAME} as a ${OSGEARTH_DYNAMIC_OR_STATIC} library")
+# Declare the dynamic headers -- we'll generate them later when all the HAVE vars are set.
+set(OSGEARTH_VERSION_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/Version")
+set(OSGEARTH_BUILDCONFIG_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/BuildConfig")
 
-ADD_LIBRARY(${LIB_NAME}
-    ${OSGEARTH_DYNAMIC_OR_STATIC}
-    ${LIB_PUBLIC_HEADERS}
-    ${LIB_PUBLIC_HEADERS_IMGUI}
-    ${TINYXML_SRC}
-    ${VERSION_GIT_SOURCE}
-    ${TARGET_SRC}
-    ${TARGET_GLSL}
-    ${TARGET_IN} )
 
-INCLUDE_DIRECTORIES(${GDAL_INCLUDE_DIR} ${CURL_INCLUDE_DIR} ${OSG_INCLUDE_DIR} )
+add_osgearth_library(
+    TARGET ${LIB_NAME}
+    PUBLIC_HEADERS ${TARGET_H} ${OSGEARTH_VERSION_HEADER} ${OSGEARTH_BUILDCONFIG_HEADER}
+    SOURCES ${TARGET_SRC}
+    SHADERS ${TARGET_GLSL}
+    TEMPLATES ${TARGET_IN} )
 
-# TinyXML support?
-IF (TINYXML_FOUND)
-    INCLUDE_DIRECTORIES(${TINYXML_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} TINYXML_LIBRARY)
-    get_directory_property(output INCLUDE_DIRECTORIES)
-    message(STATUS ${output})
-ENDIF (TINYXML_FOUND)
+
+# google protocol buffers
+if(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
+    message(STATUS "Found protobuf")
+    set(OSGEARTH_HAVE_PROTOBUF ON)
+    set(OSGEARTH_HAVE_MVT ON)
+    
+    set(PROTOBUF_USE_DLLS FALSE CACHE BOOL "Set this to true if Protobuf is compiled as dll")
+    if(PROTOBUF_USE_DLLS)
+        add_definitions(-DPROTOBUF_USE_DLLS)
+    endif()
+    
+    #include_directories(${Protobuf_INCLUDE_DIR})
+    target_link_libraries(${LIB_NAME} PRIVATE protobuf::libprotobuf)
+endif()
+
+# spdlog support?
+if (spdlog_FOUND)
+    message(STATUS "Found spdlog")
+    set(OSGEARTH_HAVE_SPDLOG ON)
+    target_link_libraries(${LIB_NAME} PRIVATE spdlog::spdlog)
+endif()
 
 # MBTiles support?
-IF(SQLITE3_FOUND)
-    ADD_DEFINITIONS(-DOSGEARTH_HAVE_SQLITE3)
-    INCLUDE_DIRECTORIES(${SQLITE3_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} SQLITE3_LIBRARY)
-ENDIF(SQLITE3_FOUND)
+if(SQLite3_FOUND)
+    message(STATUS "Found SQLite3 - will support MBTiles")
+    set(OSGEARTH_HAVE_SQLITE3 ON)
+    set(OSGEARTH_HAVE_MBTILES ON)
+    include_directories(${SQLite3_INCLUDE_DIR})
+    target_link_libraries(${LIB_NAME} PRIVATE ${SQLite3_LIBRARIES})
+endif()
 
 # Blosc support?
-IF (BLOSC_FOUND)
-ADD_DEFINITIONS(-DOSGEARTH_HAVE_BLOSC)
-    INCLUDE_DIRECTORIES(${BLOSC_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} BLOSC_LIBRARY)
-ENDIF(BLOSC_FOUND)
+if(blosc_FOUND)
+    message(STATUS "Found blosc")
+    set(OSGEARTH_HAVE_BLOSC ON)
+    include_directories(${BLOSC_INCLUDE_DIR})
+    string (TOLOWER ${OSGEARTH_DYNAMIC_OR_STATIC} shared_or_static)
+    target_link_libraries(${LIB_NAME} PRIVATE blosc_${shared_or_static})
+endif()
 
 # GEOS support?
-IF (GEOS_FOUND)
-    ADD_DEFINITIONS(-DOSGEARTH_HAVE_GEOS)
-    INCLUDE_DIRECTORIES(${GEOS_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} GEOS_LIBRARY)
-ENDIF(GEOS_FOUND)
+if(geos_FOUND)
+    message(STATUS "Found geos")
+    set(OSGEARTH_HAVE_GEOS ON)
+    #include_directories(${GEOS_INCLUDE_DIR})
+    target_link_libraries(${LIB_NAME} PRIVATE GEOS::geos_c)
+endif()
 
-# Protobuf/MVT?
-IF(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
+# Blend2D?
+if(blend2d_FOUND)
+    message(STATUS "Found blend2d")
+    set(OSGEARTH_HAVE_BLEND2D ON)
+    #include_directories(${BLEND2D_INCLUDES})
+    target_link_libraries(${LIB_NAME} PRIVATE blend2d::blend2d)
+endif()
 
-  ADD_DEFINITIONS(-DOSGEARTH_HAVE_MVT)
-  IF (PROTOBUF_USE_DLLS)
-    ADD_DEFINITIONS(-DPROTOBUF_USE_DLLS)
-  ENDIF()
+# Tracy?
+if (Tracy_FOUND)
+    message(STATUS "Found Tracy")
+    set(OSGEARTH_HAVE_TRACY ON)
+    target_link_libraries(${LIB_NAME} PRIVATE Tracy::TracyClient)
+endif()
 
-  LINK_WITH_VARIABLES(${LIB_NAME} Protobuf_LIBRARIES)
-ENDIF()
+# mesh optimizer optional library?
+if(meshoptimizer_FOUND)
+    message(STATUS "Found meshoptimizer")
+    set(OSGEARTH_HAVE_MESH_OPTIMIZER ON)
+    target_link_libraries(${LIB_NAME} PRIVATE meshoptimizer::meshoptimizer)
+endif()
 
-# ESRI FileGeodatabase?
-IF(FILEGDB_FOUND)
-    add_definitions(-DOSGEARTH_HAVE_FILEGDB)
-    include_directories(${FILEGDB_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} FILEGDB_LIBRARY)
-ENDIF()
+# pthreads?
+if(UNIX)
+    target_link_libraries(${LIB_NAME} PUBLIC Threads::Threads)
+endif()
 
-IF(BLEND2D_FOUND)
-    add_definitions(-DOSGEARTH_HAVE_BLEND2D)
-    include_directories(${BLEND2D_INCLUDES})
-    link_with_variables(${LIB_NAME} BLEND2D_LIBRARY)
-ENDIF()
+# special purpose - do not remove
+option(NRL_STATIC_LIBRARIES "Link osgEarth against static GDAL and cURL, including static OpenSSL, Proj4, JPEG, PNG, and TIFF." OFF)
 
-IF (WIN32)
-  LINK_EXTERNAL(${LIB_NAME} ${TARGET_EXTERNAL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${MATH_LIBRARY} )
-ELSE(WIN32)
-  LINK_EXTERNAL(${LIB_NAME} ${TARGET_EXTERNAL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${MATH_LIBRARY} )
-ENDIF(WIN32)
-
-IF (TRACY_FOUND)
-    INCLUDE_DIRECTORIES(${TRACY_INCLUDE_DIR})
-    LINK_WITH_VARIABLES(${LIB_NAME} TRACY_LIBRARY)
-ENDIF(TRACY_FOUND)
-
-OPTION(NRL_STATIC_LIBRARIES "Link osgEarth against static GDAL and cURL, including static OpenSSL, Proj4, JPEG, PNG, and TIFF." OFF)
 if(NOT NRL_STATIC_LIBRARIES)
-  LINK_WITH_VARIABLES(${LIB_NAME} OSG_LIBRARY OSGUTIL_LIBRARY OSGSIM_LIBRARY OSGDB_LIBRARY OSGVIEWER_LIBRARY OSGTEXT_LIBRARY OSGGA_LIBRARY OSGSHADOW_LIBRARY CURL_LIBRARY GDAL_LIBRARY OSGMANIPULATOR_LIBRARY)
-else(NOT NRL_STATIC_LIBRARIES)
-  LINK_WITH_VARIABLES(${LIB_NAME} OSG_LIBRARY OSGUTIL_LIBRARY OSGSIM_LIBRARY OSGDB_LIBRARY OSGVIEWER_LIBRARY OSGTEXT_LIBRARY OSGGA_LIBRARY OSGSHADOW_LIBRARY CURL_LIBRARY GDAL_LIBRARY OSGMANIPULATOR_LIBRARY SSL_EAY_RELEASE LIB_EAY_RELEASE TIFF_LIBRARY PROJ4_LIBRARY PNG_LIBRARY JPEG_LIBRARY)
-endif(NOT NRL_STATIC_LIBRARIES)
+    # normal link:
+    target_link_libraries(${LIB_NAME} 
+        PUBLIC
+            ${OPENSCENEGRAPH_LIBRARIES}
+        PRIVATE
+            OpenGL::GL CURL::libcurl GDAL::GDAL)
+else()
+    # special-purpose custom link:
+    target_link_libraries(${LIB_NAME} 
+        PUBLIC
+            ${OPENSCENEGRAPH_LIBRARIES}
+        PRIVATE
+            OpenGL::GL CURL::libcurl GDAL::GDAL
+            ${SSL_EAY_RELEASE} ${LIB_EAY_RELEASE} ${TIFF_LIBRARY} ${PROJ4_LIBRARY} ${PNG_LIBRARY} ${JPEG_LIBRARY})
+endif()
 
-LINK_CORELIB_DEFAULT(${LIB_NAME} ${CMAKE_THREAD_LIBS_INIT} ${MATH_LIBRARY})
 
-INCLUDE(ModuleInstall OPTIONAL)
+# Generate the dynamic headers.
+message(STATUS "Creating ${OSGEARTH_BUILDCONFIG_HEADER}")
+configure_file(BuildConfig.in ${OSGEARTH_BUILDCONFIG_HEADER})
+
+message(STATUS "Creating ${OSGEARTH_VERSION_HEADER}")
+configure_file(Version.in ${OSGEARTH_VERSION_HEADER})

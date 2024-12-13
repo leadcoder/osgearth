@@ -32,17 +32,17 @@ REGISTER_OSGEARTH_LAYER(feature_model, FeatureModelLayer); // backwards compatib
 //...........................................................................
 
 FeatureModelLayer::Options::Options() :
-VisibleLayer::Options(),
-FeatureModelOptions(),
-GeometryCompilerOptions()
+    VisibleLayer::Options(),
+    FeatureModelOptions(),
+    GeometryCompilerOptions()
 {
     fromConfig(_conf);
 }
 
 FeatureModelLayer::Options::Options(const ConfigOptions& options) :
-VisibleLayer::Options(options),
-FeatureModelOptions(options),
-GeometryCompilerOptions(options)
+    VisibleLayer::Options(options),
+    FeatureModelOptions(options),
+    GeometryCompilerOptions(options)
 {
     fromConfig(_conf);
 }
@@ -111,7 +111,12 @@ void FeatureModelLayer::dirty()
     // create the scene graph
     if (isOpen())
     {
-        create();
+        if (getFeatureSource())
+        {
+            // tell the source to recompute its profile, etc.
+            getFeatureSource()->dirty();
+            create();
+        }
     }
 }
 
@@ -234,6 +239,19 @@ FeatureModelLayer::getExtent() const
         s_invalid;
 }
 
+Layer::Stats
+FeatureModelLayer::reportStats() const
+{
+    auto fmg = findTopMostNodeOfType<FeatureModelGraph>(_root.get());
+    if (fmg)
+    {
+        Layer::Stats result;
+        result.push_back({ "Resident tiles", std::to_string((unsigned)*fmg->loadedTiles) });
+        return result;
+    }
+    else return {};
+}
+
 void
 FeatureModelLayer::addedToMap(const Map* map)
 {
@@ -290,6 +308,7 @@ FeatureModelLayer::create()
         fmg->setNodeFactory(createFeatureNodeFactory());
         fmg->setSceneGraphCallbacks(getSceneGraphCallbacks());
         fmg->setStyleSheet(getStyleSheet());
+        fmg->setUseNVGL(options().useNVGL().get());
 
         // pass though the min/max ranges
         if (options().maxVisibleRange().isSet())

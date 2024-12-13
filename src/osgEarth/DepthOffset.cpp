@@ -22,6 +22,7 @@
 #include <osgEarth/NodeUtils>
 #include <osgEarth/Capabilities>
 #include <osgEarth/Shaders>
+#include "Notify"
 
 #include <osg/Geometry>
 #include <osg/Depth>
@@ -242,7 +243,7 @@ DepthOffsetAdapter::recalculate()
             GeometryAnalysisVisitor v;
             _graph->accept( v );
             float maxLen = osg::maximum(1.0f, sqrtf(v._segmentAnalyzer._maxLen2));
-            _options.minRange()->set(sqrtf(maxLen) * 19.0f, Units::METERS);
+            _options.minRange() = Distance(sqrtf(maxLen) * 19.0f, Units::METERS);
             _dirty = false;
             OE_TEST << LC << "Recalcluated." << std::endl;
         }
@@ -293,8 +294,8 @@ DepthOffsetGroup::computeBound() const
 {
     if ( _adapter.supported() )
     {
-        static Threading::Mutex s_mutex(OE_MUTEX_NAME);
-        Threading::ScopedMutexLock lock(s_mutex);
+        static std::mutex s_mutex;
+        std::lock_guard<std::mutex> lock(s_mutex);
 
         const_cast<DepthOffsetGroup*>(this)->scheduleUpdate();
     }

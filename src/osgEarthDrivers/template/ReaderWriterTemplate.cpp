@@ -75,7 +75,6 @@ class TemplateReaderWriter: public osgDB::ReaderWriter
                 std::istringstream iss(options->getOptionString());
                 std::string opt;
                 while (iss >> opt) {
-                    opt = osgDB::convertToLowerCase(opt);
                     std::size_t eqInd = opt.find('=');
                     std::string key = opt.substr(0, eqInd);
                     std::string value = opt.substr(eqInd + 1);
@@ -85,8 +84,6 @@ class TemplateReaderWriter: public osgDB::ReaderWriter
 
             OutputString output;
             t.render( output );
-
-            OE_DEBUG << "Processed template " << std::endl << output.buf.str() << std::endl;
 
             // Set the osgEarth URIContext so that relative paths will work.  We have to do this manually here
             // since we are using the stream based readNode function and the Earth driver won't know 

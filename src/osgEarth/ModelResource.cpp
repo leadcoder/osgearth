@@ -32,13 +32,12 @@ using namespace osgEarth;
 
 //---------------------------------------------------------------------------
 
-ModelResource::ModelResource( const Config& conf ) :
-InstanceResource( conf ),
-_canScaleToFitXY(true),
-_canScaleToFitZ(true)
+ModelResource::ModelResource(const Config& conf) :
+    InstanceResource(conf),
+    _canScaleToFitXY(true),
+    _canScaleToFitZ(true)
 {
-    _mutex.setName("OE.ModelResource");
-    mergeConfig( conf );
+    mergeConfig(conf);
 }
 
 void
@@ -63,7 +62,7 @@ ModelResource::getBoundingBox(const osgDB::Options* dbo)
 {
     if ( !_bbox.valid() && _status.isOK() )
     {
-        Threading::ScopedMutexLock lock(_mutex);
+        std::lock_guard<std::mutex> lock(_mutex);
         if ( !_bbox.valid() )
         {
             osg::ref_ptr<osg::Node> node = createNodeFromURI( uri().get(), dbo );
@@ -118,7 +117,7 @@ ModelResource::createNodeFromURI( const URI& uri, const osgDB::Options* dbOption
     {
         node = r.releaseNode();
         
-        OE_INFO << LC << "Loaded " << uri.base() << "(from " << (r.isFromCache()? "cache" : "source") << ")"
+        OE_DEBUG << LC << "Loaded " << uri.base() << " (from " << (r.isFromCache()? "cache" : "source") << ")"
             << std::endl;
 
         osgUtil::Optimizer o;

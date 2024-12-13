@@ -225,9 +225,10 @@ namespace osgEarth
             OE_OPTION(ProfileOptions, profile);
             OE_OPTION(CacheOptions, cache);
             OE_OPTION(CachePolicy, cachePolicy);
-            OE_OPTION(RasterInterpolation, elevationInterpolation);
+            OE_OPTION(RasterInterpolation, elevationInterpolation, INTERP_BILINEAR);
             OE_OPTION(std::string, profileLayer);
             OE_OPTION(std::string, osgOptionString);
+            OE_OPTION(bool, disableElevationRanges, false);
             virtual Config getConfig() const;
         private:
             void fromConfig(const Config&);
@@ -269,7 +270,6 @@ namespace osgEarth
         void uninstallLayerCallbacks(Layer*);
 
         void init();
-        friend class MapInfo;
         Options _optionsConcrete;
         Options& options() { return _optionsConcrete; }
     };

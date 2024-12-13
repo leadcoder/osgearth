@@ -8,12 +8,12 @@ to extruded buildings.
 <map name="Boston Demo">
     
     <TMSImage name="Imagery">
-        <url>http://readymap.org/readymap/tiles/1.0.0/22/</url>
+        <url>https://readymap.org/readymap/tiles/1.0.0/22/</url>
     </TMSImage>
     
     <xi:include href="readymap_elevation.xml"/>
       
-    <FeatureModel name="Buildings" max_range="20000">
+    <FeatureModel name="Buildings" max_range="20000" pickable="true">
          
         <OGRFeatures name="buildings">
             <url>../data/boston_buildings_utm19.shp</url>

@@ -116,29 +116,19 @@ namespace
             if ( isReservedWord(name) )
                 continue;
 
-            if ( !name.empty() )
+            if (!name.empty())
             {
                 // Load the extension library if necessary.
                 std::string libName = osgDB::Registry::instance()->createLibraryNameForExtension("osgearth_" + name);
                 osgDB::Registry::LoadStatus status = osgDB::Registry::instance()->loadLibrary(libName);
-                if ( status == osgDB::Registry::LOADED )
-                {
-                    OE_INFO << LC << "Loaded extension lib \"" << libName << "\"\n";
-                }
-                else
+                if (status == osgDB::Registry::NOT_LOADED)
                 {
                     // If it failed to load, try loading an extension from an osgEarth library with the same name.
-                    // Capitalize the name of the extension,.
+                    // Capitalize the name of the extension.
                     std::string capName = name;
                     capName[0] = ::toupper(capName[0]);
-                    std::stringstream buf;
-                    buf << "osgEarth" << capName;
-                    libName = osgDB::Registry::instance()->createLibraryNameForNodeKit(buf.str());
+                    libName = osgDB::Registry::instance()->createLibraryNameForNodeKit("osgEarth" + capName);
                     status = osgDB::Registry::instance()->loadLibrary(libName);
-                    if (status == osgDB::Registry::LOADED)
-                    {
-                        OE_INFO << LC << "Loaded extension lib \"" << libName << "\"\n";
-                    }
                 }
             }
         }
@@ -156,13 +146,13 @@ namespace
                 trim2(lib);
                 std::string libName = osgDB::Registry::instance()->createLibraryNameForNodeKit(lib);
                 osgDB::Registry::LoadStatus status = osgDB::Registry::instance()->loadLibrary(libName);
-                if (status == osgDB::Registry::LOADED)
+                if (status != osgDB::Registry::NOT_LOADED)
                 {
-                    OE_INFO << LC << "Loaded library \"" << libName << "\"\n";
+                    OE_DEBUG << LC << "Loaded nodekit library \"" << libName << "\" OK" << std::endl;
                 }
                 else
                 {
-                    OE_INFO << LC << "Failed to load library \"" << libName << "\"\n";
+                    OE_WARN << LC << "Failed to nodekit library \"" << libName << "\"" << std::endl;
                 }
             }
         }        
@@ -339,8 +329,8 @@ namespace
 
     bool addLayer(const Config& conf, LayerVector& layers)
     {
-        Layer* layer = Layer::create(conf);
-        if (layer)
+        auto layer = Layer::create(conf);
+        if (layer.valid())
         {
             layers.push_back(layer);
 
@@ -524,7 +514,7 @@ _rewriteAbsolutePaths( false )
 }
 
 
-osg::Node*
+osg::ref_ptr<osg::Node>
 EarthFileSerializer2::deserialize( 
     const Config& const_conf, 
     const std::string& referrer,
@@ -654,10 +644,12 @@ EarthFileSerializer2::deserialize(
 
     // return the topmost parent of the mapnode. It's possible that
     // an extension added parents!
-    osg::Node* top = mapNode.release();
+    osg::ref_ptr<osg::Node> top = mapNode;
 
-    while( top->getNumParents() > 0 )
+    while (top->getNumParents() > 0)
+    {
         top = top->getParent(0);
+    }
 
     return top;
 }

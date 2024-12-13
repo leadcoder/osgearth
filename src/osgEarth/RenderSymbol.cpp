@@ -18,6 +18,15 @@
  */
 #include <osgEarth/RenderSymbol>
 #include <osgEarth/Style>
+#include <osgEarth/GLUtils>
+#include <osgEarth/DepthOffset>
+#include <osgEarth/ShaderUtils>
+#include <osg/Depth>
+#include <osg/PolygonOffset>
+
+#ifndef GL_CLIP_DISTANCE0
+#define GL_CLIP_DISTANCE0 0x3000
+#endif
 
 using namespace osgEarth;
 
@@ -39,26 +48,14 @@ RenderSymbol::RenderSymbol(const RenderSymbol& rhs, const osg::CopyOp& copyop) :
     _maxAltitude(rhs._maxAltitude),
     _geometricError(rhs._geometricError),
     _sdfMinDistance(rhs._sdfMinDistance),
-    _sdfMaxDistance(rhs._sdfMaxDistance)
+    _sdfMaxDistance(rhs._sdfMaxDistance),
+    _maxTessAngle(rhs._maxTessAngle)
 {
     //nop
 }
 
 RenderSymbol::RenderSymbol(const Config& conf) :
-    Symbol(conf),
-    _depthTest(true),
-    _lighting(true),
-    _backfaceCulling(true),
-    _order(0),
-    _clipPlane(0),
-    _minAlpha(0.0f),
-    _transparent(false),
-    _decal(false),
-    _maxCreaseAngle(Angle(0.0, Units::DEGREES)),
-    _maxAltitude(Distance(FLT_MAX, Units::METERS)),
-    _geometricError(Distance(0.0, Units::METERS)),
-    _sdfMinDistance(0.0),
-    _sdfMaxDistance(20.0)
+    Symbol(conf)
 {
     mergeConfig(conf);
 }
@@ -79,6 +76,7 @@ RenderSymbol::getConfig() const
     conf.set( "transparent",      _transparent );
     conf.set( "decal",            _decal);
     conf.set( "max_crease_angle", _maxCreaseAngle);
+    conf.set( "max_tess_angle",   _maxTessAngle);
     conf.set( "max_altitude",     _maxAltitude);
     conf.set( "geometric_error",  _geometricError );
     conf.set( "sdf_min_distance", _sdfMinDistance);
@@ -100,6 +98,7 @@ RenderSymbol::mergeConfig( const Config& conf )
     conf.get( "transparent",      _transparent );
     conf.get( "decal",            _decal);
     conf.get( "max_crease_angle", _maxCreaseAngle);
+    conf.get( "max_tess_angle",   _maxTessAngle);
     conf.get( "max_altitude",     _maxAltitude);
     conf.get( "geometric_error",  _geometricError);
     conf.get( "sdf_min_distance", _sdfMinDistance);
@@ -118,31 +117,31 @@ RenderSymbol::parseSLD(const Config& c, Style& style)
         style.getOrCreate<RenderSymbol>()->lighting() = as<bool>(c.value(), *defaults.lighting());
     }
     else if ( match(c.key(), "render-depth-offset") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->enabled() = as<bool>(c.value(), *defaults.depthOffset()->enabled() );
+        style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().enabled() = as<bool>(c.value(), *defaults.depthOffset()->enabled() );
     }
     else if ( match(c.key(), "render-depth-offset-min-bias") ) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
-            style.getOrCreate<RenderSymbol>()->depthOffset()->minBias() = Distance(value, units);
-        style.getOrCreate<RenderSymbol>()->depthOffset()->automatic() = false;
+            style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().minBias() = Distance(value, units);
+        style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().automatic() = false;
     }
     else if ( match(c.key(), "render-depth-offset-max-bias") ) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
-            style.getOrCreate<RenderSymbol>()->depthOffset()->maxBias() = Distance(value, units);
+            style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().maxBias() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-min-range") ) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
-            style.getOrCreate<RenderSymbol>()->depthOffset()->minRange() = Distance(value, units);
+            style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().minRange() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-max-range") ) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
-            style.getOrCreate<RenderSymbol>()->depthOffset()->maxRange() = Distance(value, units);
+            style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().maxRange() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-auto") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->automatic() = as<bool>(c.value(), *defaults.depthOffset()->automatic() );
+        style.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().automatic() = as<bool>(c.value(), *defaults.depthOffset()->automatic() );
     }
     else if ( match(c.key(), "render-backface-culling") ) {
         style.getOrCreate<RenderSymbol>()->backfaceCulling() = as<bool>(c.value(), *defaults.backfaceCulling() );
@@ -166,17 +165,22 @@ RenderSymbol::parseSLD(const Config& c, Style& style)
         style.getOrCreate<RenderSymbol>()->decal() = as<bool>(c.value(), *defaults.decal());
     }
     else if (match(c.key(), "render-max-crease-angle")) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
             style.getOrCreate<RenderSymbol>()->maxCreaseAngle() = Angle(value, units);
     }
+    else if (match(c.key(), "render-max-tess-angle")) {
+        float value; UnitsType units;
+        if (Units::parse(c.value(), value, units, Units::DEGREES))
+            style.getOrCreate<RenderSymbol>()->maxTessAngle() = Angle(value, units);
+    }
     else if (match(c.key(), "render-max-altitude")) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
             style.getOrCreate<RenderSymbol>()->maxAltitude() = Distance(value, units);
     }
     else if (match(c.key(), "render-geometric-error")) {
-        float value; Units units;
+        float value; UnitsType units;
         if (Units::parse(c.value(), value, units, Units::METERS))
             style.getOrCreate<RenderSymbol>()->geometricError() = Distance(value, units);
     }
@@ -185,5 +189,78 @@ RenderSymbol::parseSLD(const Config& c, Style& style)
     }
     else if (match(c.key(), "render-sdf-max-distance")) {
         style.getOrCreate<RenderSymbol>()->sdfMaxDistance() = NumericExpression(c.value());
+    }
+}
+
+
+
+void
+RenderSymbol::applyTo(osg::Node* node) const
+{
+    if (depthTest().isSet())
+    {
+        node->getOrCreateStateSet()->setMode(
+            GL_DEPTH_TEST,
+            (depthTest() == true ? osg::StateAttribute::ON : osg::StateAttribute::OFF) | osg::StateAttribute::OVERRIDE);
+    }
+
+    if (lighting().isSet())
+    {
+        GLUtils::setLighting(
+            node->getOrCreateStateSet(),
+            (lighting() == true ? osg::StateAttribute::ON : osg::StateAttribute::OFF) | osg::StateAttribute::OVERRIDE);
+    }
+
+    if (depthOffset().isSet())
+    {
+        DepthOffsetAdapter adapter(node);
+        adapter.setDepthOffsetOptions(depthOffset().value());
+        adapter.recalculate();
+    }
+
+    if (backfaceCulling().isSet())
+    {
+        node->getOrCreateStateSet()->setMode(
+            GL_CULL_FACE,
+            (backfaceCulling() == true ? osg::StateAttribute::ON : osg::StateAttribute::OFF) | osg::StateAttribute::OVERRIDE);
+    }
+
+#if !( defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE) )
+    if (clipPlane().isSet())
+    {
+        GLenum mode = GL_CLIP_DISTANCE0 + clipPlane().value();
+        node->getOrCreateStateSet()->setMode(mode, 1);
+    }
+#endif
+
+    if (order().isSet() || renderBin().isSet())
+    {
+        osg::StateSet* ss = node->getOrCreateStateSet();
+        int binNumber = order().isSet() ? (int)order()->eval() : ss->getBinNumber();
+        std::string binName =
+            renderBin().isSet() ? renderBin().get() :
+            ss->useRenderBinDetails() ? ss->getBinName() : "DepthSortedBin";
+        ss->setRenderBinDetails(binNumber, binName);
+    }
+
+    if (minAlpha().isSet())
+    {
+        DiscardAlphaFragments().install(node->getOrCreateStateSet(), minAlpha().value());
+    }
+
+
+    if (transparent() == true)
+    {
+        osg::StateSet* ss = node->getOrCreateStateSet();
+        ss->setRenderingHint(ss->TRANSPARENT_BIN);
+    }
+
+    if (decal() == true)
+    {
+        node->getOrCreateStateSet()->setAttributeAndModes(
+            new osg::PolygonOffset(-1, -1), 1);
+
+        node->getOrCreateStateSet()->setAttributeAndModes(
+            new osg::Depth(osg::Depth::LEQUAL, 0, 1, false));
     }
 }

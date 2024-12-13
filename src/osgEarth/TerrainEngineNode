@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_TERRAIN_ENGINE_NODE_H
-#define OSGEARTH_TERRAIN_ENGINE_NODE_H 1
+#pragma once
 
 #include <osgEarth/Map>
 #include <osgEarth/Terrain>
@@ -55,15 +54,6 @@ namespace osgEarth
     }
 
     /**
-     * A callback that lets you customize the computed range for a terrain tile.
-     * Providing a custom range can let applications better control how paging behaves.
-     */
-    struct ComputeRangeCallback : public osg::Referenced
-    {
-        virtual float operator()(osg::Node* node, osg::NodeVisitor& nv) = 0;
-    };
-
-    /**
      * Terrain Engine interface. (Pure virtual)
      * Access to the low-level API for the terrain engine, the node graph that
      * renders the planet's surface.
@@ -81,6 +71,9 @@ namespace osgEarth
                 TerrainEngineNode* engine,
                 TerrainTileModel*  model) = 0;
         };
+
+        using ComputeTileRangeCallback = std::function<float(osg::Node* node, osg::NodeVisitor& nv)>;
+        using ComputeTilePixelSizeCallback = std::function<float(osg::Node* node, osg::NodeVisitor& nv)>;
 
     public:
         //! Unique ID of the terrain engine instance
@@ -141,12 +134,6 @@ namespace osgEarth
         //! Access the stateset used to render terrain surface layers.
         virtual osg::StateSet* getSurfaceStateSet() = 0;
 
-        //! Gets the ComputeRangeCallback for this TerrainEngineNode */
-        virtual ComputeRangeCallback* getComputeRangeCallback() const = 0;
-
-        //! Sets the ComputeRangeCallback for this TerrainEngineNode */
-        virtual void setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback) = 0;
-
         //! Scene graph root of the terrain engine
         virtual osg::Node* getNode() = 0;
 
@@ -178,7 +165,7 @@ namespace osgEarth
         virtual std::string getJobArenaName() const { return ""; }
 
         //! Access an immutable options API
-        virtual const TerrainOptionsAPI getOptions() = 0;
+        virtual TerrainOptionsAPI getOptions() = 0;
 
         //! Number of terrain tiles resident in memory 
         //! (including cached dormant tiles not being rendered)
@@ -186,6 +173,13 @@ namespace osgEarth
 
         //! Tell the engine you updates options.
         virtual void dirtyTerrainOptions() = 0;
+
+        //! Set a function that computes the on-screen size of a tile 
+        //! for the purposes of LOD selection.
+        virtual void setComputeTilePixelSizeCallback(const ComputeTilePixelSizeCallback& callback) = 0;
+
+        //! Set a function that computes the range of a tile for the purposes of culling.
+        virtual void setComputeTileRangeCallback(const ComputeTileRangeCallback& callback) = 0;
     };
 
     /**
@@ -194,13 +188,9 @@ namespace osgEarth
      * A map engine lives under a MapNode and is responsible for generating the
      * actual geometry representing the Earth.
      */
-    class OSGEARTH_EXPORT TerrainEngineNode : 
-        public osg::CoordinateSystemNode,
-        public TerrainEngine,
-        public TerrainEngineRequirements
+    class OSGEARTH_EXPORT TerrainEngineNode : public osg::CoordinateSystemNode,  public TerrainEngine
     {
     public:
-
         TerrainTileModel* createTileModel(
             const Map* map,
             const TileKey& key,
@@ -210,6 +200,8 @@ namespace osgEarth
         const Map* getMap() const override { return _map.get(); }
 
         TerrainResources* getResources() const override;
+
+        virtual const TerrainEngineRequirements& getRequirements() const = 0;
 
         Terrain* getTerrain() override { return _terrainInterface.get(); }
         const Terrain* getTerrain() const override { return _terrainInterface.get(); }
@@ -282,18 +274,25 @@ namespace osgEarth
         //! Shut down the engine
         virtual void shutdown();
 
-        ComputeRangeCallback* getComputeRangeCallback() const override;
+        void setComputeTileRangeCallback(const ComputeTileRangeCallback& callback) override { _computeTileRangeCallback = callback; }
 
-        void setComputeRangeCallback(ComputeRangeCallback* computeRangeCallback) override;
+        void setComputeTilePixelSizeCallback(const ComputeTilePixelSizeCallback& callback) override { _computeTilePixelSizeCallback = callback; }
+        
+        ComputeTileRangeCallback& getComputeTileRangeCallback() { return _computeTileRangeCallback; }
+        ComputeTilePixelSizeCallback& getComputeTilePixelSizeCallback() { return _computeTilePixelSizeCallback; }
 
+        //! Return the top level node associated with the terrain.
         osg::Node* getNode() override {
             return this;
         }
 
-        const TerrainOptionsAPI getOptions() override {
-            return TerrainOptionsAPI(&_options);
+        //! API for accessing or changing terrain options.
+        //! You should call dirtyTerrainOptions() after changing the options.
+        TerrainOptionsAPI getOptions() override {
+            return TerrainOptionsAPI(&_optionsConcrete);
         }
 
+        //! Subclass may override this to do something when the terrain options change
         virtual void dirtyTerrainOptions() { }
 
     public:
@@ -310,16 +309,6 @@ namespace osgEarth
 
         static TerrainEngineNode* create(const TerrainOptions& options);
 
-
-    public: // TerrainEngineRequirements
-
-        bool normalTexturesRequired() const { return _requireNormalTextures; }
-        bool elevationTexturesRequired() const { return _requireElevationTextures; }
-        bool landCoverTexturesRequired() const { return _requireLandCoverTextures; }
-        bool parentTexturesRequired() const { return _requireParentTextures; }
-        bool elevationBorderRequired() const { return _requireElevationBorder; }
-        bool fullDataAtFirstLodRequired() const { return _requireFullDataAtFirstLOD; }
-
     protected:
         TerrainEngineNode();
         virtual ~TerrainEngineNode();
@@ -333,7 +322,10 @@ namespace osgEarth
         friend class TerrainEngineNodeFactory;
 
         //! Assigns a map to render
-        virtual void setMap(const Map* map, const TerrainOptions& options);
+        void setMap(const Map* map, const TerrainOptions& options);
+
+        //! Subclass runs this after a call to setMap.
+        virtual void onSetMap() { }
 
         // signals that a redraw is needed because something changed.
         virtual void requestRedraw();
@@ -343,14 +335,6 @@ namespace osgEarth
         virtual void dirtyState() { }
 
         osg::ref_ptr<TerrainResources> _textureResourceTracker;
-
-        bool _requireElevationTextures;
-        bool _requireNormalTextures;
-        bool _requireLandCoverTextures;
-        bool _requireParentTextures;
-        bool _requireElevationBorder;
-        bool _requireFullDataAtFirstLOD;
-
         osg::ref_ptr<const Map> _map;
 
     private:
@@ -359,11 +343,11 @@ namespace osgEarth
         void onMapModelChanged( const MapModelChange& change );
         virtual void updateTextureCombining() { }
 
-    private:
-        osg::ref_ptr<Terrain>              _terrainInterface;
-        unsigned                           _dirtyCount;
-        bool                               _updateScheduled;
-        TerrainOptions _options;
+    protected:
+        osg::ref_ptr<Terrain> _terrainInterface;
+        unsigned _dirtyCount;
+        bool _updateScheduled;
+        TerrainOptions _optionsConcrete;
 
         typedef std::vector<osg::ref_ptr<TerrainEffect> > TerrainEffectVector;
         TerrainEffectVector effects_;
@@ -377,7 +361,8 @@ namespace osgEarth
 
         osg::ref_ptr<TerrainTileModelFactory> _tileModelFactory;
 
-        osg::ref_ptr<ComputeRangeCallback> _computeRangeCallback;
+        ComputeTileRangeCallback _computeTileRangeCallback;
+        ComputeTilePixelSizeCallback _computeTilePixelSizeCallback;
 
     public:
         // internal
@@ -394,5 +379,3 @@ namespace osgEarth
         }
     };
 } // namespace osgEarth
-
-#endif // OSGEARTH_TERRAIN_ENGINE_NODE_H

@@ -105,6 +105,8 @@ ObjectIDPicker::~ObjectIDPicker()
 void
 ObjectIDPicker::setView(osgViewer::View* view)
 {
+    OE_SOFT_ASSERT_AND_RETURN(_rttSize >= 1, void());
+
     if (view != _view.get())
     {
         _view = view;
@@ -126,7 +128,8 @@ ObjectIDPicker::setView(osgViewer::View* view)
                 {
                     if (me.valid())
                         me->onClick(view, x, y);
-                }
+                },
+                false // don't eat the event
             );
 
             // if we have no graph, install one by default

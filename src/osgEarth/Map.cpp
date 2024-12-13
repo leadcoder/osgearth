@@ -19,6 +19,7 @@
 #include <osgEarth/Map>
 #include <osgEarth/MapModelChange>
 #include <osgEarth/Registry>
+#include <osgEarth/Notify>
 
 using namespace osgEarth;
 
@@ -63,14 +64,14 @@ Map::Options::getConfig() const
 
     conf.set("read_options", osgOptionString());
 
+    conf.set("disable_elevation_ranges", disableElevationRanges());
+
     return conf;
 }
 
 void
 Map::Options::fromConfig(const Config& conf)
-{
-    elevationInterpolation().init(INTERP_BILINEAR);
-    
+{   
     conf.get( "name",         name() );
     conf.get( "profile",      profile() );
     conf.get( "cache",        cache() );  
@@ -78,10 +79,10 @@ Map::Options::fromConfig(const Config& conf)
 
     // legacy support:
     if ( conf.value<bool>( "cache_only", false ) == true )
-        cachePolicy()->usage() = CachePolicy::USAGE_CACHE_ONLY;
+        cachePolicy().mutable_value().usage() = CachePolicy::USAGE_CACHE_ONLY;
 
     if ( conf.value<bool>( "cache_enabled", true ) == false )
-        cachePolicy()->usage() = CachePolicy::USAGE_NO_CACHE;
+        cachePolicy().mutable_value().usage() = CachePolicy::USAGE_NO_CACHE;
 
     conf.get( "elevation_interpolation", "nearest",     elevationInterpolation(), INTERP_NEAREST);
     conf.get( "elevation_interpolation", "average",     elevationInterpolation(), INTERP_AVERAGE);
@@ -92,6 +93,8 @@ Map::Options::fromConfig(const Config& conf)
 
     conf.get("read_options", osgOptionString());
     conf.get("osg_options", osgOptionString()); // back compat
+
+    conf.get("disable_elevation_ranges", disableElevationRanges());
 }
 
 //...................................................................
@@ -122,8 +125,6 @@ Map::init()
 {
     // reset the revision:
     _dataModelRevision = 0;
-
-    _mapDataMutex.setName("Map dataMutex(OE)");
 
     // set the object name from the options:
     if (options().name().isSet())
@@ -183,7 +184,8 @@ Map::init()
 
     // store in the options so we can propagate it to layers, etc.
     _cacheSettings->store(_readOptions.get());
-    OE_INFO << LC << _cacheSettings->toString() << "\n";
+    if (_cacheSettings->getCache() && _cacheSettings->isCacheEnabled())
+        OE_INFO << LC << _cacheSettings->toString() << std::endl;
 
     // remember the referrer for relative-path resolution:
     URIContext( options().referrer() ).store( _readOptions.get() );
@@ -200,7 +202,7 @@ Map::init()
 
 Map::~Map()
 {
-    OE_DEBUG << LC << "~Map" << std::endl;
+    //nop
 }
 
 ElevationPool*
@@ -236,9 +238,9 @@ Map::notifyOnLayerOpenOrClose(Layer* layer)
         newRevision,
         layer);
 
-    for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+    for (auto cb : _mapCallbacks)
     {
-        i->get()->onMapModelChanged(change);
+        cb->onMapModelChanged(change);
     }
 }
 
@@ -276,16 +278,15 @@ Map::setProfile(const Profile* value)
         }
 
         // finally, fire an event if the profile has been set.
-        OE_INFO << LC << "Map profile is: " << _profile->toString() << std::endl;
+        OE_INFO << LC << "Map profile: " << _profile->toString() << std::endl;
     }
 
     // If we just set the profile, tell all our layers they are now added
     // to a valid map.
     if (_profile.valid() && notifyLayers)
     {
-        for(LayerVector::iterator i = _layers.begin(); i != _layers.end(); ++i)
+        for(auto& layer : _layers)
         {
-            Layer* layer = i->get();
             if (layer->isOpen())
             {
                 layer->addedToMap(this);
@@ -346,27 +347,34 @@ Map::setCache(Cache* cache)
         cacheSettings->setCache(cache);
 }
 
+namespace
+{
+    void addAttributions(const LayerVector& layers, StringSet& attributions)
+    {
+        for(auto& layer : layers)
+        {
+            if (layer->isOpen())
+            {
+                VisibleLayer* visibleLayer = dynamic_cast<VisibleLayer*>(layer.get());
+                if (!visibleLayer || visibleLayer->getVisible())
+                {
+                    std::string attribution = layer->getAttribution();
+                    if (!attribution.empty())
+                    {
+                        attributions.insert(attribution);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void
 Map::getAttributions(StringSet& attributions) const
 {
     LayerVector layers;
     getLayers(layers);
-
-    for (LayerVector::const_iterator itr = layers.begin(); itr != layers.end(); ++itr)
-    {
-        if (itr->get()->isOpen())
-        {
-            VisibleLayer* visibleLayer = dynamic_cast<VisibleLayer*>(itr->get());
-            if (!visibleLayer || visibleLayer->getVisible())
-            {
-                std::string attribution = itr->get()->getAttribution();
-                if (!attribution.empty())
-                {
-                    attributions.insert(attribution);
-                }
-            }
-        }
-    }
+    addAttributions(layers, attributions);
 }
 
 MapCallback*
@@ -391,10 +399,9 @@ void
 Map::beginUpdate()
 {
     MapModelChange msg( MapModelChange::BEGIN_BATCH_UPDATE, _dataModelRevision );
-
-    for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+    for(auto& cb : _mapCallbacks)
     {
-        i->get()->onMapModelChanged( msg );
+        cb->onMapModelChanged( msg );
     }
 }
 
@@ -402,10 +409,9 @@ void
 Map::endUpdate()
 {
     MapModelChange msg( MapModelChange::END_BATCH_UPDATE, _dataModelRevision );
-
-    for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+    for (auto& cb : _mapCallbacks)
     {
-        i->get()->onMapModelChanged( msg );
+        cb->onMapModelChanged(msg);
     }
 }
 
@@ -422,8 +428,6 @@ Map::addLayer(Layer* layer)
     // Store in a ref_ptr for scope to ensure callbacks don't accidentally delete while adding
     osg::ref_ptr<Layer> layerRef( layer );
 
-    //osgEarth::Registry::instance()->clearBlacklist();
-
     layer->setReadOptions(getReadOptions());
 
     if (layer->getOpenAutomatically())
@@ -432,9 +436,18 @@ Map::addLayer(Layer* layer)
     }
 
     // do we need this? Won't the callback to this?
-    if (layer->isOpen() && getProfile() != NULL)
+    if (layer->isOpen() && getProfile() != nullptr)
     {
         layer->addedToMap(this);
+
+        // if the layer has sublayers (which is must open manually) add them now.
+        for (auto& sublayer : layer->_sublayers)
+        {
+            if (sublayer->isOpen())
+            {
+                sublayer->addedToMap(this);
+            }
+        }
     }
 
     // Set up callbacks. Do this *after* calling addedToMap (since the callback invokes addedToMap)
@@ -452,20 +465,28 @@ Map::addLayer(Layer* layer)
 
         if (layer->options().terrainPatch() == true)
             ++_numTerrainPatchLayers;
+
+        // if the layer has sublayers (which is must open manually) add them now.
+        for (auto& sublayer : layer->_sublayers)
+        {
+            if (sublayer->isOpen())
+            {
+                _layers.push_back(sublayer);
+            }
+        }
     }
 
     // a separate block b/c we don't need the mutex
-    for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+    for(auto& cb : _mapCallbacks)
     {
-        i->get()->onMapModelChanged(MapModelChange(
-            MapModelChange::ADD_LAYER, newRevision, layer, index));
+        cb->onMapModelChanged(MapModelChange(MapModelChange::ADD_LAYER, newRevision, layer, index));
     }
 }
 
 void
 Map::insertLayer(Layer* layer, unsigned index)
 {
-    if (layer == NULL)
+    if (layer == nullptr)
         return;
 
     // ensure it's not already in the map
@@ -475,8 +496,6 @@ Map::insertLayer(Layer* layer, unsigned index)
     // Store in a ref_ptr for scope to ensure callbacks don't accidentally delete while adding
     osg::ref_ptr<Layer> layerRef( layer );
 
-    //osgEarth::Registry::instance()->clearBlacklist();
-
     layer->setReadOptions(getReadOptions());
 
     if (layer->getOpenAutomatically())
@@ -484,9 +503,18 @@ Map::insertLayer(Layer* layer, unsigned index)
         layer->open();
     }
 
-    if (layer->isOpen() && getProfile() != NULL)
+    if (layer->isOpen() && getProfile() != nullptr)
     {
         layer->addedToMap(this);
+
+        // if the layer has sublayers (which is must open manually)...
+        for (auto& sublayer : layer->_sublayers)
+        {
+            if (sublayer->isOpen())
+            {
+                sublayer->addedToMap(this);
+            }
+        }
     }
 
     // Set up callbacks. Do this *after* calling addedToMap (since the callback invokes addedToMap)
@@ -502,6 +530,14 @@ Map::insertLayer(Layer* layer, unsigned index)
         else
             _layers.insert(_layers.begin() + index, layer);
 
+        for (auto& sublayer : layer->_sublayers)
+        {
+            if (sublayer->isOpen())
+            {
+                _layers.push_back(sublayer);
+            }
+        }
+
         newRevision = ++_dataModelRevision;
 
         if (layer->options().terrainPatch() == true)
@@ -509,17 +545,16 @@ Map::insertLayer(Layer* layer, unsigned index)
     }
 
     // a separate block b/c we don't need the mutex
-    for (MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++)
+    for (auto& cb : _mapCallbacks)
     {
-        i->get()->onMapModelChanged(MapModelChange(
-            MapModelChange::ADD_LAYER, newRevision, layer, index));
+        cb->onMapModelChanged(MapModelChange(MapModelChange::ADD_LAYER, newRevision, layer, index));
     }
 }
 
 void
 Map::removeLayer(Layer* layer)
 {
-    if (layer == NULL)
+    if (layer == nullptr)
         return;
 
     // ensure it's in the map
@@ -562,12 +597,11 @@ Map::removeLayer(Layer* layer)
     }
 
     // a separate block b/c we don't need the mutex
-    if ( newRevision >= 0 )
+    if (newRevision >= 0)
     {
-        for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+        for (auto& cb : _mapCallbacks)
         {
-            i->get()->onMapModelChanged( MapModelChange(
-                MapModelChange::REMOVE_LAYER, newRevision, layerToRemove.get(), index) );
+            cb->onMapModelChanged(MapModelChange(MapModelChange::REMOVE_LAYER, newRevision, layerToRemove.get(), index));
         }
     }
 }
@@ -611,10 +645,9 @@ Map::moveLayer(Layer* layer, unsigned newIndex)
     // a separate block b/c we don't need the mutex
     if ( layer )
     {
-        for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+        for (auto& cb : _mapCallbacks)
         {
-            i->get()->onMapModelChanged( MapModelChange(
-                MapModelChange::MOVE_LAYER, newRevision, layer, oldIndex, newIndex) );
+            cb->onMapModelChanged(MapModelChange(MapModelChange::MOVE_LAYER, newRevision, layer, oldIndex, newIndex));
         }
     }
 }
@@ -627,13 +660,8 @@ Map::addLayers(const LayerVector& layers)
     // (b) invoke all the MapModelChange callbacks with the same 
     // new revision number.
 
-    //osgEarth::Registry::instance()->clearBlacklist();
-
-    for(LayerVector::const_iterator layerRef = layers.begin();
-        layerRef != layers.end();
-        ++layerRef)
+    for(auto& layer : layers)
     {
-        Layer* layer = layerRef->get();
         if ( !layer )
             continue;
 
@@ -657,42 +685,49 @@ Map::addLayers(const LayerVector& layers)
         firstIndex = _layers.size();
         newRevision = ++_dataModelRevision;
 
-        for(LayerVector::const_iterator layerRef = layers.begin();
-            layerRef != layers.end();
-            ++layerRef)
+        for (auto& layer : layers)
         {
-            Layer* layer = layerRef->get();
-            if ( !layer )
-                continue;
+            if (layer.valid())
+            {
+                _layers.push_back(layer);
 
-            _layers.push_back( layer );
+                // if the layer has sublayers (which is must open manually) add them now.
+                for (auto& sublayer : layer->_sublayers)
+                {
+                    if (sublayer->isOpen())
+                    {
+                        _layers.push_back(sublayer);
+                    }
+                }
+            }
         }
     }
 
     // call addedToMap on each new layer in turn:
     unsigned index = firstIndex;
 
-    for(LayerVector::const_iterator layerRef = layers.begin();
-        layerRef != layers.end();
-        ++layerRef)
+    for (auto& layer : layers)
     {
-        Layer* layer = layerRef->get();
         if ( !layer )
             continue;
 
         if (layer->isOpen() && getProfile() != NULL)
         {
             layer->addedToMap(this);
+
+            for (auto& sublayer : layer->_sublayers)
+            {
+                sublayer->addedToMap(this);
+            }
         }
 
         // Set up callbacks.
         installLayerCallbacks(layer);
 
         // a separate block b/c we don't need the mutex
-        for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+        for (auto& cb : _mapCallbacks)
         {
-            i->get()->onMapModelChanged(MapModelChange(
-                MapModelChange::ADD_LAYER, newRevision, layer, index++));
+            cb->onMapModelChanged(MapModelChange(MapModelChange::ADD_LAYER, newRevision, layer, index++));
         }
     }
 }
@@ -716,8 +751,10 @@ Map::getLayers(LayerVector& out_list) const
     out_list.reserve( _layers.size() );
 
     Threading::ScopedReadLock lock(_mapDataMutex);
-    for( LayerVector::const_iterator i = _layers.begin(); i != _layers.end(); ++i )
-        out_list.push_back( i->get() );
+    for(auto& layer : _layers)
+    {
+        out_list.push_back( layer.get() );
+    }
 
     return _dataModelRevision;
 }
@@ -733,20 +770,24 @@ Layer*
 Map::getLayerByName(const std::string& name) const
 {
     Threading::ScopedReadLock lock( _mapDataMutex );
-    for(LayerVector::const_iterator i = _layers.begin(); i != _layers.end(); ++i)
-        if ( i->get()->getName() == name )
-            return i->get();
-    return 0L;
+    for(auto& layer : _layers)
+    {
+        if (layer->getName() == name)
+            return layer.get();
+    }
+    return nullptr;
 }
 
 Layer*
 Map::getLayerByUID(UID layerUID) const
 {
     Threading::ScopedReadLock lock( _mapDataMutex );
-    for( LayerVector::const_iterator i = _layers.begin(); i != _layers.end(); ++i )
-        if ( i->get()->getUID() == layerUID )
-            return i->get();
-    return 0L;
+    for(auto& layer : _layers)
+    {
+        if (layer->getUID() == layerUID)
+            return layer.get();
+    }
+    return nullptr;
 }
 
 Layer*
@@ -788,18 +829,16 @@ Map::clear()
     }
 
     // a separate block b/c we don't need the mutex
-    for( MapCallbackList::iterator i = _mapCallbacks.begin(); i != _mapCallbacks.end(); i++ )
+    for(auto& cb : _mapCallbacks)
     {
-        i->get()->onBeginUpdate();
+        cb->onBeginUpdate();
 
-        for(LayerVector::iterator layer = layersRemoved.begin();
-            layer != layersRemoved.end();
-            ++layer)
+        for(auto& layer : layersRemoved)
         {
-            i->get()->onMapModelChanged(MapModelChange(MapModelChange::REMOVE_LAYER, newRevision, layer->get()));
+            cb->onMapModelChanged(MapModelChange(MapModelChange::REMOVE_LAYER, newRevision, layer.get()));
         }
 
-        i->get()->onEndUpdate();
+        cb->onEndUpdate();
     }
 }
 
@@ -820,17 +859,16 @@ Map::isFast(const TileKey& key, const LayerVector& layers) const
 {
     if (getCache() == NULL)
         return false;
-
-    for (LayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i)
+    
+    for(auto& layer : layers)
     {
-        Layer* layer = i->get();
         if (!layer)
             continue;
 
         if (!layer->isOpen())
             continue;
 
-        TileLayer* tilelayer = dynamic_cast<TileLayer*>(layer);
+        TileLayer* tilelayer = dynamic_cast<TileLayer*>(layer.get());
         if (tilelayer)
         {
             if (tilelayer->getCacheSettings()->cachePolicy()->isCacheDisabled())

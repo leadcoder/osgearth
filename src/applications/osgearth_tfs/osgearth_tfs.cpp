@@ -100,7 +100,7 @@ int main(int argc, char** argv)
     CropFilter::Method cropMethod = CropFilter::METHOD_CENTROID;
     if (arguments.read("--crop"))
     {
-        cropMethod = CropFilter::METHOD_CROPPING;
+        cropMethod = CropFilter::METHOD_CROP_TO_EXTENT;
     }
 
     std::string destSRS;
@@ -112,9 +112,9 @@ int main(int argc, char** argv)
     if (!grid.empty())
     {
         float gridSize;
-        Units units;
-        if ( Units::parse(grid, gridSize, units, Units::METERS) ) {
-             gridSizeMeters = Distance(gridSize, units).as(Units::METERS);
+        UnitsType units;
+        if (Units::parse(grid, gridSize, units, Units::METERS)) {
+            gridSizeMeters = Distance(gridSize, units).as(Units::METERS);
         }
     }
 

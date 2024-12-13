@@ -50,7 +50,7 @@ MapNode* makeMiniMapNode( )
     map->addLayer(osm);
 
     TerrainOptions terrainOptions;
-    terrainOptions.rangeMode() = osg::LOD::PIXEL_SIZE_ON_SCREEN;
+    terrainOptions.lodMethod() = LODMethod::SCREEN_SPACE;
 
     MapNode::Options mapNodeOptions;
     mapNodeOptions.terrain() = terrainOptions;
@@ -82,7 +82,7 @@ osg::Node* drawBounds(MapNode* mapNode, osgEarth::GeoExtent& bounds)
         geom->push_back(osg::Vec3d(bounds.xMin(), bounds.yMin(), 0));
         osgEarth::Feature* feature = new osgEarth::Feature(geom, osgEarth::SpatialReference::create("wgs84"));
         Style style;
-        style.getOrCreateSymbol<LineSymbol>()->stroke()->color() = Color::Yellow;
+        style.getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().color() = Color::Yellow;
         feature->style() = style;
         FeatureNode* featureNode = new FeatureNode(feature);
         featureNode->setMapNode(mapNode);
@@ -213,7 +213,7 @@ main(int argc, char** argv)
 
         //Add a marker we can move around with the main view's eye point
         Style markerStyle;
-        markerStyle.getOrCreate<IconSymbol>()->url()->setLiteral( "../data/placemark32.png" );
+        markerStyle.getOrCreate<IconSymbol>()->url().mutable_value().setLiteral( "../data/placemark32.png" );
         PlaceNode* eyeMarker = new PlaceNode("", markerStyle);
         eyeMarker->setDynamic(true);
         eyeMarker->setPosition(GeoPoint(miniMapNode->getMapSRS(), 0, 0));

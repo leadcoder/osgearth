@@ -19,7 +19,7 @@
 
 #include <osgEarth/XmlUtils>
 
-#include "tinyxml.h"
+#include "tinyxml/tinyxml.h"
 
 
 using namespace osgEarth;
@@ -248,7 +248,6 @@ XmlElement::getConfig(const std::string& referrer) const
         URIContext uriContext(referrer);
         URI uri(href, uriContext);
         const std::string& fullURI = uri.full();
-        OE_DEBUG << "Loading href from " << fullURI << std::endl;
 
         osg::ref_ptr< XmlDocument > doc = XmlDocument::load(fullURI);
         if (doc && doc->getChildren().size() > 0)
@@ -527,9 +526,12 @@ namespace
             XmlText* t = (XmlText*)node;
             std::string value = t->getValue();
 
-            std::string encodedValue;
-            TiXmlBase::EncodeString(value, &encodedValue);
-            bool needCDATA = !encodedValue.empty() && encodedValue != value;
+            //std::string encodedValue;
+            TiXmlString rawValue(value.c_str());
+            TiXmlString encodedValue;
+            TiXmlBase::EncodeString(rawValue, &encodedValue);
+
+            bool needCDATA = !encodedValue.empty() && (std::string(encodedValue.c_str()) != value);
 
             TiXmlText* tNode = new TiXmlText(value.c_str());
             if (needCDATA)

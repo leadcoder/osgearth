@@ -44,6 +44,11 @@
 using namespace osgEarth;
 using namespace osgEarth::Threading;
 
+namespace
+{
+    static Gate<std::string> uri_gate;    
+}
+
 //------------------------------------------------------------------------
 
 URIStream::URIStream(const URI& uri, std::ios_base::openmode mode) :
@@ -524,6 +529,8 @@ namespace
         const osgDB::Options* dbOptions,
         ProgressCallback*     progress)
     {
+        ScopedGate<std::string> gatelock(uri_gate, inputURI.full());
+
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
         unsigned long handle = NetworkMonitor::begin(inputURI.full(), "pending", "URI");
@@ -666,7 +673,7 @@ namespace
 
                 // If the request failed with an unrecoverable error,
                 // blacklist so we don't waste time on it again
-                if (result.failed())
+                if (result.failed() && result.code() == ReadResult::RESULT_NOT_FOUND)
                 {
                     osgEarth::Registry::instance()->blacklist(inputURI.full());
                 }
@@ -777,7 +784,7 @@ URIAliasMapReadCallback::readObject(const std::string& filename, const osgDB::Op
 osgDB::ReaderWriter::ReadResult
 URIAliasMapReadCallback::readImage(const std::string& filename, const osgDB::Options* options)
 {
-    OE_INFO << LC << "Map: " << filename << " to " << _aliasMap.resolve(filename,_context) << std::endl;
+    //OE_INFO << LC << "Map: " << filename << " to " << _aliasMap.resolve(filename,_context) << std::endl;
     if (osgDB::Registry::instance()->getReadFileCallback()) return osgDB::Registry::instance()->getReadFileCallback()->readImage(_aliasMap.resolve(filename,_context),options);
     else return osgDB::Registry::instance()->readImageImplementation(_aliasMap.resolve(filename,_context),options);
 }

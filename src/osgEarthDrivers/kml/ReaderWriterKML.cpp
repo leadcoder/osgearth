@@ -73,7 +73,7 @@ struct ReaderWriterKML : public osgDB::ReaderWriter
         else
         {
             // propagate the source URI along to the stream reader
-            OE_INFO << LC << "Reading KML from " << url << std::endl;
+            OE_DEBUG << LC << "Reading KML from " << url << std::endl;
             osg::ref_ptr<osgDB::Options> myOptions = Registry::instance()->cloneOrCreateOptions(dbOptions);
             URIContext(url).store( myOptions.get() );
             return readNode( URIStream(url), myOptions.get() );
@@ -82,14 +82,9 @@ struct ReaderWriterKML : public osgDB::ReaderWriter
 
     osgDB::ReaderWriter::ReadResult readNode(std::istream& in, const osgDB::Options* options ) const override
     {
-        if ( !options )
-            return ReadResult("Missing required MapNode option");
-
-        // this plugin requires that you pass in a MapNode* in options.
+        // this plugin can receive an optional MapNode* in options.
         MapNode* mapNode = const_cast<MapNode*>(
             static_cast<const MapNode*>( options->getPluginData("osgEarth::MapNode")) );
-        if ( !mapNode )
-            return ReadResult("Missing required MapNode option");
 
         // grab the KMLOptions if present
         const KML::KMLOptions* kmlOptions =

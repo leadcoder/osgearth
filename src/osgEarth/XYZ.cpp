@@ -33,7 +33,6 @@ using namespace osgEarth::XYZ;
 
 Status
 XYZ::Driver::open(const URI& uri,
-                  osg::ref_ptr<const Profile>& profile,
                   const std::string& format,
                   DataExtentList& out_dataExtents,
                   const osgDB::Options* readOptions)
@@ -41,12 +40,6 @@ XYZ::Driver::open(const URI& uri,
     if (uri.empty())
     {
         return Status::Error(Status::ConfigurationError, "Valid URL is missing");
-    }
-
-    // driver requires an express profile.
-    if (!profile.valid())
-    {
-        return Status::Error(Status::ConfigurationError, "Required explicit profile definition is missing");
     }
 
     _template = uri.full();
@@ -142,15 +135,15 @@ XYZImageLayerOptions::fromConfig(const Config& conf)
 Config
 XYZImageLayerOptions::getMetadata()
 {
-    return Config::readJSON( OE_MULTILINE(
+    return Config::readJSON( R"(
         { "name" : "XYZ Image Tile Service",
             "properties": [
             { "name": "url",      "description": "Location of the TMS repository", "type": "string", "default": "" },
             { "name": "invert_y", "description": "Set to true invert the Y index", "type": "bool", "default": "false" },
-            { "name": "format",   "description": "Image format to assume (e.g. jpeg, png)", "type": "string", "default": "" }
+            { "name": "format",   "description": "Image format to assume", "type": "string", "default": "" }
             ]
         }
-    ) );
+    )" );
 }
 
 //........................................................................
@@ -178,16 +171,16 @@ XYZElevationLayerOptions::fromConfig(const Config& conf)
 Config
 XYZElevationLayerOptions::getMetadata()
 {
-    return Config::readJSON( OE_MULTILINE(
+    return Config::readJSON( R"(
         { "name" : "XYZ Elevation Tile Service",
             "properties": [
             { "name": "url",      "description": "Location of the TMS repository", "type": "string", "default": "" },
             { "name": "invert_y", "description": "Set to true invert the Y index", "type": "bool", "default": "false" },
-            { "name": "format",   "description": "Image format to assume (e.g. jpeg, png)", "type": "string", "default": "" },
-            { "name": "elevation_encoding", "description": "How elevation is encoded (mapbox, e.g.)", "type": "string", "default": "" }
+            { "name": "format",   "description": "Image format to assume", "type": "string", "default": "" },
+            { "name": "elevation_encoding", "description": "How elevation is encoded", "type": "string", "default": "" }
             ]
         }
-    ) );
+    )" );
 }
 
 //........................................................................
@@ -223,12 +216,9 @@ XYZImageLayer::openImplementation()
     if (parent.isError())
         return parent;
 
-    osg::ref_ptr<const Profile> profile = getProfile();
-
     DataExtentList dataExtents;
     Status status = _driver.open(
         options().url().get(),
-        profile,
         options().format().get(),
         dataExtents,
         getReadOptions());
@@ -236,9 +226,10 @@ XYZImageLayer::openImplementation()
     if (status.isError())
         return status;
 
-    if (profile.get() != getProfile())
+    if (!getProfile())
     {
-        setProfile(profile.get());
+        OE_INFO << LC << "No profile; assuming spherical-mercator" << std::endl;
+        setProfile(Profile::create("spherical-mercator"));
     }
 
     setDataExtents(dataExtents);
@@ -280,12 +271,13 @@ XYZElevationLayer::init()
 void
 XYZElevationLayer::setProfile(const Profile* profile)
 {
+    // do not use profile after callin this function
     ElevationLayer::setProfile(profile);
 
-    if (profile)
+    if (getProfile())
     {
         // update the options for proper serialization
-        options().profile() = profile->toProfileOptions();
+        options().profile() = getProfile()->toProfileOptions();
     }
 }
 

@@ -18,11 +18,13 @@
  */
 #include <osgEarth/LayerShader>
 #include <osgEarth/ShaderLoader>
+#include <osgEarth/ShaderUtils>
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/Color>
 #include <osgEarth/Layer>
 #include <osg/Texture2D>
 #include <osg/Texture2DArray>
+#include <osgDB/WriteFile>
 
 #undef  LC
 #define LC "[LayerShader] "
@@ -108,12 +110,19 @@ ShaderOptions::fromConfig(const Config& conf)
         if (!value.empty() && value[0] == '#') 
         {
             Color color(value);
-            _uniforms.back()._vec3Value->set(color.r(), color.g(), color.b());
+            _uniforms.back()._vec3Value = osg::Vec3f(color.r(), color.g(), color.b());
         }
         else
         {
             i->get("value", _uniforms.back()._floatValue);
         }
+    }
+
+    if (conf.hasChild("material"))
+    {
+        auto& child = conf.child("material");
+        _pbrsampler.mutable_value()._name = child.value("name");
+        _pbrsampler.mutable_value()._material = PBRMaterial(child);
     }
 }
 
@@ -142,7 +151,9 @@ LayerShader::install(Layer* layer, TerrainResources* res)
     vp->setName(layer->getName());
     ShaderPackage package;
     package.add("", _options.code());
-    package.loadAll(vp, layer->getReadOptions());
+
+    ShaderLoader::load(vp, "", package, layer->getReadOptions());
+    //package.loadAll(vp, layer->getReadOptions());
 
     for (int i = 0; i < _options.samplers().size(); ++i)
     {
@@ -194,7 +205,7 @@ LayerShader::install(Layer* layer, TerrainResources* res)
                         osg::ref_ptr<osg::Image> image = uri.getImage(layer->getReadOptions());
                         if (image)
                         {
-                            OE_INFO << LC << "   Added image from \"" << uri.full() << "\"\n";
+                            OE_DEBUG << LC << "   Added image from \"" << uri.full() << "\"\n";
                             tex->setImage(i, image);
                             tex->setFilter(tex->MIN_FILTER, tex->NEAREST_MIPMAP_LINEAR);
                             tex->setFilter(tex->MAG_FILTER, tex->LINEAR);
@@ -237,6 +248,52 @@ LayerShader::install(Layer* layer, TerrainResources* res)
             {
                 osg::Uniform* u = new osg::Uniform(uniform._name.c_str(), uniform._vec3Value.get());
                 stateset->addUniform(u);
+            }
+        }
+    }
+
+    if (_options.pbrsampler().isSet())
+    {
+        auto& pbrsampler = _options.pbrsampler().get();
+
+        PBRTexture textures;
+        textures.load(pbrsampler._material);
+
+        _reservations.reserve(3);
+
+        if (textures.albedo)
+        {
+            _reservations.emplace_back();
+            auto& reservation = _reservations.back();
+
+            if (res->reserveTextureImageUnitForLayer(reservation, layer, "User shader albedo sampler"))
+            {
+                stateset->setTextureAttribute(reservation.unit(), textures.albedo);
+                stateset->addUniform(new osg::Uniform((pbrsampler._name + "_albedo").c_str(), reservation.unit()));
+            }
+        }
+
+        if (textures.normal)
+        {
+            _reservations.emplace_back();
+            auto& reservation = _reservations.back();
+
+            if (res->reserveTextureImageUnitForLayer(reservation, layer, "User shader normal sampler"))
+            {
+                stateset->setTextureAttribute(reservation.unit(), textures.normal);
+                stateset->addUniform(new osg::Uniform((pbrsampler._name + "_normal").c_str(), reservation.unit()));
+            }
+        }
+
+        if (textures.pbr)
+        {
+            _reservations.emplace_back();
+            auto& reservation = _reservations.back();
+
+            if (res->reserveTextureImageUnitForLayer(reservation, layer, "User shader pbr sampler"))
+            {
+                stateset->setTextureAttribute(reservation.unit(), textures.pbr);
+                stateset->addUniform(new osg::Uniform((pbrsampler._name + "_pbr").c_str(), reservation.unit()));
             }
         }
     }

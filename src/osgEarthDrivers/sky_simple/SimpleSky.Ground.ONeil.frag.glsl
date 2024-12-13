@@ -7,7 +7,8 @@
 #pragma import_defines(OE_USE_PBR)
 
 uniform float oe_sky_exposure = 3.3; // HDR scene exposure (ground level)
-uniform float oe_sky_ambientBoostFactor; // ambient sunlight booster for daytime
+uniform float oe_sky_ambientBoostFactor; // ambient sunlight booster for daytime (material mode only)
+uniform float oe_sky_maxAmbientIntensity = 0.75; // maximum daytime ambient intensity (PBR mode only)
 
 in vec3 atmos_lightDir;    // light direction (view coords)
 in vec3 atmos_color;       // atmospheric lighting color
@@ -20,13 +21,7 @@ in vec3 vp_VertexView; // from osgEarth
 // frag stage global PBR parameters
 #ifdef OE_USE_PBR
 // fragment stage global PBR parameters.
-struct OE_PBR {
-    float roughness;
-    float ao;
-    float metal;
-    float brightness;
-    float contrast;
-} oe_pbr;
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
 #endif
 
 // Parameters of each light:
@@ -77,21 +72,22 @@ float DistributionGGX(vec3 N, vec3 H, float roughness)
     return num / denom;
 }
 
-float GeometrySchlickGGX(float NdotV, float roughness)
+float GeometrySchlickGGX(float NdotX, float roughness)
 {
     float r = (roughness + 1.0);
     float k = (r*r) / 8.0;
 
-    float nom = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
+    float nom = NdotX;
+    float denom = NdotX * (1.0 - k) + k;
 
     return nom / denom;
 }
 
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+//float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+float GeometrySmith(float NdotV, float NdotL, float roughness)
 {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
+    //float NdotV = max(dot(N, V), 0.0);
+    //float NdotL = max(dot(N, L), 0.0);
     float ggx2 = GeometrySchlickGGX(NdotV, roughness);
     float ggx1 = GeometrySchlickGGX(NdotL, roughness);
 
@@ -102,6 +98,9 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(max(1.0 - cosTheta, 0.0), 5.0);
 }
+
+const float oe_wrap = 0.22;
+uniform float oe_normal_boost = 1.0;
 
 #ifdef OE_USE_PBR
 void atmos_fragment_main_pbr(inout vec4 color)
@@ -120,6 +119,7 @@ void atmos_fragment_main_pbr(inout vec4 color)
     F0 = mix(F0, albedo, vec3(oe_pbr.metal));
 
     vec3 Lo = vec3(0.0);
+    float ai = 0.0; // ambient intensity (based on time of day)
 
     for (int i = 0; i < OE_NUM_LIGHTS; ++i)
     {
@@ -128,37 +128,45 @@ void atmos_fragment_main_pbr(inout vec4 color)
         vec3 H = normalize(V + L);
         //float distance = length(osg_LightSource[i].position.xyz - atmos_vert);
         //float attenuation = 1.0 / (distance * distance);
-        vec3 radiance = vec3(1.0); // osg_LightSource[i].diffuse.rgb * attenuation;
+        vec3 radiance = osg_LightSource[i].diffuse.rgb; // * attenuation
 
-        //radiance *= atmos_atten;
+        float NdotL = max(dot(N, L), 0.0);
+
+        // wrap diffuse:
+        // https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-16-real-time-approximations-subsurface-scattering
+        float NdotL_wrap = max(0.0, (NdotL + oe_wrap) / (1.0 + oe_wrap));
+
+        float NdotV = max(0.0, dot(N, V));
 
         // cook-torrance BRDF:
         float NDF = DistributionGGX(N, H, oe_pbr.roughness);
-        float G = GeometrySmith(N, V, L, oe_pbr.roughness);
+        float G = GeometrySmith(NdotV, NdotL_wrap, oe_pbr.roughness);
         vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
 
         vec3 kS = F;
         vec3 kD = vec3(1.0) - kS;
         kD *= 1.0 - oe_pbr.metal;
 
-        float NdotL = max(dot(N, L), 0.0);
-
         vec3 numerator = NDF * G * F;
-        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL;
-        vec3 specular = numerator / max(denominator, 0.001);
+        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL_wrap;
+        vec3 specular = NdotL > 0.0 ? numerator / max(denominator, 0.001) : vec3(0.0);
 
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+        // daytime metric
+        float day = i == 0 ? max(0.0, dot(atmos_up, L)) : 1.0;
+
+        // color contribution
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL_wrap * day;
+
+        // ambient intesntity contribution
+        ai = max(ai, NdotL_wrap * oe_sky_maxAmbientIntensity) * day;
     }
 
-    vec3 ambient = osg_LightSource[0].ambient.rgb * albedo * oe_pbr.ao;
+    vec3 ambient = clamp(osg_LightSource[0].ambient.rgb + vec3(ai), 0.0, 1.0) * albedo * oe_pbr.ao;
 
     color.rgb = ambient + Lo;
 
     // tone map:
     color.rgb = color.rgb / (color.rgb + vec3(1.0));
-
-    // boost:
-    //color.rgb *= 2.2;
 
     // add in the haze
     color.rgb += pow(atmos_color, vec3(2.2)); // add in the (SRGB) color
@@ -167,7 +175,7 @@ void atmos_fragment_main_pbr(inout vec4 color)
     color.rgb = 1.0 - exp(-oe_sky_exposure * color.rgb);
 
     // brightness and contrast
-    color.rgb = ((color.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
+    //color.rgb = ((color.rgb - 0.5)*oe_pbr.contrast + 0.5) * oe_pbr.brightness;
 
     // linear back to SRGB
     color.rgb = pow(color.rgb, vec3(1.0/2.2));

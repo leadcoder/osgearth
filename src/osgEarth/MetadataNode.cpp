@@ -168,6 +168,11 @@ const Feature* MetadataNode::getFeature(unsigned int index) const
     return _features[index];
 }
 
+Feature* MetadataNode::getFeature(unsigned int index)
+{
+    return _features[index];
+}
+
 int MetadataNode::getIndexFromObjectID(ObjectID id) const
 {
     for (unsigned int i = 0; i < _instances->size(); ++i)
@@ -188,7 +193,7 @@ namespace osgEarth
         namespace MetadataNode
         {
             static bool checkFeatures(const osgEarth::MetadataNode& g)
-            {
+            {             
                 return g.getNumFeatures() > 0;
             }
 
@@ -268,9 +273,11 @@ namespace osgEarth
                                 feature->set(attrName, static_cast<long long>(v));
                                 break;
                             }
+#if 0
                             case ATTRTYPE_DOUBLEARRAY:
                                 // TODO:
                                 break;
+#endif
                             default:
                                 break;
                             }
@@ -342,8 +349,8 @@ namespace osgEarth
                     for (auto& attr : feature->getAttrs())
                     {
                         os << (unsigned int)keysToIndex[attr.first] << std::endl;
-                        os << (unsigned int)attr.second.first << std::endl;
-                        switch (attr.second.first)
+                        os << (unsigned int)attr.second.type << std::endl;
+                        switch (attr.second.type)
                         {
                         case osgEarth::ATTRTYPE_BOOL:
                             os << attr.second.getBool();
@@ -360,9 +367,11 @@ namespace osgEarth
                             writeInt64(os, attr.second.getInt());
                             break;
                         }
+#if 0
                         case ATTRTYPE_DOUBLEARRAY:
                             // TODO:
                             break;
+#endif
                         default:
                             break;
                         }

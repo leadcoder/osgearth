@@ -581,7 +581,7 @@ RocksDBCacheBin::compact()
         return false;
 
     // This could take a while.
-    _db->CompactRange(0L, 0L);
+    _db->CompactRange({}, nullptr, nullptr);
 
     return false;
 }
@@ -611,7 +611,7 @@ RocksDBCacheBin::readMetadata()
     if ( !binValidForReading() )
         return Config();
 
-    ScopedMutexLock exclusiveLock( _rwMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _rwMutex );
 
     std::string binvalue;
     rocksdb::Status status = _db->Get(rocksdb::ReadOptions(), binKey(), &binvalue);
@@ -629,7 +629,7 @@ RocksDBCacheBin::writeMetadata(const Config& conf)
     if ( !binValidForWriting() )
         return false;
 
-    ScopedMutexLock exclusiveLock( _rwMutex );
+    std::lock_guard<std::mutex> exclusiveLock( _rwMutex );
 
     // inject the cache version
     Config mutableConf(conf);

@@ -1,8 +1,6 @@
-INCLUDE_DIRECTORIES(${OSG_INCLUDE_DIRS} )
-SET(TARGET_LIBRARIES_VARS OSG_LIBRARY OSGDB_LIBRARY OSGUTIL_LIBRARY OSGVIEWER_LIBRARY OPENTHREADS_LIBRARY)
-
-SET(TARGET_SRC
-    osgearth_collecttriangles.cpp )
-
-#### end var setup  ###
-SETUP_IMGUI_APPLICATION(osgearth_collecttriangles)
+add_osgearth_app(
+    TARGET osgearth_collecttriangles
+    SOURCES osgearth_collecttriangles.cpp
+    LIBRARIES osgEarthImGui
+    FOLDER Examples )
+   

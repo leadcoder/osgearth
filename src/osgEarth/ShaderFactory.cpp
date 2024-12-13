@@ -34,13 +34,13 @@ using namespace osgEarth::Util;
 
 namespace
 {
-    Threading::Mutex s_glslMutex;
+    std::mutex s_glslMutex;
     std::string s_glslHeader;
 
     #if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
-        static bool s_GLES_SHADERS = true;
+        bool s_GLES_SHADERS = true;
     #else
-        static bool s_GLES_SHADERS = false;
+        bool s_GLES_SHADERS = false;
     #endif
 }
 
@@ -56,7 +56,7 @@ ShaderFactory::getGLSLHeader()
 {
     if (s_glslHeader.empty())
     {
-        Threading::ScopedMutexLock lock(s_glslMutex);
+        std::lock_guard<std::mutex> lock(s_glslMutex);
         if (s_glslHeader.empty())
         {
             int version = Capabilities::get().getGLSLVersionInt();
@@ -168,10 +168,10 @@ ShaderFactory::createMains(
 {
     // We require attribute aliasing and matrix uniforms.
     OE_SOFT_ASSERT(state.getUseVertexAttributeAliasing(),
-        "OpenSceneGraph vertex attribute aliasing must be enabled");
+        "OpenSceneGraph vertex attribute aliasing must be enabled. Consider installing the GL3RealizeOperation in your viewer.");
 
     OE_SOFT_ASSERT(state.getUseModelViewAndProjectionUniforms(),
-        "OpenSceneGraph matrix uniforms must be enabled");
+        "OpenSceneGraph matrix uniforms must be enabled. Consider installing the GL3RealizeOperation in your viewer.");
 
     StageMask stages =
         VirtualProgram::STAGE_VERTEX |
@@ -522,24 +522,6 @@ ShaderFactory::createMains(
 
 
     //.................................................................................
-  
-#if OSG_VERSION_LESS_THAN(3,5,8)
-    // for all stages EXCEPT vertex, we will switch over to the OSG aliased
-    // matrix uniforms. Why except vertex? OSG<3.5.8 only replaces these
-    // in the vertex shader and not other stages.
-
-    gl_ModelViewMatrix           = "osg_ModelViewMatrix",
-    gl_ProjectionMatrix          = "osg_ProjectionMatrix",
-    gl_ModelViewProjectionMatrix = "osg_ModelViewProjectionMatrix",
-    gl_NormalMatrix              = "osg_NormalMatrix",
-    gl_FrontColor                = "osg_FrontColor";
-    
-    glMatrixUniforms =
-        "uniform mat4 osg_ModelViewMatrix;\n"
-        "uniform mat4 osg_ModelViewProjectionMatrix;\n"
-        "uniform mat4 osg_ProjectionMatrix;\n"
-        "uniform mat3 osg_NormalMatrix;\n";
-#endif
 
     if ( hasTCS )
     {
@@ -892,6 +874,12 @@ ShaderFactory::createMains(
         if ( geomStage || (viewStage && viewStageInGS) || (clipStage && clipStageInGS) )
         {
             buf << "\n// Injected function declarations:\n";
+
+            if (xformModelToView)
+            {
+                buf << INDENT << "void " << xformModelToView->begin()->second._name << "();\n";
+            }
+
             if ( geomStage )
             {
                 for( OrderedFunctionMap::const_iterator i = geomStage->begin(); i != geomStage->end(); ++i )

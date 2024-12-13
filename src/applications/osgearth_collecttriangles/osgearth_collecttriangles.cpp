@@ -19,7 +19,7 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#include <osgEarth/ImGui/ImGuiApp>
+#include <osgEarthImGui/ImGuiApp>
 
 #include <osgViewer/Viewer>
 #include <osgEarth/Notify>
@@ -50,7 +50,6 @@
 using namespace osgEarth;
 using namespace osgEarth::Util;
 using namespace osgEarth::Contrib;
-using namespace osgEarth::GUI;
 
 float query_range = 100.0;
 long long query_time_ns = 0;
@@ -138,7 +137,6 @@ struct CollectTrianglesVisitor : public osg::NodeVisitor
 {
     CollectTrianglesVisitor() :
         osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
-        //osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
     {
         _vertices.reserve(1000000);
         _colors.reserve(1000000);
@@ -485,11 +483,12 @@ void computeIntersectionsThreaded(osg::Node* node, std::vector< IntersectionQuer
             }
         }
     }
-
-    JobArena::get("oe.intersections")->setConcurrency(num_threads);
+    
+    auto pool = jobs::get_pool("oe.intersections");
+    pool->set_concurrency(num_threads);
 
     // Poor man's parallel for
-    JobGroup intersections;
+    auto intersections = jobs::jobgroup::create();
 
     //unsigned int workSize = 500;
     // Try to split the jobs evenly among the threads
@@ -505,12 +504,16 @@ void computeIntersectionsThreaded(osg::Node* node, std::vector< IntersectionQuer
         unsigned int curSize = curStart + workSize <= queries.size() ? workSize : queries.size() - curStart;
         if (curSize > 0)
         {
-            Job job;
-            job.setArena("oe.intersections");
-            job.setGroup(&intersections);
-            job.dispatch([node, curStart, curSize, &queries](Cancelable*) {
+            jobs::context context;
+            context.pool = pool;
+            context.group = intersections;
+
+            jobs::dispatch([node, curStart, curSize, &queries](Cancelable&) {
                 computeIntersections(node, queries, curStart, curSize);
-            });
+                return true;
+                },
+                context
+            );
             ++numJobs;
         }
         start += workSize;
@@ -520,7 +523,7 @@ void computeIntersectionsThreaded(osg::Node* node, std::vector< IntersectionQuer
         }
     }
     //std::cout << "Dispatched " << numJobs << " jobs" << std::endl;
-    intersections.join();
+    intersections->join();
 }
 
 
@@ -941,11 +944,10 @@ struct PredictiveDataLoader : public osg::NodeVisitor
         float range = getMinRange(pagedNode);
         if (range < pagedNode.getMaxRange())
         {
-            if (!pagedNode.isLoaded())
+            if (!pagedNode.isLoadComplete())
             {
-                float priority = -range;
-                // TODO:  ICO
-                pagedNode.load(priority, nullptr);
+                pagedNode.setPriority(-range);
+                pagedNode.load();
                 _fullyLoaded = false;
             }
             pagedNode.touch();
@@ -977,11 +979,11 @@ struct PredictiveDataLoader : public osg::NodeVisitor
     std::vector< osg::BoundingSphered > _areasToLoad;
 };
 
-class LoadableNodesGUI : public BaseGUI
+class LoadableNodesGUI : public ImGuiPanel
 {
 public:
     LoadableNodesGUI() :
-        BaseGUI("Loadable Nodes Inspector")
+        ImGuiPanel("Loadable Nodes Inspector")
     {
     }
 
@@ -1053,22 +1055,22 @@ protected:
                 //if (terrainTile && node->isLoaded()) _numLoadedTerrainTiles++;
                 //if (terrainTile && !node->isLoaded()) _numUnloadedTerrainTiles;
 
-                if (pagedNode2 && node->isLoaded()) _numLoadedPagedNode2++;
-                if (pagedNode2 && !node->isLoaded()) _numUnloadedPagedNode2++;
+                if (pagedNode2 && node->isLoadComplete()) _numLoadedPagedNode2++;
+                if (pagedNode2 && !node->isLoadComplete()) _numUnloadedPagedNode2++;
 
-                if (threedTiles && node->isLoaded()) _numLoadedThreedTiles++;
-                if (threedTiles && !node->isLoaded()) _numUnloadedThreedTiles++;
+                if (threedTiles && node->isLoadComplete()) _numLoadedThreedTiles++;
+                if (threedTiles && !node->isLoadComplete()) _numUnloadedThreedTiles++;
 
-                if (node->isLoaded()) _numLoaded++;
-                if (!node->isLoaded()) _numUnloaded++;
+                if (node->isLoadComplete()) _numLoaded++;
+                if (!node->isLoadComplete()) _numUnloaded++;
 
                 //if (terrainTile && !_terrainTiles) continue;
                 if (pagedNode2 && !_pagedNode2) continue;
                 if (threedTiles && !_threedTiles) continue;
 
-                if (node->isLoaded() && _loaded || !node->isLoaded() && _unloaded)
+                if (node->isLoadComplete() && _loaded || !node->isLoadComplete() && _unloaded)
                 {
-                    osg::Vec4 color = node->isLoaded() ? osg::Vec4(0.0, 1.0, 0.0, 1.0) : osg::Vec4(1.0, 0.0, 0.0, 1.0);
+                    osg::Vec4 color = node->isLoadComplete() ? osg::Vec4(0.0, 1.0, 0.0, 1.0) : osg::Vec4(1.0, 0.0, 0.0, 1.0);
 
                     /*
                     if (terrainTile)
@@ -1083,7 +1085,7 @@ protected:
 
                     if (threedTiles)
                     {
-                        color = node->isLoaded() ? Color::Cyan : Color::White;
+                        color = node->isLoadComplete() ? Color::Cyan : Color::White;
                     }
 
                     osg::NodePath nodePath = n->getParentalNodePaths()[0];
@@ -1141,11 +1143,11 @@ protected:
 };
 
 
-class TrianglesGUI : public BaseGUI
+class TrianglesGUI : public ImGuiPanel
 {
 public:
     TrianglesGUI(osgViewer::View* view, MapNode* mapNode, EarthManipulator* earthManip) :
-        BaseGUI("Triangles"),
+        ImGuiPanel("Triangles"),
         _mapNode(mapNode),
         _earthManip(earthManip),
         _view(view)
@@ -1301,20 +1303,19 @@ main(int argc, char** argv)
     viewer.setCameraManipulator(manip);
 
     // Setup the viewer for imgui
-    viewer.setRealizeOperation(new GUI::ApplicationGUI::RealizeOperation);
+    viewer.setRealizeOperation(new ImGuiAppEngine::RealizeOperation);
 
     root = new osg::Group;
 
     // load an earth file, and support all or our example command-line options
     // and earth file <external> tags
-    auto node = MapNodeHelper().loadWithoutControls(arguments, &viewer);
+    auto node = MapNodeHelper().load(arguments, &viewer);
     if (node.valid())
     {
         MapNode* mapNode = MapNode::get(node);
         if (mapNode)
         {
-            //viewer.getEventHandlers().push_front(new MyGUI(&viewer, mapNode, manip));
-            auto gui = new GUI::ApplicationGUI(true);
+            auto gui = new ImGuiAppEngine(arguments);
             gui->add(new TrianglesGUI(&viewer, mapNode, manip));
             gui->add(new LoadableNodesGUI());
             viewer.getEventHandlers().push_front(gui);

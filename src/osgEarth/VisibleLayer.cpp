@@ -19,10 +19,12 @@
 #include "VisibleLayer"
 #include "VirtualProgram"
 #include "Utils"
+#include "NodeUtils"
 #include "ShaderLoader"
+#include "SimplePager"
+#include "CullingUtils"
 
 #include <osg/BlendFunc>
-#include <osgUtil/RenderBin>
 
 using namespace osgEarth;
 
@@ -31,42 +33,6 @@ using namespace osgEarth;
 namespace
 {
     static osg::Node::NodeMask DEFAULT_LAYER_MASK = 0xffffffff;
-
-    struct EmptyRenderBin : public osgUtil::RenderBin
-    {
-        EmptyRenderBin(osgUtil::RenderStage* stage) :
-            osgUtil::RenderBin()
-        {
-            setName("OE_EMPTY_RENDER_BIN");
-            _stage = stage;
-        }
-    };
-
-    // Cull callback that will permit culling but will supress rendering.
-    // We use this to toggle node visibility to that paged scene graphs
-    // will continue to page in/out even when the layer is not visible.
-    struct NoDrawCullCallback : public osg::NodeCallback
-    {
-        void operator()(osg::Node* node, osg::NodeVisitor* nv) override
-        {
-            osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
-            osg::ref_ptr<osgUtil::RenderBin> savedBin;
-            osg::ref_ptr< EmptyRenderBin > emptyStage;
-            if (cv)
-            {
-                savedBin = cv->getCurrentRenderBin();
-                emptyStage = new EmptyRenderBin(savedBin->getStage());
-                cv->setCurrentRenderBin(emptyStage.get());
-            }
-
-            traverse(node, nv);
-
-            if (cv)
-            {
-                cv->setCurrentRenderBin(savedBin.get());
-            }
-        }
-    };
 
     // Shader that just copies the uniform value into a stage global/output
     const char* opacityVS = R"(
@@ -161,21 +127,13 @@ VisibleLayer::Options::getConfig() const
     conf.set( "attenuation_range", attenuationRange() );
     conf.set( "blend", "interpolate", _blend, BLEND_INTERPOLATE );
     conf.set( "blend", "modulate", _blend, BLEND_MODULATE );
+    conf.set( "nvgl", useNVGL() );
     return conf;
 }
 
 void
 VisibleLayer::Options::fromConfig(const Config& conf)
 {
-    _visible.init( true );
-    _opacity.init( 1.0f );
-    _minVisibleRange.init( 0.0 );
-    _maxVisibleRange.init( FLT_MAX );
-    _attenuationRange.init(0.0f);
-    _blend.init( BLEND_INTERPOLATE );
-    _mask.init(DEFAULT_LAYER_MASK);
-    debugView().setDefault(false);
-
     conf.get( "visible", _visible );
     conf.get( "opacity", _opacity);
     conf.get( "min_range", _minVisibleRange );
@@ -184,6 +142,7 @@ VisibleLayer::Options::fromConfig(const Config& conf)
     conf.get( "mask", _mask );
     conf.get( "blend", "interpolate", _blend, BLEND_INTERPOLATE );
     conf.get( "blend", "modulate", _blend, BLEND_MODULATE );
+    conf.get( "nvgl", useNVGL());
 }
 
 //........................................................................
@@ -205,7 +164,6 @@ VisibleLayer::init()
         VirtualProgram* vp = VirtualProgram::getOrCreate(getOrCreateStateSet());
         vp->setName(className());
         vp->setFunction("oe_VisibleLayer_setOpacity", opacityInterpolateFS, VirtualProgram::LOCATION_FRAGMENT_COLORING, 1.1f);
-        //vp->setFunction("oe_VisibleLayer_setOpacity", opacityInterpolateFS, VirtualProgram::LOCATION_FRAGMENT_COLORING, FLT_MAX);
     }
 }
 
@@ -218,7 +176,7 @@ VisibleLayer::openImplementation()
 
     if (options().visible().isSet() || options().mask().isSet())
     {
-        setVisible(options().visible().get());
+        updateNodeMasks();
     }
 
     return Status::NoError;
@@ -240,31 +198,41 @@ VisibleLayer::prepareForRendering(TerrainEngine* engine)
 void
 VisibleLayer::setVisible(bool value)
 {
-    options().visible() = value;
+    if (_canSetVisible)
+    {
+        options().visible() = value;
 
+        updateNodeMasks();
+
+        onVisibleChanged.fire(this);
+
+        if (_visibleTiedToOpen)
+        {
+            if (value && !isOpen())
+                open();
+            else if (!value && isOpen())
+                close();
+        }
+    }
+}
+
+void
+VisibleLayer::updateNodeMasks()
+{
     // if this layer has a scene graph node, toggle its node mask
     osg::Node* node = getNode();
     if (node)
     {
-        if (value == true)
+        if (!_noDrawCallback.valid())
         {
-            if (_noDrawCallback.valid())
-            {
-                node->removeCullCallback(_noDrawCallback.get());
-                _noDrawCallback = nullptr;
-            }
+            auto cb = new ToggleVisibleCullCallback();
+            node->addCullCallback(cb);
+            _noDrawCallback = cb;
         }
-        else
-        {
-            if (!_noDrawCallback.valid())
-            {
-                _noDrawCallback = new NoDrawCullCallback();
-                node->addCullCallback(_noDrawCallback.get());
-            }
-        }
-    }
 
-    fireCallback(&VisibleLayerCallback::onVisibleChanged);
+        auto cb = dynamic_cast<ToggleVisibleCullCallback*>(_noDrawCallback.get());
+        cb->setVisible(options().visible().value());
+    }
 }
 
 void
@@ -296,9 +264,7 @@ VisibleLayer::setMask(osg::Node::NodeMask mask)
 {
     // Set the new mask value
     options().mask() = mask;
-
-    // Call setVisible to make sure the mask gets applied to a node if necessary
-    setVisible(options().visible().get());
+    updateNodeMasks();
 }
 
 osg::Node::NodeMask
@@ -316,7 +282,10 @@ VisibleLayer::setDefaultMask(osg::Node::NodeMask mask)
 bool
 VisibleLayer::getVisible() const
 {
-    return options().visible().get();
+    if (_visibleTiedToOpen)
+        return isOpen();
+    else
+        return options().visible().get();
 }
 
 void
@@ -394,7 +363,8 @@ VisibleLayer::setOpacity(float value)
     options().opacity() = value;
     initializeUniforms();
     _opacityU->set(value);
-    fireCallback(&VisibleLayerCallback::onOpacityChanged);
+
+    onOpacityChanged.fire(this);
 }
 
 float
@@ -413,7 +383,8 @@ VisibleLayer::setMinVisibleRange( float minVisibleRange )
         (float)options().minVisibleRange().get(),
         (float)options().maxVisibleRange().get(),
         (float)options().attenuationRange().get()));
-    fireCallback( &VisibleLayerCallback::onVisibleRangeChanged );
+
+    onVisibleRangeChanged.fire(this);
 }
 
 float
@@ -432,7 +403,14 @@ VisibleLayer::setMaxVisibleRange( float maxVisibleRange )
         (float)options().minVisibleRange().get(),
         (float)options().maxVisibleRange().get(),
         (float)options().attenuationRange().get()));
-    fireCallback( &VisibleLayerCallback::onVisibleRangeChanged );
+
+    forEachNodeOfType<SimplePager>(getNode(), 
+        [&](SimplePager* node) {
+            node->setMaxRange(maxVisibleRange);
+        }
+    );
+
+    onVisibleRangeChanged.fire(this);
 }
 
 float
@@ -457,16 +435,6 @@ float
 VisibleLayer::getAttenuationRange() const
 {
     return options().attenuationRange().get();
-}
-
-void
-VisibleLayer::fireCallback(VisibleLayerCallback::MethodPtr method)
-{
-    for (CallbackVector::iterator i = _callbacks.begin(); i != _callbacks.end(); ++i)
-    {
-        VisibleLayerCallback* cb = dynamic_cast<VisibleLayerCallback*>(i->get());
-        if (cb) (cb->*method)(this);
-    }
 }
 
 void

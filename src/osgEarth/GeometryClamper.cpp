@@ -90,6 +90,7 @@ GeometryClamper::apply(osg::Drawable& drawable)
                 {
                     lineDrawable->setVertex(i, (*data._verts)[i]);
                 }
+                lineDrawable->dirtyBound();
             }
             else
             {
@@ -201,6 +202,7 @@ GeometryClamper::apply(osg::Drawable& drawable)
             {
                 lineDrawable->setVertex(i, (*verts)[i]);
             }
+            lineDrawable->dirtyBound();
         }
         else
         {
@@ -212,15 +214,9 @@ GeometryClamper::apply(osg::Drawable& drawable)
             }
             else
             {
-#if OSG_VERSION_LESS_THAN(3,6,0)
-                geom->dirtyDisplayList();
-#else
                 geom->dirtyGLObjects();
-#endif
             }
         }
-
-        OE_DEBUG << LC << "clamped " << count << " verts." << std::endl;
     }
 }
 

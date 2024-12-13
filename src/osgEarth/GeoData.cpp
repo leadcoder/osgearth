@@ -27,6 +27,8 @@
 #include "Math"
 
 #include <osg/BoundingBox>
+#include <osg/Polytope>
+#include <osg/Camera>
 
 using namespace osgEarth;
 
@@ -212,7 +214,7 @@ GeoPoint::set(const SpatialReference* srs,
     _altMode = altMode;
 }
 
-const Units&
+const UnitsType&
 GeoPoint::getXYUnits() const
 {
     return getSRS() ? getSRS()->getUnits() : Units::DEGREES;
@@ -328,7 +330,7 @@ GeoPoint::transformZ(const AltitudeMode& altMode, const TerrainResolver* terrain
 }
 
 Distance
-GeoPoint::transformResolution(const Distance& resolution, const Units& outUnits) const
+GeoPoint::transformResolution(const Distance& resolution, const UnitsType& outUnits) const
 {
     if (!isValid())
         return resolution;
@@ -442,7 +444,7 @@ GeoPoint::createLocalToWorld( osg::Matrixd& out_l2w ) const
     bool result = _srs->createLocalToWorld( _p, out_l2w );
     if ( _altMode != ALTMODE_ABSOLUTE )
     {
-        OE_DEBUG << LC << "ILLEGAL: called GeoPoint::createLocalToWorld with AltitudeMode = RELATIVE_TO_TERRAIN" << std::endl;
+        //OE_DEBUG << LC << "ILLEGAL: called GeoPoint::createLocalToWorld with AltitudeMode = RELATIVE_TO_TERRAIN" << std::endl;
         return false;
     }
     return result;
@@ -455,7 +457,7 @@ GeoPoint::createWorldToLocal( osg::Matrixd& out_w2l ) const
     bool result = _srs->createWorldToLocal( _p, out_w2l );
     if ( _altMode != ALTMODE_ABSOLUTE )
     {
-        OE_DEBUG << LC << "ILLEGAL: called GeoPoint::createWorldToLocal with AltitudeMode = RELATIVE_TO_TERRAIN" << std::endl;
+        //OE_DEBUG << LC << "ILLEGAL: called GeoPoint::createWorldToLocal with AltitudeMode = RELATIVE_TO_TERRAIN" << std::endl;
         return false;
     }
     return result;
@@ -631,6 +633,26 @@ GeoPoint::toString() const
     return buf.str();
 }
 
+osg::Vec2d
+GeoPoint::toScreen(const osg::Camera* camera) const
+{
+    osg::Vec2d result;
+    if (camera)
+    {
+        osg::Vec3d world;
+        if (toWorld(world))
+        {
+            auto temp = world *
+                camera->getViewMatrix() *
+                camera->getProjectionMatrix() *
+                camera->getViewport()->computeWindowMatrix();
+
+            result.set(temp.x(), temp.y());
+        }
+    }
+    return result;
+}
+
 
 //------------------------------------------------------------------------
 
@@ -787,6 +809,37 @@ _height(rhs._height)
     //NOP
 }
 
+Config
+GeoExtent::getConfig() const
+{
+    Config conf("geoextent");
+    if (isValid()) {
+        conf.set("west", west());
+        conf.set("south", south());
+        conf.set("east", east());
+        conf.set("north", north());
+        conf.set("srs", getSRS()->getHorizInitString());
+        conf.set("vdatum", getSRS()->getVertInitString());
+    }
+    return conf;
+}
+
+void
+GeoExtent::fromConfig(const Config& conf)
+{
+    double west, south, east, north;
+    conf.get("west", west);
+    conf.get("south", south);
+    conf.get("east", east);
+    conf.get("north", north);
+    std::string srs;
+    conf.get("srs", srs);
+    std::string vdatum;
+    conf.get("vdatum", vdatum);
+    _srs = SpatialReference::create(srs, vdatum);
+    set(west, south, east, north);
+}
+
 bool
 GeoExtent::isGeographic() const
 {
@@ -866,24 +919,28 @@ GeoExtent::getCentroid(double& out_x, double& out_y) const
 }
 
 double
-GeoExtent::width(const Units& units) const
+GeoExtent::width(const UnitsType& units) const
 {
     if (!isValid())
+    {
         return 0.0;
-    else if (getSRS()->isProjected()) {
+    }
+    else if (getSRS()->isProjected()) 
+    {
         return Units::convert(getSRS()->getUnits(), units, width());
     }
-    else {
-        Distance d(width(), getSRS()->getUnits());
-        double m_per_deg = 2.0 * getSRS()->getEllipsoid().getRadiusEquator() * osg::PI / 360.0;
-        double d0 = m_per_deg * fabs(cos(yMin())) * width();
-        double d1 = m_per_deg * fabs(cos(yMax())) * height();
-        return Distance(std::max(d0, d1), Units::METERS).as(units);
+    else
+    {
+        std::vector<osg::Vec3d> points = { { xMin(), yMin(), 0 }, { xMax(), yMax(), 0 } };
+        double d = GeoMath::distance(points, getSRS()->getEllipsoid().getRadiusEquator());
+        double h = height(Units::METERS);
+        double m = sqrt(d * d - h * h);
+        return Units::convert(Units::METERS, units, m);
     }
 }
 
 double
-GeoExtent::height(const Units& units) const
+GeoExtent::height(const UnitsType& units) const
 {
     if (!isValid())
         return 0.0;
@@ -923,7 +980,7 @@ GeoExtent::operator != ( const GeoExtent& rhs ) const
 bool
 GeoExtent::crossesAntimeridian() const
 {
-    return _srs.valid() && _srs->isGeographic() && east() < west(); //west()+width() > 180.0;
+    return _srs.valid() && _srs->isGeographic() && east() < west();
 }
 
 bool
@@ -1004,7 +1061,7 @@ GeoExtent::bounds() const
 {
     double west, east, south, north;
     getBounds(west, south, east, north);
-    return Bounds( west, south, 0, east, north, 0 );
+    return Bounds(west, south, 0, east, north, 0);
 }
 
 bool
@@ -1367,6 +1424,12 @@ GeoExtent::intersectionSameSRS(const GeoExtent& rhs) const
         return GeoExtent::INVALID;
     }
 
+    // first check Y.
+    if (yMin() > rhs.yMax() || yMax() < rhs.yMin())
+    {
+        return GeoExtent::INVALID; // they don't overlap in Y.
+    }
+
     GeoExtent result( *this );
 
     if (isGeographic())
@@ -1383,53 +1446,40 @@ GeoExtent::intersectionSameSRS(const GeoExtent& rhs) const
         }
         else
         {
-            // Sort the four X coordinates, remembering whether each one is west or east edge:
-            double x[4];
-            bool iswest[4];
-            x[0] = west(), x[1] = east(), x[2] = rhs.west(), x[3] = rhs.east();
-            iswest[0] = true, iswest[1] = false, iswest[2] = true, iswest[3] = false;
-            sort4(x, iswest);
-
-            // find the western-most west coord:
-            int iw = -1;
-            for (int i=0; i<4 && iw<0; ++i)
+            if (west() < east() && rhs.west() < rhs.east())
             {
-                if (iswest[i])
-                    iw = i;
+                // simple case, no antimeridian crossing
+                result._west = std::max(west(), rhs.west());
+                result._width = std::min(east(), rhs.east()) - result._west;
             }
-
-            // iterate from there, finding the LAST west coord and stopping on the 
-            // FIRST east coord found.
-            int q = iw+4;
-            int ie = -1;
-            for (int i = iw; i < q && ie < 0; ++i)
-            {
-                int j = i;
-                if (j >= 4) j-=4;
-                if (iswest[j])
-                    iw = j; // found a better west coord; remember it.
-                else
-                    ie = j; // found the western-most east coord; done.
-            }
-
-            result._west = x[iw];
-            if (ie >= iw)
-                result._width = x[ie] - x[iw];
             else
-                result._width = (180.0 - x[iw]) + (x[ie] - (-180.0)); // crosses the antimeridian
+            {
+                double lhs_west = west();
+                double rhs_west = rhs.west();
+
+                if (fabs(west() - rhs.west()) >= 180.0)
+                {
+                    if (west() < rhs.west())
+                        lhs_west += 360.0;
+                    else
+                        rhs_west += 360.0;
+                }
+
+                double new_west = std::max(lhs_west, rhs_west);
+                result._west = normalizeX(new_west);
+                result._width = std::min(lhs_west + width(), rhs_west + rhs.width()) - new_west;
+            }
         }
     }
     else
     {
         // projected mode is simple
-        result._west = osg::maximum(west(), rhs.west());
-        double eastTemp = osg::minimum(east(), rhs.east());
-        result._width = eastTemp - result._west;
+        result._west = std::max(xMin(), rhs.xMin());
+        result._width = std::min(xMax(), rhs.xMax()) - result._west;
     }
 
-    result._south = osg::maximum(south(), rhs.south());
-    double northTemp = osg::minimum(north(), rhs.north());
-    result._height = northTemp - result._south;
+    result._south = std::max(south(), rhs.south());
+    result._height = std::min(north(), rhs.north()) - result._south;
 
     result.clamp();
 
@@ -1533,22 +1583,12 @@ GeoExtent::normalizeX(double x) const
 {
     if (is_valid(x) && _srs.valid() && _srs->isGeographic())
     {
-        if (fabs(x) <= 180.0)
-        {
-            return x;
-        }
-
-        if (x < 0.0 || x >= 360.0)
-        {
-            x = fmod(x, 360.0);
-            if (x < 0.0)
-                x += 360.0;
-        }
-        
-        if (x > 180.0)
-        {
+        // put x in the range [-180..180)
+        x = fmod(x, 360.0);
+        if (x < -180.0)
+            x += 360.0;
+        else if (x >= 180.0)
             x -= 360.0;
-        }
     }
     return x;
 }
@@ -1629,13 +1669,16 @@ GeoExtent::createWorldBoundingSphere(double minElev, double maxElev) const
     else // geocentric
     {
         // Sample points along the extent
-        std::vector< osg::Vec3d > samplePoints;
-
         int samples = 7;
+        osg::Vec3d samplePoints[7*7*2];
+        //std::array <osg::Vec3d, 7 * 7> samplePoints;
+        //std::vector< osg::Vec3d > samplePoints;
+
 
         double xSample = width() / (double)(samples - 1);
         double ySample = height() / (double)(samples - 1);
 
+        int ptr = 0;
         for (int c = 0; c < samples; c++)
         {
             double x = xMin() + (double)c * xSample;
@@ -1645,9 +1688,9 @@ GeoExtent::createWorldBoundingSphere(double minElev, double maxElev) const
                 
                 osg::Vec3d world;
                 GeoPoint(getSRS(), x, y, minElev, ALTMODE_ABSOLUTE).toWorld(world);
-                samplePoints.push_back(world);               
+                samplePoints[ptr++] = world;
                 GeoPoint(getSRS(), x, y, maxElev, ALTMODE_ABSOLUTE).toWorld(world);
-                samplePoints.push_back(world);
+                samplePoints[ptr++] = world;
             }
         }
 
@@ -1810,7 +1853,7 @@ GeoImage::GeoImage(Threading::Future<osg::ref_ptr<osg::Image>> fimage, const Geo
 {
     _future = fimage;
 
-    if (_future->isAbandoned())
+    if (_future->empty())
     {
         _status.set(Status::ResourceUnavailable, "Async request canceled");
     }
@@ -1823,18 +1866,21 @@ GeoImage::GeoImage(Threading::Future<osg::ref_ptr<osg::Image>> fimage, const Geo
 bool
 GeoImage::valid() const 
 {
+    if (_status.isError())
+        return false;
+
     if (!_extent.isValid())
         return false;
 
     return
-        (_future.isSet() && !_future->isAbandoned()) ||
+        (_future.isSet() && !_future->empty()) ||
         _myimage.valid();
 }
 
 const osg::Image*
 GeoImage::getImage() const
 {
-    return _future.isSet() && _future->isAvailable() ?
+    return _future.isSet() && _future->available() ?
         _future->join().get() :
         _myimage.get();
 }
@@ -2139,7 +2185,7 @@ GeoImage::takeImage()
     if (_future.isSet())
     {
         result = _future->join();
-        _future->abandon();
+        _future.mutable_value().abandon();
     }
     else
     {

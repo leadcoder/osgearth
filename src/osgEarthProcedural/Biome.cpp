@@ -78,13 +78,15 @@ AssetTraits::getPermutationVectors(const std::vector<std::string>& input)
 std::string
 AssetTraits::toString(const std::vector<std::string>& traits)
 {
-    std::ostringstream buf;
-    for (int i = 0; i < traits.size(); ++i)
-    {
-        if (i > 0) buf << ',';
-        buf << traits[i];
+    std::string result;
+    if (!traits.empty()) {
+        result = traits[0];
+        for (int i = 1; i < traits.size(); ++i)
+        {
+            result += ',' + traits[i];
+        }
     }
-    return buf.str();
+    return result;
 }
 
 ModelAsset::ModelAsset(const Config& conf)
@@ -97,6 +99,7 @@ ModelAsset::ModelAsset(const Config& conf)
     width().setDefault(0.0f);
     height().setDefault(0.0f);
     topBillboardHeight().setDefault(0.0f);
+    traitsRequired().setDefault(false);
 
     conf.get("url", modelURI());
     conf.get("name", name());
@@ -111,6 +114,7 @@ ModelAsset::ModelAsset(const Config& conf)
     conf.get("max_lush", maxLush());
     conf.get("top_height", topBillboardHeight());
     conf.get("traits", traits());
+    conf.get("traits_required", traitsRequired());
 
     // save the original so the user can extract user-defined values
     _sourceConfig = conf;
@@ -133,6 +137,7 @@ ModelAsset::getConfig() const
     conf.set("max_lush", maxLush());
     conf.set("top_height", topBillboardHeight());
     conf.set("traits", traits());
+    conf.set("traits_required", traitsRequired());
     return conf;
 }
 
@@ -537,11 +542,11 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
 
                 // By default the parent is unset, but this may change in the
                 // search block that follows. An implicit biome without a 
-                // similarly filtered parent should render nothing.
+                // similarly trait-ed parent should render nothing.
                 new_biome.parentId().clear();
 
                 // serach "up the chain" to see if there's a parent that can 
-                // support fallback for this particular filter
+                // support fallback for this particular trait
                 const Biome* ptr = &biome;
                 while (ptr)
                 {
@@ -578,6 +583,31 @@ BiomeCatalog::BiomeCatalog(const Config& conf) :
                         return lhs->asset()->name() < rhs->asset()->name();
                     });
             }
+        }
+    }
+
+    // Now, for any asset marked as "traits exclusive", remove it from
+    // all non-implicit biomes. Those should only exist in the impllicit
+    // biomes that we created based on the trait data. This will prevent
+    // those assets from being selected in a biome NOT associated with
+    // the particular trait.
+    for (auto& index_and_biome : _biomes_by_index)
+    {
+        Biome& biome = index_and_biome.second;
+
+        // only care about explicit biomes; the implicit ones are already
+        // correct
+        if (!biome._implicit)
+        {
+            Biome::ModelAssetRefs temp;
+            for (auto& asset_ref : biome._assetsToUse)
+            {
+                if (asset_ref->asset()->traitsRequired() == false)
+                {
+                    temp.emplace_back(asset_ref);
+                }
+            }
+            biome._assetsToUse.swap(temp);
         }
     }
 

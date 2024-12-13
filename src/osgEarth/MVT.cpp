@@ -16,9 +16,10 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifdef OSGEARTH_HAVE_MVT
 
 #include <osgEarth/MVT>
+
+#ifdef OSGEARTH_HAVE_MVT
 
 #include <osgEarth/Registry>
 #include <osgEarth/FileUtils>
@@ -30,9 +31,7 @@
 #include <stdlib.h>
 #include "vector_tile.pb.h"
 
-#ifdef OSGEARTH_HAVE_SQLITE3
 #include <sqlite3.h>
-#endif
 
 using namespace osgEarth;
 using namespace osgEarth::MVT;
@@ -277,7 +276,7 @@ namespace osgEarth { namespace MVT
                         {
                             // this means we encountered a "hole" without a parent outer ring,
                             // discard for now -gw
-                            OE_INFO << LC << "Discarding improperly wound polygon (hole without an outer ring)\n";
+                            OE_DEBUG << LC << "Discarding improperly wound polygon (hole without an outer ring)\n";
                         }
                     }
 
@@ -443,7 +442,8 @@ namespace osgEarth { namespace MVT
 
                     if (geometry)
                     {
-                        oeFeature->setGeometry( geometry.get() );
+                        oeFeature->setFID(feature.id());
+                        oeFeature->setGeometry(geometry.get());
                         features.push_back(oeFeature.get());
                     }
 
@@ -541,7 +541,7 @@ MVTFeatureSource::closeImplementation()
 }
 
 FeatureCursor*
-MVTFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress)
+MVTFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress) const
 {
     if (!query.tileKey().isSet())
     {
@@ -597,6 +597,8 @@ MVTFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
 
     sqlite3_finalize(select);
 
+#if 0
+    // This is now done in FeatureSource itself
     // apply filters before returning.
     applyFilters(features, query.tileKey()->getExtent());
 
@@ -610,14 +612,15 @@ MVTFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
             itr->get()->setFID(fid);
         }
     }
+#endif
 
     if (!features.empty())
     {
         //OE_NOTICE << "Returning " << features.size() << " features" << std::endl;
-        return new FeatureListCursor(features);
+        return new FeatureListCursor(std::move(features));
     }
 
-    return 0;
+    return nullptr;
 }
 
 void
@@ -680,7 +683,10 @@ MVTFeatureSource::iterateTiles(int zoomLevel, int limit, int offset, const GeoEx
 
         FeatureList features;
 
+        MVT::readTile(in, key, features);
+
         // If we have any features and we have an fid attribute, override the fid of the features
+        // NOTE: FeatureSource normally does this, but we're bypassing it here... consider a refactoring...
         if (options().fidAttribute().isSet())
         {
             for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
@@ -692,11 +698,9 @@ MVTFeatureSource::iterateTiles(int zoomLevel, int limit, int offset, const GeoEx
             }
         }
 
-
-        MVT::readTile(in, key, features);
-
-        // apply filters before returning.
-        applyFilters(features, key.getExtent());
+        // NOTE: FeatureSource normally does this, but we're bypassing it here... consider a refactoring...
+        FilterContext temp;
+        getFilters().push(features, temp);
 
         if (features.size() > 0)
         {
@@ -747,13 +751,13 @@ MVTFeatureSource::createFeatureProfile()
     if (!options().minLevel().isSet() || !options().maxLevel().isSet())
     {
         computeLevels();
-        OE_INFO << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
+        OE_DEBUG << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
     }
     else
     {
         _minLevel = *options().minLevel();
         _maxLevel = *options().maxLevel();
-        OE_INFO << LC << "Got levels from setting " << _minLevel << ", " << _maxLevel << std::endl;
+        OE_DEBUG << LC << "Got levels from setting " << _minLevel << ", " << _maxLevel << std::endl;
     }
 
     result->setFirstLevel(_minLevel);

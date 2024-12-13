@@ -24,6 +24,7 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Containers>
 #include <osgEarth/Progress>
+#include <osgEarth/Notify>
 
 #include <thread>
 #include <chrono>
@@ -41,11 +42,11 @@ ElevationPool::StrongLRU::StrongLRU(unsigned maxSize) :
 void
 ElevationPool::StrongLRU::push(ElevationPool::Pointer& p)
 {
-    ScopedMutexLock lock(_lru);
+    std::lock_guard<std::mutex> lock(_lru.mutex());
     _lru.push(p);
-    if (_lru.size() > (unsigned)((1.5f*(float)_maxSize)))
+    if (_lru.size() > (unsigned)((1.5f * (float)_maxSize)))
     {
-        while(_lru.size() > _maxSize)
+        while (_lru.size() > _maxSize)
             _lru.pop();
     }
 }
@@ -53,26 +54,52 @@ ElevationPool::StrongLRU::push(ElevationPool::Pointer& p)
 void
 ElevationPool::StrongLRU::clear()
 {
-    ScopedMutexLock lock(_lru);
-    while(!_lru.empty())
+    std::lock_guard<std::mutex> lock(_lru.mutex());
+    while (!_lru.empty())
         _lru.pop();
 }
 
 ElevationPool::ElevationPool() :
     _index(nullptr),
     _tileSize(257),
-    _mutex("OE.ElevPool.RM"),
-    _globalLUTMutex("OE.ElevPool.GLUT"),
     _L2(64u),
     _mapRevision(-1),
     _elevationHash(0)
 {
-    _L2._lru.setName("OE.ElevPool.LRU");
 }
+
 
 namespace
 {
+#if 1
     using MaxLevelIndex = RTree<unsigned, double, 2>;
+#else
+    struct MaxLevelIndex
+    {
+        std::vector<osg::BoundingBox> _boxes;
+
+        void Insert(const double a_min[2], const double a_max[2], unsigned maxLevel)
+        {
+            osg::BoundingBox box(a_min[0], a_min[1], 0.0, a_max[0], a_max[1], 0.0);
+            _boxes.push_back(box);
+        }
+
+        template<class FUNC>
+        bool Search(const double a_min[2], const double a_max[2], FUNC&& callback)
+        {
+            osg::BoundingBox query(a_min[0], a_min[1], 0.0, a_max[0], a_max[1], 0.0);
+            for (unsigned i = 0; i < _boxes.size(); ++i)
+            {
+                if (query.intersects(_boxes[i]))
+                {
+                    if (callback(i) == false)
+                        return false;
+                }
+            }
+            return true;
+        }
+    };
+#endif
 }
 
 ElevationPool::~ElevationPool()
@@ -95,13 +122,18 @@ ElevationPool::setMap(const Map* map)
 }
 
 size_t
-ElevationPool::getElevationHash() const
-{ 
+ElevationPool::getElevationHash(WorkingSet* ws) const
+{
     // yes, must do this every time because individual
     // layers can "bump" their revisions (dynamic layers)    
     size_t hash = hash_value_unsigned(_mapRevision);
 
-    for (auto& layer : _elevationLayers)
+    // using the working set or the baseline?
+    auto& layers =
+        (ws && ws->_elevationLayers.size() > 0) ? ws->_elevationLayers :
+        this->_elevationLayers;
+
+    for (auto& layer : layers)
         if (layer->isOpen())
             hash = hash_value_unsigned(hash, layer->getRevision());
         else
@@ -112,11 +144,11 @@ ElevationPool::getElevationHash() const
 
 void
 ElevationPool::sync(const Map* map, WorkingSet* ws)
-{    
+{
     if (needsRefresh())
     {
         OE_PROFILING_ZONE;
-        
+
         refresh(map);
 
         if (ws)
@@ -131,48 +163,56 @@ ElevationPool::refresh(const Map* map)
 
     _elevationLayers.clear();
 
-    OE_DEBUG << LC << "Refreshing EP index" << std::endl;
-
     if (_index)
         delete static_cast<MaxLevelIndex*>(_index);
-    
+
     _mapRevision = _map->getOpenLayers(_elevationLayers);
-    _elevationHash = getElevationHash();
+    _elevationHash = getElevationHash(nullptr);
 
     MaxLevelIndex* index = new MaxLevelIndex();
     _index = index;
 
     double a_min[2], a_max[2];
 
-    for(auto i : _elevationLayers)
+    for (auto i : _elevationLayers)
     {
         const ElevationLayer* layer = i.get();
         DataExtentList dataExtents;
         layer->getDataExtents(dataExtents);
 
-        for(auto de = dataExtents.begin(); de != dataExtents.end(); ++de)
+        for (auto de = dataExtents.begin(); de != dataExtents.end(); ++de)
         {
             GeoExtent extentInMapSRS = map->getProfile()->clampAndTransformExtent(*de);
 
-            a_min[0] = extentInMapSRS.xMin(), a_min[1] = extentInMapSRS.yMin();
-            a_max[0] = extentInMapSRS.xMax(), a_max[1] = extentInMapSRS.yMax();
-
-            unsigned maxLevel = osg::minimum(
-                de->maxLevel().get(),
-                layer->getMaxDataLevel());
-
             // Convert the max level so it's relative to the map profile:
+            unsigned maxLevel = std::min(de->maxLevel().get(), layer->getMaxDataLevel());
             maxLevel = map->getProfile()->getEquivalentLOD(layer->getProfile(), maxLevel);
 
-            index->Insert(a_min, a_max, maxLevel);
+            if (extentInMapSRS.crossesAntimeridian())
+            {
+                GeoExtent a, b;
+                extentInMapSRS.splitAcrossAntimeridian(a, b);
+
+                for (auto& ex : { a, b })
+                {
+                    a_min[0] = ex.xMin(), a_min[1] = ex.yMin();
+                    a_max[0] = ex.xMax(), a_max[1] = ex.yMax();
+                    index->Insert(a_min, a_max, maxLevel);
+                }
+            }
+            else
+            {
+                a_min[0] = extentInMapSRS.xMin(), a_min[1] = extentInMapSRS.yMin();
+                a_max[0] = extentInMapSRS.xMax(), a_max[1] = extentInMapSRS.yMax();
+                index->Insert(a_min, a_max, maxLevel);
+            }
         }
     }
 
     _L2.clear();
 
-    _globalLUTMutex.write_lock();
+    ScopedWriteLock lock(_globalLUTMutex);
     _globalLUT.clear();
-    _globalLUTMutex.write_unlock();    
 }
 
 int
@@ -183,12 +223,10 @@ ElevationPool::getLOD(double x, double y) const
     double point[2] = { x, y };
     int maxiestMaxLevel = -1;
 
-    index->Search(
-        point, point,
-        [&maxiestMaxLevel](const unsigned& level)
+    index->Search(point, point, [&](const unsigned& level)
         {
             maxiestMaxLevel = std::max(maxiestMaxLevel, (int)level);
-            return true;
+            return RTREE_KEEP_SEARCHING;
         });
 
     return maxiestMaxLevel;
@@ -196,7 +234,7 @@ ElevationPool::getLOD(double x, double y) const
 
 bool
 ElevationPool::needsRefresh()
-{    
+{
     ScopedReadLock lk(_mutex);
 
     // Check to see if the overall data model has changed in the map
@@ -207,14 +245,13 @@ ElevationPool::needsRefresh()
     }
 
     // Check to see if any of the elevation layers in our list have changed.
-    return getElevationHash() != _elevationHash;
+    return getElevationHash(nullptr) != _elevationHash;
 }
 
 ElevationPool::WorkingSet::WorkingSet(unsigned size) :
     _lru(size)
 {
     //nop
-    _lru._lru.setName("OE.WorkingSet.LRU");
 }
 
 void
@@ -270,7 +307,7 @@ ElevationPool::findExistingRaster(
     // found it, so stick it in the L2 cache
     if (output.valid())
     {
-        OE_DEBUG << LC << key._tilekey.str() << " - Cache hit (global LUT)" << std::endl;
+        //OE_DEBUG << LC << key._tilekey.str() << " - Cache hit (global LUT)" << std::endl;
     }
 
     return output.valid();
@@ -302,7 +339,7 @@ ElevationPool::getOrCreateRaster(
             true);      // initialize to HAE (0.0) heights
 
         std::vector<float> resolutions;
-        resolutions.assign(_tileSize*_tileSize, FLT_MAX);
+        resolutions.assign(_tileSize * _tileSize, FLT_MAX);
 
         TileKey keyToUse;
         bool populated = false;
@@ -311,7 +348,7 @@ ElevationPool::getOrCreateRaster(
             ws && !ws->_elevationLayers.empty() ? ws->_elevationLayers :
             _elevationLayers;
 
-        for(keyToUse = key._tilekey;
+        for (keyToUse = key._tilekey;
             keyToUse.valid();
             keyToUse.makeParent())
         {
@@ -321,7 +358,7 @@ ElevationPool::getOrCreateRaster(
                 keyToUse,
                 map->getProfileNoVDatum(),
                 map->getElevationInterpolation(),
-                progress );
+                progress);
 
             if ((populated == true) ||
                 (acceptLowerRes == false) ||
@@ -398,8 +435,8 @@ namespace
         osg::Vec4f& out,
         ElevationPool::Envelope::QuickSampleVars& a)
     {
-        const double sizeS = (double)(reader.s()-1);
-        const double sizeT = (double)(reader.t()-1);
+        const double sizeS = (double)(reader.s() - 1);
+        const double sizeT = (double)(reader.t() - 1);
 
         // u, v => [0..1]
         const double s = u * sizeS;
@@ -449,7 +486,7 @@ ElevationPool::prepareEnvelope(
 
     sync(env._map.get(), ws);
 
-    env._key._revision = getElevationHash();
+    env._key._revision = getElevationHash(ws);
 
     env._raster = nullptr;
     env._cache.clear();
@@ -459,7 +496,7 @@ ElevationPool::prepareEnvelope(
     env._pxmin = env._profile->getExtent().xMin();
     env._pymin = env._profile->getExtent().yMin();
 
-    const Units& units = env._map->getSRS()->getUnits();
+    auto& units = env._map->getSRS()->getUnits();
     Distance pointRes(0.0, units);
 
     GeoPoint refPointMap = refPoint.transform(env._map->getSRS());
@@ -510,7 +547,7 @@ ElevationPool::Envelope::sampleMapCoords(
     osg::Vec4f elev;
     int count = 0;
 
-    for(auto iter = begin; iter != end; ++iter)
+    for (auto iter = begin; iter != end; ++iter)
     {
         auto& p = *iter;
 
@@ -607,11 +644,11 @@ ElevationPool::sampleMapCoords(
         return -1;
 
     sync(map.get(), ws);
-    
+
     ScopedReadLock lk(_mutex);
 
     Internal::RevElevationKey key;
-    key._revision = getElevationHash();
+    key._revision = getElevationHash(ws);
 
     osg::ref_ptr<ElevationTexture> raster;
     osg::Vec4 elev;
@@ -635,10 +672,10 @@ ElevationPool::sampleMapCoords(
 
     int lod;
     int lod_prev = INT_MAX;
-    const Units& units = map->getSRS()->getUnits();
+    auto& units = map->getSRS()->getUnits();
     Distance pointRes(0.0, units);
 
-    for(auto iter = begin; iter != end; ++iter)
+    for (auto iter = begin; iter != end; ++iter)
     {
         auto& p = *iter;
 
@@ -658,9 +695,9 @@ ElevationPool::sampleMapCoords(
 
             profile->getNumTiles(lod, tw, th);
 
-            rx = (p.x()-pxmin)/pw, ry = (p.y()-pymin)/ph;
-            tx = osg::clampBelow((unsigned)(rx * (double)tw), tw-1u ); // TODO: wrap around for geo
-            ty = osg::clampBelow((unsigned)((1.0-ry) * (double)th), th-1u );
+            rx = (p.x() - pxmin) / pw, ry = (p.y() - pymin) / ph;
+            tx = osg::clampBelow((unsigned)(rx * (double)tw), tw - 1u); // TODO: wrap around for geo
+            ty = osg::clampBelow((unsigned)((1.0 - ry) * (double)th), th - 1u);
 
             if (lod != lod_prev || tx != tx_prev || ty != ty_prev)
             {
@@ -701,8 +738,8 @@ ElevationPool::sampleMapCoords(
                 //OE_PROFILING_ZONE_NAMED("sample");
                 if (raster.valid())
                 {
-                    u = (p.x() - raster->getExtent().xMin()) /  raster->getExtent().width();
-                    v = (p.y() - raster->getExtent().yMin()) /  raster->getExtent().height();
+                    u = (p.x() - raster->getExtent().xMin()) / raster->getExtent().width();
+                    v = (p.y() - raster->getExtent().yMin()) / raster->getExtent().height();
 
                     // Note: This can happen on the map edges..
                     // TODO: consider looping around for geo and clamping for projected
@@ -752,7 +789,7 @@ ElevationPool::sampleMapCoords(
     ScopedReadLock lk(_mutex);
 
     Internal::RevElevationKey key;
-    key._revision = getElevationHash();
+    key._revision = getElevationHash(ws);
 
     osg::ref_ptr<ElevationTexture> raster;
     osg::Vec4 elev;
@@ -776,9 +813,9 @@ ElevationPool::sampleMapCoords(
 
     int lod;
     int lod_prev = INT_MAX;
-    const Units& units = map->getSRS()->getUnits();
+    auto& units = map->getSRS()->getUnits();
 
-    for(auto iter = begin; iter != end; ++iter)
+    for (auto iter = begin; iter != end; ++iter)
     {
         auto& p = *iter;
         {
@@ -889,12 +926,12 @@ ElevationPool::getSample(
     maxLOD = std::min(maxLOD, static_cast<unsigned>(std::numeric_limits<int>::max()));
 
     // returns the best LOD for the given point, or -1 if there is no data there
-    int lod = std::min( getLOD(p.x(), p.y()), (int)maxLOD );
+    int lod = std::min(getLOD(p.x(), p.y()), (int)maxLOD);
 
     if (lod >= 0)
     {
         key._tilekey = map->getProfile()->createTileKey(p.x(), p.y(), lod);
-        key._revision = getElevationHash();
+        key._revision = getElevationHash(ws);
 
         osg::ref_ptr<ElevationTexture> raster = getOrCreateRaster(
             key,   // key to query
@@ -991,7 +1028,7 @@ ElevationPool::getTile(
 
     Internal::RevElevationKey key;
     key._tilekey = tilekey;
-    key._revision = getElevationHash();
+    key._revision = getElevationHash(ws);
 
     out_tex = getOrCreateRaster(
         key,
@@ -1005,37 +1042,6 @@ ElevationPool::getTile(
 
 //...................................................................
 
-namespace osgEarth { namespace Internal
-{
-    struct SampleElevationOp : public osg::Operation
-    {
-        osg::observer_ptr<const Map> _map;
-        GeoPoint _p;
-        Distance _res;
-        ElevationPool::WorkingSet* _ws;
-        Promise<ElevationSample> _promise;
-
-        SampleElevationOp(osg::observer_ptr<const Map> map, const GeoPoint& p, const Distance& res, ElevationPool::WorkingSet* ws) :
-            _map(map), _p(p), _res(res), _ws(ws) { }
-
-        void operator()(osg::Object*)
-        {
-            if (!_promise.isAbandoned())
-            {
-                osg::ref_ptr<const Map> map;
-                if (_map.lock(map))
-                {
-                    ElevationSample sample = map->getElevationPool()->getSample(_p, _res, _ws);
-                    _promise.resolve(sample);
-                    return;
-                }
-            }
-
-            _promise.resolve();
-        }
-    };
-}}
-
 AsyncElevationSampler::AsyncElevationSampler(
     const Map* map,
     unsigned numThreads) :
@@ -1043,10 +1049,9 @@ AsyncElevationSampler::AsyncElevationSampler(
     _map(map),
     _arena(nullptr)
 {
-    _arena = JobArena::get("oe.asyncelevation");
-
-    unsigned c = _arena->getConcurrency();
-    _arena->setConcurrency(std::max(c, numThreads));
+    _arena = jobs::get_pool("oe.asyncelevation");
+    _arena->set_can_steal_work(false);
+    _arena->set_concurrency(numThreads > 0 ? numThreads : _arena->concurrency());
 }
 
 Future<ElevationSample>
@@ -1056,29 +1061,26 @@ AsyncElevationSampler::getSample(const GeoPoint& p)
 }
 
 Future<ElevationSample>
-AsyncElevationSampler::getSample(
-    const GeoPoint& point,
-    const Distance& resolution)
+AsyncElevationSampler::getSample(const GeoPoint& point, const Distance& resolution)
 {
-    return Job(_arena).dispatch<ElevationSample>(
-        [=](Cancelable* cancelable)
+    jobs::context c;
+    c.pool = _arena;
+
+    auto task = [=](Cancelable& cancelable)
         {
             ElevationSample sample;
-            if (cancelable == nullptr || !cancelable->isCanceled())
+            if (!cancelable.canceled())
             {
                 osg::ref_ptr<const Map> map(_map);
                 if (map.valid())
                 {
-                    osg::ref_ptr<ProgressCallback> progress = new ProgressCallback(cancelable);
+                    osg::ref_ptr<ProgressCallback> progress = new ProgressCallback(&cancelable);
 
-                    sample = map->getElevationPool()->getSample(
-                        point,
-                        resolution,
-                        &_ws,
-                        progress.get());
+                    sample = map->getElevationPool()->getSample(point, resolution, &_ws, progress.get());
                 }
             }
             return sample;
-        }
-    );
+        };
+
+    return jobs::dispatch(task, c);
 }

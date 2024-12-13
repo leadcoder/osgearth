@@ -17,7 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/TiledFeatureModelLayer>
-#include <osgEarth/TiledFeatureModelGraph>
+#include <osgEarth/NetworkMonitor>
+#include <osgEarth/Registry>
 
 using namespace osgEarth;
 
@@ -30,33 +31,30 @@ REGISTER_OSGEARTH_LAYER(TiledFeatureModel, TiledFeatureModelLayer);
 //...........................................................................
 
 TiledFeatureModelLayer::Options::Options() :
-VisibleLayer::Options(),
-FeatureModelOptions(),
-GeometryCompilerOptions()
+    TiledModelLayer::Options(),
+    FeatureModelOptions(),
+    GeometryCompilerOptions()
 {
     fromConfig(_conf);
 }
 
 TiledFeatureModelLayer::Options::Options(const ConfigOptions& options) :
-VisibleLayer::Options(options),
-FeatureModelOptions(options),
-GeometryCompilerOptions(options)
+    TiledModelLayer::Options(options),
+    FeatureModelOptions(options),
+    GeometryCompilerOptions(options)
 {
     fromConfig(_conf);
 }
 
 void TiledFeatureModelLayer::Options::fromConfig(const Config& conf)
 {
-    additive().setDefault(false);
-
-    conf.get("additive", additive());
-    featureSource().get(conf, "features");
+    features().get(conf, "features");
 }
 
 Config
 TiledFeatureModelLayer::Options::getConfig() const
 {
-    Config conf = VisibleLayer::Options::getConfig();
+    Config conf = TiledModelLayer::Options::getConfig();
 
     Config fmConf = FeatureModelOptions::getConfig();
     conf.merge(fmConf);
@@ -64,16 +62,14 @@ TiledFeatureModelLayer::Options::getConfig() const
     Config gcConf = GeometryCompilerOptions::getConfig();
     conf.merge(gcConf);
 
-    conf.set("additive", additive());
-
-    featureSource().set(conf, "features");
+    features().set(conf, "features");
 
     return conf;
 }
 
 void TiledFeatureModelLayer::Options::mergeConfig(const Config& conf)
 {
-    VisibleLayer::Options::mergeConfig(conf);
+    TiledModelLayer::Options::mergeConfig(conf);
     fromConfig(conf);
 }
 
@@ -81,7 +77,6 @@ void TiledFeatureModelLayer::Options::mergeConfig(const Config& conf)
 
 OE_LAYER_PROPERTY_IMPL(TiledFeatureModelLayer, bool, AlphaBlending, alphaBlending);
 OE_LAYER_PROPERTY_IMPL(TiledFeatureModelLayer, bool, EnableLighting, enableLighting);
-OE_LAYER_PROPERTY_IMPL(TiledFeatureModelLayer, bool, Additive, additive);
 
 TiledFeatureModelLayer::~TiledFeatureModelLayer()
 {
@@ -91,33 +86,13 @@ TiledFeatureModelLayer::~TiledFeatureModelLayer()
 void
 TiledFeatureModelLayer::init()
 {
-    VisibleLayer::init();
-
-    _root = new osg::Group();
-
-    // Assign the layer's state set to the root node:
-    _root->setStateSet(this->getOrCreateStateSet());
-
-    // Graph needs rebuilding
-    _graphDirty = true;
-
-    // Depth sorting by default
-    getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-}
-
-void TiledFeatureModelLayer::dirty()
-{
-    // feature source changed, so the graph needs rebuilding
-    _graphDirty = true;
-
-    // create the scene graph
-    create();
+    TiledModelLayer::init();
 }
 
 Config
 TiledFeatureModelLayer::getConfig() const
 {
-    Config conf = VisibleLayer::getConfig();
+    Config conf = TiledModelLayer::getConfig();
     return conf;
 }
 
@@ -126,7 +101,7 @@ TiledFeatureModelLayer::setFeatureSource(FeatureSource* source)
 {
     if (getFeatureSource() != source)
     {
-        options().featureSource().setLayer(source);
+        options().features().setLayer(source);
 
         if (source && source->getStatus().isError())
         {
@@ -141,7 +116,7 @@ TiledFeatureModelLayer::setFeatureSource(FeatureSource* source)
 FeatureSource*
 TiledFeatureModelLayer::getFeatureSource() const
 {
-    return options().featureSource().getLayer();
+    return options().features().getLayer();
 }
 
 void
@@ -160,20 +135,14 @@ TiledFeatureModelLayer::getStyleSheet() const
     return options().styleSheet().getLayer();
 }
 
-osg::Node*
-TiledFeatureModelLayer::getNode() const
-{
-    return _root.get();
-}
-
 Status
 TiledFeatureModelLayer::openImplementation()
 {
-    Status parent = VisibleLayer::openImplementation();
+    Status parent = TiledModelLayer::openImplementation();
     if (parent.isError())
         return parent;
 
-    Status fsStatus = options().featureSource().open(getReadOptions());
+    Status fsStatus = options().features().open(getReadOptions());
     if (fsStatus.isError())
         return fsStatus;
 
@@ -187,9 +156,9 @@ TiledFeatureModelLayer::openImplementation()
 Status
 TiledFeatureModelLayer::closeImplementation()
 {
-    options().featureSource().close();
+    super::closeImplementation();
+    options().features().close();
     options().styleSheet().close();
-    _graphDirty = true;
     return getStatus();
 }
 
@@ -208,13 +177,18 @@ void
 TiledFeatureModelLayer::addedToMap(const Map* map)
 {
     OE_TEST << LC << "addedToMap" << std::endl;
-    VisibleLayer::addedToMap(map);
-
-    options().featureSource().addedToMap(map);
+    
+    options().features().addedToMap(map);
     options().styleSheet().addedToMap(map);
 
     if (getFeatureSource() && getStyleSheet())
     {
+        if (getFeatureSource()->getStatus().isError())
+        {
+            setStatus(getFeatureSource()->getStatus());
+            return;
+        }
+
         // Save a reference to the map since we'll need it to
         // create a new session object later.
         _session = new Session(
@@ -223,60 +197,217 @@ TiledFeatureModelLayer::addedToMap(const Map* map)
             getFeatureSource(),
             getReadOptions());
 
-        // re-create the graph if necessary.
-        create();
+        // connect the session to the features:
+        _session->setFeatureSource(getFeatureSource());
+        _session->setResourceCache(new ResourceCache());
+
+        FeatureSourceIndexOptions indexOptions;
+        indexOptions.enabled() = true;
+
+        _featureIndex = new FeatureSourceIndex(
+            getFeatureSource(),
+            Registry::objectIndex(),
+            indexOptions);
     }
+    else
+    {
+        OE_WARN << LC << "Missing either feature source or stylesheet - nothing will render" << std::endl;
+    }
+
+    _filters = FeatureFilterChain::create(options().filters(), getReadOptions());
+
+    TiledModelLayer::addedToMap(map);    
 }
 
 void
 TiledFeatureModelLayer::removedFromMap(const Map* map)
 {
-    VisibleLayer::removedFromMap(map);
+    super::removedFromMap(map);
 
-    options().featureSource().removedFromMap(map);
+    options().features().removedFromMap(map);
     options().styleSheet().removedFromMap(map);
-
-    if (_root.valid())
-    {
-        osg::ref_ptr<TiledFeatureModelGraph> tfmg = findTopMostNodeOfType<TiledFeatureModelGraph>(_root.get());
-        if (tfmg.valid()) tfmg->setDone();
-        _root->removeChildren(0, _root->getNumChildren());
-    }
 
     _session = 0L;
 }
 
-void
-TiledFeatureModelLayer::create()
+osg::ref_ptr<osg::Node>
+TiledFeatureModelLayer::createTileImplementation(const TileKey& key, ProgressCallback* progress) const
 {
-    OE_TEST << LC << "create" << std::endl;
+    if (progress && progress->isCanceled())
+        return nullptr;
 
-    if (_graphDirty)
+    NetworkMonitor::ScopedRequestLayer layerRequest(getName());
+    // Get features for this key
+    Query query;
+    query.tileKey() = key;
+
+    GeoExtent dataExtent = key.getExtent();
+
+    // set up for feature indexing if appropriate:
+    osg::ref_ptr< FeatureSourceIndexNode > index = 0L;
+
+    if (_featureIndex.valid())
     {
-        if (getFeatureSource() && getStyleSheet() && _session.valid())
+        index = new FeatureSourceIndexNode(_featureIndex.get());
+    }
+
+    FilterContext fc(_session.get(), new FeatureProfile(dataExtent), dataExtent, index);
+
+    GeometryCompilerOptions options;
+    options.instancing() = true;
+    GeometryCompiler gc(options);
+
+    GeomFeatureNodeFactory factory(options);
+
+    if (progress && progress->isCanceled())
+        return nullptr;
+
+    auto cursor = getFeatureSource()->createFeatureCursor(query, _filters, &fc, progress);
+
+    osg::ref_ptr<osg::Node> node = new osg::Group;
+    if (cursor)
+    {
+        if (progress && progress->isCanceled())
+            return nullptr;
+
+        FeatureList features;
+        cursor->fill(features);
+
+        if (getStyleSheet() && getStyleSheet()->getSelectors().size() > 0)
         {
-            // connect the session to the features:
-            _session->setFeatureSource(getFeatureSource());
-            _session->setResourceCache(new ResourceCache());
+            osg::Group* group = new osg::Group;
 
-            // initialize filters if necessary
-            osg::ref_ptr<FeatureFilterChain> chain = FeatureFilterChain::create(options().filters(), getReadOptions());
+            for (StyleSelectors::const_iterator i = getStyleSheet()->getSelectors().begin();
+                i != getStyleSheet()->getSelectors().end();
+                ++i)
+            {
+                typedef std::map< std::string, FeatureList > StyleToFeaturesMap;
+                StyleToFeaturesMap styleToFeatures;
 
-            // group that will build all the feature geometry:
-            osg::ref_ptr<TiledFeatureModelGraph> fmg = new TiledFeatureModelGraph(_session->getMap(), getFeatureSource(), getStyleSheet(), _session.get());
-            fmg->setOwnerName(getName());
-            fmg->setFilterChain(chain.get());
-            fmg->setAdditive(*_options->additive());
-            fmg->build();
+                // pull the selected style...
+                const StyleSelector& sel = i->second;
 
-            _root->removeChildren(0, _root->getNumChildren());
-            _root->addChild(fmg.get());
+                if (sel.styleExpression().isSet())
+                {
+                    // establish the working bounds and a context:
+                    StringExpression styleExprCopy(sel.styleExpression().get());
+                    for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
+                    {
+                        Feature* feature = itr->get();
 
-            // clear the dirty flag.
-            _graphDirty = false;
+                        feature->set("level", (long long)key.getLevelOfDetail());
 
-            setStatus(Status::OK());
+                        const std::string& styleString = feature->eval(styleExprCopy, &fc); 
+                        if (!styleString.empty() && styleString != "null")
+                        {
+                            styleToFeatures[styleString].push_back(feature);
+                        }
 
+                        if (progress && progress->isCanceled())
+                            return nullptr;
+                    }
+                }
+
+                std::unordered_map<std::string, Style> literal_styles;
+
+                for (StyleToFeaturesMap::iterator itr = styleToFeatures.begin(); itr != styleToFeatures.end(); ++itr)
+                {
+                    const std::string& styleString = itr->first;
+                    Style* style = nullptr;
+
+                    if (styleString.length() > 0 && styleString[0] == '{')
+                    {
+                        Config conf("style", styleString);
+                        conf.setReferrer(sel.styleExpression().get().uriContext().referrer());
+                        conf.set("type", "text/css");
+                        Style& literal_style = literal_styles[conf.toJSON()];
+                        if (literal_style.empty())
+                            literal_style = Style(conf);
+                        style = &literal_style;
+                    }
+                    else
+                    {
+                        // no default fallback!
+                        style = getStyleSheet()->getStyle(styleString, false);
+                    }
+
+                    if (style)
+                    {
+                        osg::Group* styleGroup = factory.getOrCreateStyleGroup(*style, _session.get());
+                        osg::ref_ptr< osg::Node>  styleNode;
+                        osg::ref_ptr< FeatureListCursor> cursor = new FeatureListCursor(itr->second);
+                        Query query;
+                        factory.createOrUpdateNode(cursor.get(), *style, fc, styleNode, query);
+                        if (styleNode.valid())
+                        {
+                            styleGroup->addChild(styleNode);
+                            if (!group->containsNode(styleGroup))
+                            {
+                                group->addChild(styleGroup);
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            node = group;
+        }
+        else if (getStyleSheet() && getStyleSheet()->getDefaultStyle())
+        {
+            osg::ref_ptr< FeatureListCursor> cursor = new FeatureListCursor(features);
+            osg::ref_ptr< osg::Group > group = new osg::Group;
+            osg::ref_ptr< osg::Group > styleGroup = factory.getOrCreateStyleGroup(*getStyleSheet()->getDefaultStyle(), _session.get());
+            osg::ref_ptr< osg::Node>  styleNode;
+            factory.createOrUpdateNode(cursor.get(), *getStyleSheet()->getDefaultStyle(), fc, styleNode, query);
+            if (styleNode.valid())
+            {
+                group->addChild(styleGroup);
+                styleGroup->addChild(styleNode);
+                node = group;
+            }
         }
     }
+
+    if (!node->getBound().valid())
+    {
+        return nullptr;
+    }
+
+    if (index.valid())
+    {
+        index->addChild(node);
+        return index;
+    }
+
+    return node;
+}
+
+const Profile*
+TiledFeatureModelLayer::getProfile() const
+{
+    OE_HARD_ASSERT(getFeatureSource() != nullptr);
+    OE_HARD_ASSERT(getFeatureSource()->getFeatureProfile() != nullptr);
+    OE_SOFT_ASSERT_AND_RETURN(getFeatureSource() != nullptr, nullptr);
+    OE_SOFT_ASSERT_AND_RETURN(getFeatureSource()->getFeatureProfile() != nullptr, nullptr);
+
+    return getFeatureSource()->getFeatureProfile()->getTilingProfile();
+}
+
+unsigned
+TiledFeatureModelLayer::getMinLevel() const
+{
+    if (options().minLevel().isSet())
+        return options().minLevel().value();
+    else
+        return getFeatureSource()->getFeatureProfile()->getFirstLevel();
+}
+
+unsigned
+TiledFeatureModelLayer::getMaxLevel() const
+{
+    if (options().maxLevel().isSet())
+        return options().maxLevel().value();
+    else
+        return getFeatureSource()->getFeatureProfile()->getMaxLevel();
 }

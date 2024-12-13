@@ -113,7 +113,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
 
                 if (!name.empty())
                 {
-                    OE_INFO << LC << "Placemark: " << name << std::endl;
+                    //OE_INFO << LC << "Placemark: " << name << std::endl;
                 }
 
                 AnnotationNode* featureNode = 0L;
@@ -126,7 +126,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
                     // if there's a model, render that - models do NOT get labels.
                     if ( model )
                     {
-                        ModelNode* node = new ModelNode( cx._mapNode, style, cx._dbOptions.get() );
+                        ModelNode* node = new ModelNode(nullptr, style, cx._dbOptions.get() );
                         node->setPosition( position );
 
                         // model scale:
@@ -153,7 +153,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
                             text = style.getOrCreate<TextSymbol>();
                             text->encoding() = TextSymbol::ENCODING_UTF8;
                         }
-                        text->content()->setLiteral( name );
+                        text->content().mutable_value().setLiteral( name );
                     }
 
                     // is there an icon?
@@ -186,7 +186,7 @@ KML_Placemark::build( xml_node<>* node, KMLContext& cx )
 
                     Feature* feature = new Feature(geom, cx._srs.get(), style);
                     featureNode = new FeatureNode(feature );
-                    featureNode->setMapNode( cx._mapNode );
+                    //featureNode->setMapNode( cx._mapNode );
                 }
 
                 if ( iconNode )

@@ -19,30 +19,22 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifndef OSGEARTHUTIL_PAGEDNODE_H
-#define OSGEARTHUTIL_PAGEDNODE_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/optional>
 #include <osgEarth/Threading>
-#include <osgEarth/URI>
 #include <osgEarth/SceneGraphCallback>
 #include <osgEarth/Utils>
 #include <osgEarth/LoadableNode>
-
-#include <osg/PagedLOD>
-#include <osg/LOD>
-
+#include <osgEarth/CullingUtils>
 #include <queue>
 #include <list>
 #include <memory>
-#include <iterator>
-#include <unordered_map>
 
 namespace osgEarth { namespace Util
 {
     using namespace osgEarth;
-    using namespace osgEarth::Threading;
 
     /**
      * Internal node type to handle on-demand loading and unloading
@@ -61,16 +53,16 @@ namespace osgEarth { namespace Util
         //! Construct an empty paged node
         PagedNode2();
 
-        //! Function to run to load the asychronous child
+        //! Function to run to load the asychronous child. When null, there is no child data.
         void setLoadFunction(const Loader& value);
         const Loader& getLoadFunction() const {
-            return _load;
+            return _load_function;
         }
 
         //! Set the center of this node, which is necessary since we
         //! cannot compute the bounding sphere before the asynchronous load
         void setCenter(const osg::Vec3& value) {
-            _userBS->center() = value;
+            _userBS.mutable_value().center() = value;
         }
         const osg::Vec3& getCenter() const {
             return _userBS->center();
@@ -79,49 +71,66 @@ namespace osgEarth { namespace Util
         //! Set the radius of this node's bounding sphere, which is necessary
         //! since we cannot compute the bounding sphere before the asynchronous load
         void setRadius(float value) {
-            _userBS->radius() = value;
+            _userBS.mutable_value().radius() = value;
         }
         float getRadius() const {
             return _userBS->radius();
         }
 
-        //! Minimum distance from camera at which to render.
+        //! Sets the minimum distance from camera at which to load child data
+        //! and activates range-based loading.
         void setMinRange(float value) {
             _minRange = value, _useRange = true;
         }
 
+        //! Minimum distance from camera at which to load child data
+        //! when using range-based loading.
         float getMinRange() const {
             return _minRange;
         }
 
-        //! Maximum distance from camera at which to render
+        //! Sets the maximum distance from camera at which to load child data
+        //! and activates range-based loading.
         void setMaxRange(float value) {
             _maxRange = value, _useRange = true;
         }
+
+        //! Maximum distance from camera at which to load child data
+        //! when using range-based loading.
         float getMaxRange() const {
             return _maxRange;
         }
 
-        //! Minimum pixel extent at which to render.
+        //! Sets the minimum pixel extent at which to load child data
+        //! and activates screen-space-based loading.
         void setMinPixels(float value) {
             _minPixels = value, _useRange = false;
         }
+
+        //! Minimum pixel extent at which to load child data
+        //! when using screen-size-based loading.
         float getMinPixels() const {
             return _minPixels;
         }
 
-        //! Maximum pixel extent at which to render.
+        //! Sets the maximum pixel extent at which to load child data
+        //! and activates screen-size-based loading.
         void setMaxPixels(float value) {
             _maxPixels = value, _useRange = false;
         }
+
+        //! Maximum pixel extent at which to load child data
+        //! when using screen-size-based loading.
         float getMaxPixels() const {
             return _maxPixels;
         }
 
-        //! Multiple the load job's priority by this number
+        //! Multiply the load job's priority by this number
         void setPriorityScale(float value) {
             _priorityScale = value;
         }
+
+        //! Multiply the load job's priority by this number
         float getPriorityScale() const {
             return _priorityScale;
         }
@@ -130,6 +139,8 @@ namespace osgEarth { namespace Util
         void setSceneGraphCallbacks(SceneGraphCallbacks* value) {
             _callbacks = value;
         }
+
+        //! Pre- and post-merge callbacks for the async data
         SceneGraphCallbacks* getSceneGraphCallbacks() const {
             return _callbacks.get();
         }
@@ -138,6 +149,8 @@ namespace osgEarth { namespace Util
         void setPreCompileGLObjects(bool value) {
             _preCompile = value;
         }
+
+        //! Whether to pre-compile GL objects before merging
         bool getPreCompileGLObjects() const {
             return _preCompile;
         }
@@ -149,10 +162,26 @@ namespace osgEarth { namespace Util
             _refinePolicy = value;
         }
 
-        //! Loads the content for this node
-        void load(
-            float priority,
-            const osg::Object* host);
+        //! Priority to use if loading manually via the load() function.
+        //! If this node is culled in the scene graph, this value will be
+        //! overwritten.
+        void setPriority(float value) {
+            _priority = value;
+        }
+
+        float getPriority() const {
+            return _priority;
+        }
+
+        //! The LOD refinement mode (range versus SSE). Make sure you
+        //! have set the appropriate min/max range or min/max pixels.
+        void setLODMethod(const LODMethod& value) {
+            _useRange = (value == LODMethod::CAMERA_DISTANCE);
+        }
+
+        LODMethod getLODMethod() const {
+            return _useRange ? LODMethod::CAMERA_DISTANCE : LODMethod::SCREEN_SPACE;
+        }
 
         //! Mark the content as "in use" so that it will not
         //! be removed if setAutoUnload is true.
@@ -160,12 +189,14 @@ namespace osgEarth { namespace Util
 
     public: // LoadableNode API
 
+        void load() override;
+        void unload() override;
+        bool isLoadComplete() const override;
+        bool isHighestResolution() const override;
+
         RefinePolicy getRefinePolicy() const override {
             return _refinePolicy;
         }
-
-        //! Whether this node will automatically unload its content
-        //! when it goes not pass cull.
         bool getAutoUnload() const override {
             return _autoUnload;
         }
@@ -173,63 +204,49 @@ namespace osgEarth { namespace Util
             _autoUnload = value;
         }
 
-        bool isHighestResolution() const override;
-
-        //! Loads the content for this node (convenience function)
-        void load() override {
-            load(0.0, nullptr);
-        }
-
-        //! Unloads the content for this node
-        void unload() override;
-
-        //! Whether the content is loaded.
-        bool isLoaded() const override;
-
-
     public: // osg::Node overrides
 
-        virtual void traverse(osg::NodeVisitor& nv) override;
+        void traverse(osg::NodeVisitor& nv) override;
 
-        virtual osg::BoundingSphere computeBound() const override;
+        osg::BoundingSphere computeBound() const override;
 
     protected:
 
         virtual ~PagedNode2();
 
+        //! Starts the content loading for this node
+        void startLoad(const osg::Object* host);
+
     private:
         friend class PagingManager;
 
-        struct Loaded {
-            osg::ref_ptr<osg::Node> _node;
-            osg::ref_ptr<osgUtil::StateToCompile> _state;
-        };
+        Loader _load_function;
 
-        void* _token;
-        class PagingManager* _pagingManager;
+        void* _token = nullptr;
+        class PagingManager* _pagingManager = nullptr;
         osg::ref_ptr<SceneGraphCallbacks> _callbacks;
-        RefinePolicy _refinePolicy;
-        std::atomic_bool _loadTriggered;
-        std::atomic_bool _compileTriggered;
-        std::atomic_bool _mergeTriggered;
-        bool _merged; // true if the compiled node was added as a child
-        bool _failed; // true if the child load failed and no more action is possible
-        Future<Loaded> _loaded;
-        Future<osg::ref_ptr<osg::Node>> _compiled;
+        
+        std::atomic_bool _loadGate = { false };
+
+        jobs::future<osg::ref_ptr<osg::Node>> _loaded;
+        jobs::future<bool> _merged;
+
         Mutex _mutex;
         optional<osg::BoundingSphere> _userBS;
-        float _minRange;
-        float _maxRange;
-        float _minPixels;
-        float _maxPixels;
-        bool _useRange;
-        float _priorityScale;
-        Job _job;
-        bool _preCompile;
-        std::function<osg::ref_ptr<osg::Node>(Cancelable*)> _load;
-        std::atomic_int _revision;
-        bool _autoUnload;
-        float _lastRange;
+        float _minRange = 0.0f;
+        float _maxRange = FLT_MAX;
+        float _minPixels = 0.0f;
+        float _maxPixels = FLT_MAX;
+        bool _useRange = true;
+        float _priorityScale = 1.0f;
+        jobs::context _job;
+        bool _preCompile = true;
+        std::atomic_int _revision = { 0 };
+        bool _autoUnload = true;
+        float _lastRange = FLT_MAX;
+        mutable float _priority = 0.0f;
+        RefinePolicy _refinePolicy = REFINE_REPLACE;
+        std::string _jobpoolName;
 
         bool merge(int revision);
         void traverseChildren(osg::NodeVisitor& nv);
@@ -244,17 +261,30 @@ namespace osgEarth { namespace Util
     class OSGEARTH_EXPORT PagingManager : public osg::Group
     {
     public:
+        PagingManager(const std::string& jobpoolname = {});
 
-        PagingManager();
+        //! Maximum number of nodes to merge into the scene graph per update pass
+        void setMaxMergesPerFrame(unsigned value) {
+            _mergesPerFrame = value;
+        }
+        unsigned getMaxMergesPerFrame() const {
+            return _mergesPerFrame;
+        }
 
-        inline void* use(PagedNode2* node, void* token) {
-            ScopedMutexLock lock(_trackerMutex);
+        //! Number of nodes under management
+        unsigned getNumTrackedNodes() const {
+            return _tracker.size();
+        }
+
+        //! Subordinates call this to inform the paging manager they are still alive.
+        void* use(PagedNode2* node, void* token)
+        {
+            scoped_lock_if lock(_trackerMutex, _threadsafe);
             return _tracker.use(node, token);
         }
 
         //! Manually call an update on the PagingManager.  This should only be used if you are loading data outside of a traditional frameloop and want to merge data.
         void update();
-
 
     protected:
         virtual ~PagingManager();
@@ -263,12 +293,13 @@ namespace osgEarth { namespace Util
         void traverse(osg::NodeVisitor& nv);
 
     private:
+        bool _threadsafe = true;
         Mutex _trackerMutex;
         SentryTracker<osg::ref_ptr<PagedNode2>> _tracker;
-        std::list<PagedNode2*> _trash;
         using UpdateFunc = std::function<void(Cancelable*)>;
         UpdateFunc _updateFunc;
-        JobArena::Metrics::Arena::Ptr _metrics;
+        jobs::jobpool::metrics_t* _metrics = nullptr;
+        std::string _jobpoolName;
 
         mutable Mutex _mergeMutex;
         struct ToMerge {
@@ -276,8 +307,8 @@ namespace osgEarth { namespace Util
             int _revision;
         };
         std::queue<ToMerge> _mergeQueue;
-        unsigned _mergesPerFrame;
-        std::atomic_bool _newFrame;
+        unsigned _mergesPerFrame = ~0u;
+        std::atomic_bool _newFrame = { false };
 
         inline void merge(PagedNode2* host);
 
@@ -285,5 +316,3 @@ namespace osgEarth { namespace Util
     };
 
 } }
-
-#endif // OSGEARTHUTIL_PAGEDNODE_H

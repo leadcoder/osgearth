@@ -49,23 +49,19 @@ REGISTER_OBJECT_WRAPPER( osgEarth_Text,
 Text::Text() : 
 osgText::Text()
 {
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,8)
     if (osg::DisplaySettings::instance()->getTextShaderTechnique().empty())
     {
         setShaderTechnique(osgText::ALL_FEATURES);
     }
-#endif
 }
 
 Text::Text(const std::string& str) :
 osgText::Text()
 {
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,8)
     if (osg::DisplaySettings::instance()->getTextShaderTechnique().empty())
     {
         setShaderTechnique(osgText::ALL_FEATURES);
     }
-#endif
 
     setText(str);
 }
@@ -84,7 +80,6 @@ Text::~Text()
 osg::StateSet*
 Text::createStateSet()
 {
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,8)
     // NOTE: Most of this is copied from the parent class, except for the 
     // added osgEarth defines and the VirtualProgram in place of the Program.
     osgText::Font* activeFont = getActiveFont();
@@ -173,8 +168,8 @@ Text::createStateSet()
 
     // The remaining of this method is exclusive so we don't corrupt the
     // stateset cache when creating text objects from multiple threads. -gw
-    static Threading::Mutex mutex(OE_MUTEX_NAME);
-    Threading::ScopedMutexLock lock(mutex);
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
 
     if (!statesets.empty())
     {
@@ -223,9 +218,6 @@ Text::createStateSet()
     coreShaders.load(vp, coreShaders.Text);
 
     return stateset.release();
-#else
-    return 0L;
-#endif
 }
 
 void
@@ -234,33 +226,5 @@ Text::setFont(osg::ref_ptr<osgText::Font> font)
     if (_font.get() == font.get())
         return;
 
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,8)
     osgText::Text::setFont(font);
-#else
-    static Threading::Mutex mutex(OE_MUTEX_NAME);
-    Threading::ScopedMutexLock lock(mutex);
-
-    osg::StateSet* previousFontStateSet = _font.valid() ? _font->getStateSet() : osgText::Font::getDefaultFont()->getStateSet();
-    osg::StateSet* newFontStateSet = font.valid() ? font->getStateSet() : osgText::Font::getDefaultFont()->getStateSet();
-    //if (getStateSet() == previousFontStateSet)
-    {
-        if (newFontStateSet && VirtualProgram::get(newFontStateSet) == 0L)
-        {
-            VirtualProgram* vp = VirtualProgram::getOrCreate(newFontStateSet);
-            vp->setName("osgEarth::Text");
-            osgEarth::Shaders coreShaders;
-            coreShaders.load(vp, coreShaders.TextLegacy);
-#if defined(OSG_GL3_AVAILABLE) && !defined(OSG_GL2_AVAILABLE) && !defined(OSG_GL1_AVAILABLE)
-            newFontStateSet->setDefine("OSGTEXT_GLYPH_ALPHA_FORMAT_IS_RED");
-#endif
-            Lighting::set(newFontStateSet, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
-
-            OE_INFO << LC << "Installed VPs on a font" << std::endl;
-        }
-
-        setStateSet( newFontStateSet );
-    }
-
-    osgText::TextBase::setFont(font);
-#endif
 }

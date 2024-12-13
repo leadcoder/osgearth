@@ -16,28 +16,18 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_COMMON_H
-#define OSGEARTH_COMMON_H 1
+#pragma once
 
 #include <osgEarth/Export>
-#include <osg/Version>
+#include <osgEarth/Notify>
+#include <osgEarth/BuildConfig>
 #include <osg/ref_ptr>
 #include <osg/Referenced>
 #include <memory>
 
-// define the OSG Version checks for older OSG versions
-
-#ifndef OSG_MIN_VERSION_REQUIRED
-#  define OSG_MIN_VERSION_REQUIRED(MAJOR, MINOR, PATCH) ((OPENSCENEGRAPH_MAJOR_VERSION>MAJOR) || (OPENSCENEGRAPH_MAJOR_VERSION==MAJOR && (OPENSCENEGRAPH_MINOR_VERSION>MINOR || (OPENSCENEGRAPH_MINOR_VERSION==MINOR && OPENSCENEGRAPH_PATCH_VERSION>=PATCH))))
-#  define OSG_VERSION_LESS_THAN(MAJOR, MINOR, PATCH) ((OPENSCENEGRAPH_MAJOR_VERSION<MAJOR) || (OPENSCENEGRAPH_MAJOR_VERSION==MAJOR && (OPENSCENEGRAPH_MINOR_VERSION<MINOR || (OPENSCENEGRAPH_MINOR_VERSION==MINOR && OPENSCENEGRAPH_PATCH_VERSION<PATCH))))
-#  define OSG_VERSION_LESS_OR_EQUAL(MAJOR, MINOR, PATCH) ((OPENSCENEGRAPH_MAJOR_VERSION<MAJOR) || (OPENSCENEGRAPH_MAJOR_VERSION==MAJOR && (OPENSCENEGRAPH_MINOR_VERSION<MINOR || (OPENSCENEGRAPH_MINOR_VERSION==MINOR && OPENSCENEGRAPH_PATCH_VERSION<=PATCH))))
-#  define OSG_VERSION_GREATER_THAN(MAJOR, MINOR, PATCH) ((OPENSCENEGRAPH_MAJOR_VERSION>MAJOR) || (OPENSCENEGRAPH_MAJOR_VERSION==MAJOR && (OPENSCENEGRAPH_MINOR_VERSION>MINOR || (OPENSCENEGRAPH_MINOR_VERSION==MINOR && OPENSCENEGRAPH_PATCH_VERSION>PATCH))))
-#  define OSG_VERSION_GREATER_OR_EQUAL(MAJOR, MINOR, PATCH) ((OPENSCENEGRAPH_MAJOR_VERSION>MAJOR) || (OPENSCENEGRAPH_MAJOR_VERSION==MAJOR && (OPENSCENEGRAPH_MINOR_VERSION>MINOR || (OPENSCENEGRAPH_MINOR_VERSION==MINOR && OPENSCENEGRAPH_PATCH_VERSION>=PATCH))))
-#endif
-
-// text inlining macro
-// @deprecated Remove after osgEarth 3.3 (use R instead)
-#define OE_MULTILINE(...) #__VA_ARGS__
+namespace osg {
+    class ArgumentParser;
+}
 
 #define OE_COMMENT(STR)
 
@@ -51,6 +41,8 @@ namespace osgEarth
     //! windows and views prior to using osgEarth
     extern OSGEARTH_EXPORT void initialize();
 
+    extern OSGEARTH_EXPORT void initialize(osg::ArgumentParser&);
+
     //! Generate an application-wide unique identifier.
     extern OSGEARTH_EXPORT UID createUID();
 }
@@ -61,10 +53,7 @@ namespace osgEarth
 #pragma warning (disable: 4180)
 #endif
 
-#include "osgEarth/BuildConfig.h"
-
 // Sringification
 #define OE_STRINGIFY_0(x) #x
 #define OE_STRINGIFY(x) OE_STRINGIFY_0(x)
 
-#endif // OSGEARTH_COMMON_H

@@ -57,11 +57,12 @@ set(INCLUDED_SRC_FILES
     eb_compute_shaders.cpp
     eb_osgearth_shaders.cpp)
 
-setup_plugin(osgearth_sky_simple)
+add_osgearth_plugin(
+    TARGET osgdb_osgearth_sky_simple
+    SOURCES ${TARGET_SRC}
+    HEADERS ${TARET_H}
+    PUBLIC_HEADERS SimpleSkyOptions
+    SHADERS ${TARGET_GLSL}
+    TEMPLATES ${TARGET_IN}
+    LIBRARIES OpenGL::GL )
 
-source_group( "Inline Shaders" FILES ${INCLUDED_SRC_FILES})
-
-# to install public driver includes:
-set(LIB_NAME sky_simple)
-set(LIB_PUBLIC_HEADERS SimpleSkyOptions)
-include(ModuleInstallOsgEarthDriverIncludes OPTIONAL)

@@ -64,17 +64,19 @@ namespace osgEarth { namespace Contrib
         //! GL_ONE, GL_ZERO, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
         //! GL_DST_ALPHA, GL_ONE_MINUS_DST_ALPHA
         void setBlendFuncs(
-            GLenum sourceFactor,
-            GLenum destFactor,
-            GLenum alphaSourceFactor,
-            GLenum alphaDestFactor);
+            GLenum R_source, GLenum R_dest,
+            GLenum G_source, GLenum G_dest,
+            GLenum B_source, GLenum B_dest,
+            GLenum A_source, GLenum A_dest);
 
         //! Set blend equation
         //! Supported values are
         //! GL_FUNC_ADD, GL_FUNC_MIN, GL_FUNC_MAX
         void setBlendEquations(
-            GLenum rgbEquation,
-            GLenum alphaEquation);
+            GLenum R_equation,
+            GLenum G_equation,
+            GLenum B_equation,
+            GLenum A_equation);
 
     public: // ImageLayer
 
@@ -101,11 +103,13 @@ namespace osgEarth { namespace Contrib
             GeoExtent _extent;
             osg::ref_ptr<const osg::Image> _image;
         };
-        mutable ReadWrite<Mutex> _data_mutex;
+        mutable ReadWriteMutex _data_mutex;
         std::list<Decal> _decalList;
         using DecalIndex = std::unordered_map<std::string, std::list<Decal>::iterator>;
         DecalIndex _decalIndex;
-        GLenum _srcRGB, _dstRGB, _srcAlpha, _dstAlpha, _rgbEquation, _alphaEquation;
+        GLenum _src[4];
+        GLenum _dst[4];
+        GLenum _equation[4];
     };
 
     /**
@@ -191,7 +195,7 @@ namespace osgEarth { namespace Contrib
         struct Decal {
             GeoHeightField _heightfield;
         };
-        mutable ReadWrite<Mutex> _data_mutex;
+        mutable ReadWriteMutex _data_mutex;
         std::list<Decal> _decalList;
         using DecalIndex = std::unordered_map<std::string, std::list<Decal>::iterator>;
         DecalIndex _decalIndex;
@@ -246,7 +250,7 @@ namespace osgEarth { namespace Contrib
             osg::ref_ptr<const osg::Image> _image;
             GeoExtent _extent;
         };
-        mutable ReadWrite<Mutex> _data_mutex;
+        mutable ReadWriteMutex _data_mutex;
         std::list<Decal> _decalList;
         using DecalIndex = std::unordered_map<std::string, std::list<Decal>::iterator>;
         DecalIndex _decalIndex;

@@ -25,11 +25,13 @@
 #include <osgEarth/Common>
 #include <osgEarth/StringUtils>
 #include <osgEarth/Threading>
+#include <osgEarth/DrawInstanced>
 
 #include <osg/Vec3f>
 #include <osg/AutoTransform>
 #include <osg/OperationThread>
 #include <osg/TriangleIndexFunctor>
+#include <osg/MatrixTransform>
 #include <osgGA/GUIEventHandler>
 #include <osgViewer/View>
 #include <osgUtil/CullVisitor>
@@ -45,6 +47,40 @@
 namespace osgEarth { namespace Util
 {
     using namespace osgEarth::Threading;
+
+    /**
+    * Tracking object - place this in a user data container to track the
+    * construction and destruction of objects.
+    */
+    struct TrackerTag : public osg::Object
+    {
+        META_Object(osgEarth, TrackerTag);
+
+        std::shared_ptr<std::atomic_int> _count;
+
+        TrackerTag() : _count(nullptr) { }
+        TrackerTag(const TrackerTag& rhs, const osg::CopyOp&) : _count(rhs._count) { }
+        TrackerTag(std::shared_ptr<std::atomic_int> count) : _count(count) {
+            ++(*_count);
+        }
+        ~TrackerTag() {
+            if (_count) --(*_count);
+        }
+    };
+
+    /**
+    * General purpose wrapper that wraps a value in an osg::Object so you can
+    * easily store it in a user data container (or whatever)
+    */
+    template<class T>
+    struct WrapperObject : public osg::Object
+    {
+        META_Object(osgEarth, WrapperObject<T>);
+        WrapperObject() { }
+        WrapperObject(const std::string name, const T& t) : value(t) { setName(name); }
+        WrapperObject(const WrapperObject<T>& rhs, const osg::CopyOp& op) : osg::Object(rhs, op), value(rhs.value) { }
+        T value;
+    };
 
     /**
      * Utility for storing observables in an osg::Object
@@ -256,7 +292,7 @@ namespace osgEarth { namespace Util
     /**
      * Adapts an osg::Callback (or derived class) to accept a lambda.
      */
-    template<typename T>
+    template<typename T = osg::Callback>
     struct LambdaCallback : public T {
         LambdaCallback(std::function<void(osg::NodeVisitor&)> func) : _func(func) { }
         std::function<void(osg::NodeVisitor&)> _func;
@@ -314,10 +350,17 @@ namespace osgEarth { namespace Util
             _list.clear();
             _list.emplace_front(nullptr, nullptr); // the sentry marker
             _sentryptr = _list.begin();
+            _total = 0;
+        }
+
+        std::size_t size() const
+        {
+            return _total;
         }
 
         List _list;
         ListIterator _sentryptr;
+        std::atomic_uint _total = { 0u };
 
         inline void* use(const T& data, void* token)
         {
@@ -339,13 +382,13 @@ namespace osgEarth { namespace Util
                 Token* ptr = new Token();
                 _list.emplace_front(data, ptr); // ListEntry
                 *ptr = _list.begin();
+                ++_total;
                 return ptr;
             }
         }
 
-        inline void flush(
-            unsigned maxCount,
-            std::function<bool(T& obj)> dispose)
+        template<class CALLABLE>
+        inline void flush(unsigned maxCount, CALLABLE&& dispose)
         {
             // After cull, all visited tiles are in front of the sentry, and all
             // non-visited tiles are behind it. Start at the sentry position and
@@ -358,11 +401,8 @@ namespace osgEarth { namespace Util
             {
                 ListEntry& le = *i;
 
-                bool disposed = true;
-
                 // user disposal function
-                if (dispose != nullptr)
-                    disposed = dispose(le._data);
+                bool disposed = dispose(le._data);
 
                 if (disposed)
                 {
@@ -376,6 +416,7 @@ namespace osgEarth { namespace Util
                     // remove it from the tracker list:
                     _list.erase(tmp);
                     ++count;
+                    --_total;
                 }                
             }
 
@@ -520,15 +561,28 @@ namespace osgEarth { namespace Util
 
         void apply(osg::Geometry& geom) override
         {
+            auto instanced_geom = dynamic_cast<Util::DrawInstanced::InstanceGeometry*>(&geom);
+            auto geom_to_use = instanced_geom ? instanced_geom->getProxyGeometry() : &geom;
+
             osg::TriangleIndexFunctor<TriangleFullSend> _sender;
             _sender._visitor = this;
-            _sender._geom = &geom;
+            _sender._geom = geom_to_use;
             geom.accept(_sender);
         }
 
     private:
         Function _func;
         std::stack<osg::Matrix> _transformStack;
+    };
+
+    /**
+    * Records the thread's call stack at the time of construction.
+    */
+    class OSGEARTH_EXPORT CallStack
+    {
+    public:
+        CallStack();
+        std::vector<std::string> symbols;
     };
 } }
 

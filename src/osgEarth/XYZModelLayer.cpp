@@ -17,8 +17,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/XYZModelLayer>
-#include <osgEarth/XYZModelGraph>
 #include <osgEarth/NodeUtils>
+#include <osgEarth/NetworkMonitor>
+#include <osgEarth/Metrics>
+#include <osgEarth/ShaderGenerator>
+#include <osgEarth/Registry>
+#include <osgEarth/Chonk>
+#include <osgEarth/Progress>
+#include <osg/BlendFunc>
 
 using namespace osgEarth;
 
@@ -30,35 +36,19 @@ REGISTER_OSGEARTH_LAYER(XYZModel, XYZModelLayer);
 
 //...........................................................................
 
-XYZModelLayer::Options::Options() :
-VisibleLayer::Options()
-{
-    fromConfig(_conf);
-}
-
-XYZModelLayer::Options::Options(const ConfigOptions& options) :
-VisibleLayer::Options(options)
-{
-    fromConfig(_conf);
-}
-
 void XYZModelLayer::Options::fromConfig(const Config& conf)
 {
-    invertY().setDefault(false);
-    additive().setDefault(false);
-
-    conf.get("additive", additive());
+    invertY().setDefault(false);        
     conf.get("url", url());
     conf.get("min_level", minLevel());
-    conf.get("max_level", maxLevel());
+    conf.get("max_level", maxLevel());    
     conf.get("profile", profile());
 }
 
 Config
 XYZModelLayer::Options::getConfig() const
 {
-    Config conf = VisibleLayer::Options::getConfig();
-    conf.set("additive", additive());
+    Config conf = TiledModelLayer::Options::getConfig();
     conf.set("url", url());
     conf.set("min_level", minLevel());
     conf.set("max_level", maxLevel());
@@ -67,18 +57,65 @@ XYZModelLayer::Options::getConfig() const
     return conf;
 }
 
-void XYZModelLayer::Options::mergeConfig(const Config& conf)
-{
-    VisibleLayer::Options::mergeConfig(conf);
-    fromConfig(conf);
-}
-
 //...........................................................................
 
 OE_LAYER_PROPERTY_IMPL(XYZModelLayer, URI, URL, url);
-OE_LAYER_PROPERTY_IMPL(XYZModelLayer, bool, Additive, additive);
-OE_LAYER_PROPERTY_IMPL(XYZModelLayer, int, MinLevel, minLevel);
-OE_LAYER_PROPERTY_IMPL(XYZModelLayer, int, MaxLevel, maxLevel);
+
+void
+XYZModelLayer::setMinLevel(unsigned value) {
+    options().minLevel() = value;
+}
+
+unsigned
+XYZModelLayer::getMinLevel() const {
+    return options().minLevel().get();
+}
+
+void
+XYZModelLayer::setMaxLevel(unsigned value) {
+    options().maxLevel() = value;
+}
+
+unsigned
+XYZModelLayer::getMaxLevel() const {
+    return options().maxLevel().get();
+}
+
+void XYZModelLayer::init()
+{
+    super::init();    
+}
+
+void XYZModelLayer::addedToMap(const Map* map)
+{
+    _readOptions = osgEarth::Registry::instance()->cloneOrCreateOptions(getReadOptions());
+    _readOptions->setObjectCacheHint(osgDB::Options::CACHE_IMAGES);
+
+#if 0
+    _statesetCache = new StateSetCache();
+
+    if (*options().useNVGL() == true && GLUtils::useNVGL() && !_textures.valid())
+    {
+        _textures = new TextureArena();
+        getOrCreateStateSet()->setAttribute(_textures, 1);
+
+        // auto release requires that we install this update callback!
+        _textures->setAutoRelease(true);
+
+        getNode()->addUpdateCallback(new LambdaCallback<>([this](osg::NodeVisitor& nv)
+            {
+                _textures->update(nv);
+                return true;
+            }));
+
+        getOrCreateStateSet()->setAttributeAndModes(
+            new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+    }
+#endif
+
+    super::addedToMap(map);
+}
 
 XYZModelLayer::~XYZModelLayer()
 {
@@ -94,48 +131,17 @@ void XYZModelLayer::setProfile(const Profile* profile)
     }
 }
 
-void
-XYZModelLayer::init()
-{
-    VisibleLayer::init();
-
-    _root = new osg::Group();
-
-    // Assign the layer's state set to the root node:
-    _root->setStateSet(this->getOrCreateStateSet());
-
-    // Graph needs rebuilding
-    _graphDirty = true;
-
-    // Depth sorting by default
-    getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-}
-
-void XYZModelLayer::dirty()
-{
-    _graphDirty = true;
-
-    // create the scene graph
-    create();
-}
-
 Config
 XYZModelLayer::getConfig() const
 {
-    Config conf = VisibleLayer::getConfig();
+    Config conf = TiledModelLayer::getConfig();
     return conf;
-}
-
-osg::Node*
-XYZModelLayer::getNode() const
-{
-    return _root.get();
 }
 
 Status
 XYZModelLayer::openImplementation()
 {
-    Status parent = VisibleLayer::openImplementation();
+    Status parent = super::openImplementation();
     if (parent.isError())
         return parent;
 
@@ -144,60 +150,84 @@ XYZModelLayer::openImplementation()
     return Status::NoError;
 }
 
-Status
-XYZModelLayer::closeImplementation()
+osg::ref_ptr<osg::Node>
+XYZModelLayer::createTileImplementation(const TileKey& key, ProgressCallback* progress) const
 {
-    _graphDirty = true;
-    return getStatus();
-}
+    OE_PROFILING_ZONE;
+    if (progress && progress->isCanceled())
+        return nullptr;
 
-void
-XYZModelLayer::addedToMap(const Map* map)
-{
-    OE_TEST << LC << "addedToMap" << std::endl;
-    VisibleLayer::addedToMap(map);
+    NetworkMonitor::ScopedRequestLayer layerRequest(getName());
 
-    _map = map;
+    unsigned x, y;
+    key.getTileXY(x, y);
+    unsigned cols = 0, rows = 0;
+    key.getProfile()->getNumTiles(key.getLevelOfDetail(), cols, rows);
+    unsigned inverted_y = rows - y - 1;
 
-    _graphDirty = true;
-
-    // re-create the graph if necessary.
-    create();
-}
-
-void
-XYZModelLayer::removedFromMap(const Map* map)
-{
-    VisibleLayer::removedFromMap(map);
-
-    if (_root.valid())
+    if (*options().invertY() == true)
     {
-        osg::ref_ptr<XYZModelGraph> node = findTopMostNodeOfType<XYZModelGraph>(_root.get());
-        if (node.valid()) node->setDone();
-        _root->removeChildren(0, _root->getNumChildren());
+        y = inverted_y;
     }
-}
 
-void
-XYZModelLayer::create()
-{
-    OE_TEST << LC << "create" << std::endl;
+    std::string location = options().url()->full();
 
-    if (_graphDirty && _profile)
-    {             
-        osg::ref_ptr<XYZModelGraph> xyzGraph = new XYZModelGraph(_map.get(), _profile.get(), *_options->url(), *_options->invertY(), getReadOptions());
-        xyzGraph->setOwnerName(getName());
-        xyzGraph->setAdditive(*_options->additive());
-        xyzGraph->setMinLevel(*_options->minLevel());
-        xyzGraph->setMaxLevel(*_options->maxLevel());
-        xyzGraph->build();
+    // support OpenLayers template style:
+    replaceIn(location, "${x}", Stringify() << x);
+    replaceIn(location, "${y}", Stringify() << y);
+    replaceIn(location, "${-y}", Stringify() << inverted_y);
+    replaceIn(location, "${z}", Stringify() << key.getLevelOfDetail());
 
-        _root->removeChildren(0, _root->getNumChildren());
-        _root->addChild(xyzGraph.get());
+    // failing that, legacy osgearth style:
+    replaceIn(location, "{x}", Stringify() << x);
+    replaceIn(location, "{y}", Stringify() << y);
+    replaceIn(location, "{-y}", Stringify() << inverted_y);
+    replaceIn(location, "{z}", Stringify() << key.getLevelOfDetail());
 
-        // clear the dirty flag.
-        _graphDirty = false;
+    URI myUri(location, options().url()->context());
 
-        setStatus(Status::OK());
+    osg::ref_ptr<osg::Node> node = myUri.readNode(_readOptions.get()).getNode();
+
+    if (node.valid())
+    {
+#if 0
+        if (_textures.valid())
+        {
+            auto xform = findTopMostNodeOfType<osg::MatrixTransform>(node.get());
+
+            // Convert the geometry into chonks
+            ChonkFactory factory(_textures);
+
+            factory.setGetOrCreateFunction(
+                ChonkFactory::getWeakTextureCacheFunction(
+                    _texturesCache, _texturesCacheMutex));
+
+            osg::ref_ptr<ChonkDrawable> drawable = new ChonkDrawable();
+
+            if (xform)
+            {
+                for (unsigned i = 0; i < xform->getNumChildren(); ++i)
+                {
+                    drawable->add(xform->getChild(i), factory);
+                }
+                xform->removeChildren(0, xform->getNumChildren());
+                xform->addChild(drawable);
+                node = xform;
+            }
+            else
+            {
+                if (drawable->add(node.get(), factory))
+                {
+                    node = drawable;
+                }
+            }
+        }
+        else
+        {
+            osgEarth::Registry::shaderGenerator().run(node.get(), _statesetCache);
+        }
+#endif
+        return node.release();
     }
+    return nullptr;
 }

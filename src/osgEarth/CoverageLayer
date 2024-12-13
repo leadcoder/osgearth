@@ -26,6 +26,7 @@
 #include <osgEarth/Metrics>
 #include <osgEarth/Progress>
 #include <osgEarth/Coverage>
+#include <osgEarth/Cache>
 
 namespace osgEarth
 {
@@ -77,6 +78,7 @@ namespace osgEarth
 
         //! Table of preset sample values.
         struct Presets : public std::unordered_map<std::string, Config> {
+            Presets() : _nodata() { }
             const Config _nodata;
             inline const Config& get(const std::string& name) const;
         };
@@ -129,8 +131,99 @@ namespace osgEarth
                 OE_PROFILING_ZONE_TEXT(_layer->getName() + " " + key.str());
 
                 GeoCoverage<T> result;
-                populate(result, key, progress);
+
+                if (!readFromCache(key, result, progress))
+                {
+                    populate(result, key, progress);
+                    writeToCache(key, result, progress);
+                }
+
                 return result;
+            }
+
+            inline bool readFromCache(const TileKey& key, GeoCoverage<T>& result, ProgressCallback* p)
+            {
+                if (_layer->_memCache.valid())
+                {
+                    char memCacheKey[64];
+                    sprintf(memCacheKey, "%d/%s/%s", _layer->getRevision(), key.str().c_str(), key.getProfile()->getHorizSignature().c_str());
+                    CacheBin* bin = _layer->_memCache->getOrCreateDefaultBin();
+                    ReadResult r = bin->readObject(memCacheKey, nullptr);
+                    if (r.succeeded())
+                    {
+                        result = GeoCoverage<T>(Coverage<T>::create(), key.getExtent());
+                        Config conf;
+                        conf.fromJSON(r.getString());
+                        result.setConfig(conf);
+                        return true;
+                    }
+                }
+
+                CacheBin* cacheBin = _layer->getCacheBin(key.getProfile());
+                const CachePolicy& policy = _layer->getCacheSettings()->cachePolicy().get();
+                if (!policy.isCacheOnly() && !_layer->getProfile())
+                {
+                    _layer->disable("Could not establish a valid profile");
+                    return false;
+                }
+
+                // First, attempt to read from the cache. Since the cached data is stored in the
+                // map profile, we can try this first.
+                if (cacheBin && policy.isCacheReadable())
+                {
+                    // the cache key combines the Key and the horizontal profile.
+                    std::string cacheKey = Cache::makeCacheKey(key.str() + "-" + key.getProfile()->getHorizSignature(), "coverage");
+                    ReadResult r = cacheBin->readString(cacheKey, nullptr);
+                    if (r.succeeded() && !policy.isExpired(r.lastModifiedTime()))
+                    {
+                        result = GeoCoverage<T>(Coverage<T>::create(), key.getExtent());
+                        Config conf;
+                        conf.fromJSON(r.getString());
+                        result.setConfig(conf);
+                        return true;
+                    }
+                }
+
+                // The data was not in the cache. If we are cache-only, fail sliently
+                if (policy.isCacheOnly())
+                {
+                    // If it's cache only and we have an expired but cached image, just return it.
+                    return !result.empty();
+                }
+
+                return result.valid();
+            }
+
+            inline void writeToCache(const TileKey& key, const GeoCoverage<T>& result, ProgressCallback* p)
+            {
+                if (result.empty())
+                    return;
+
+                osg::ref_ptr<StringObject> so;
+
+                if (_layer->_memCache.valid())
+                {
+                    char memCacheKey[64];
+                    sprintf(memCacheKey, "%d/%s/%s", _layer->getRevision(), key.str().c_str(), key.getProfile()->getHorizSignature().c_str());
+                    CacheBin* bin = _layer->_memCache->getOrCreateDefaultBin();
+                    Config conf = result.getConfig();
+                    so = new StringObject(conf.toJSON(false));
+                    bin->write(memCacheKey, so.get(), nullptr);
+                }
+
+                // If we got a result, the cache is valid and we are caching in the map profile,
+                // write to the map cache.
+                CacheBin* cacheBin = _layer->getCacheBin(key.getProfile());
+                const CachePolicy& policy = _layer->getCacheSettings()->cachePolicy().get();
+                if (cacheBin && policy.isCacheWriteable())
+                {
+                    std::string cacheKey = Cache::makeCacheKey(key.str()+"-"+key.getProfile()->getHorizSignature(), "coverage");
+                    if (!so.valid()) {
+                        Config conf = result.getConfig();
+                        so = new StringObject(conf.toJSON(false));
+                    }
+                    cacheBin->write(cacheKey, so.get(), nullptr);
+                }
             }
 
         private:
@@ -249,16 +342,17 @@ namespace osgEarth
 
                         if (fallback)
                         {
-                            // this path is taken when we already have a partial tile from
+                            // This path runs when we already have a partial tile from
                             // a higher priority layer, and need to fill in the empty samples
                             // from other lower priority layers.
-                            
-                            // NB: do not call mayHaveData() on the key, since we want to be sure
-                            // to fail and fall back until we get data.
-                            while (
-                                input.valid() == false &&
-                                inputKey.valid() &&
-                                imageLayer->isKeyInLegalRange(inputKey))
+                            // NB: layer->mayHaveData() is insufficient here. We want to be sure
+                            // to fail and fall back until we get data, and mayHaveData() will return
+                            // false if our LOD exceeds that of the source layer. Instead we just query
+                            // the "best available" key and start the search from there if that
+                            // key is valid. (It will be invalid, for example, if the extents don't intersect.)
+                            inputKey = imageLayer->getBestAvailableTileKey(inputKey);
+
+                            while (inputKey.valid() && !input.valid() && imageLayer->isKeyInLegalRange(inputKey))
                             {
                                 input = createCoverage(inputKey, imageLayer, progress);
 
@@ -266,9 +360,9 @@ namespace osgEarth
                                     inputKey.makeParent();
                             }
                         }
-                        else
+                        else if (imageLayer->mayHaveData(inputKey))
                         {
-                            // this path is taken when we have no data at all yet.
+                            // This path runs when we have no data at all yet.
                             input = createCoverage(inputKey, imageLayer, progress);
                         }
 
@@ -398,7 +492,11 @@ namespace osgEarth
             std::string preset_name;
             if (child.get("value", value))
             {
-                if (child.get("preset", preset_name))
+                if (value == 0u)
+                {
+                    OE_WARN << "[CoverageLayer] " << getName() << " : Illegal value 0 in mapping (zero is reserved for 'no data'); skipping." << std::endl;
+                }
+                else if (child.get("preset", preset_name))
                 {
                     const Config& p = presets.get(preset_name);
                     Config temp = child;

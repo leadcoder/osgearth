@@ -28,6 +28,8 @@
 #include <osgEarth/GLUtils>
 #include <osgEarth/Progress>
 #include <osg/Notify>
+#include <osg/Depth>
+#include <osg/PolygonOffset>
 
 using namespace osgEarth;
 
@@ -77,7 +79,7 @@ FeatureModelOptions::fromConfig(const Config& conf)
     // shorthand for enabling feature indexing
     if (featureIndexing().isSet() == false && conf.value("pickable", false) == true)
     {
-        featureIndexing()->enabled() = true;
+        featureIndexing().mutable_value().enabled() = true;
     }
 }
 
@@ -140,13 +142,60 @@ FeatureNodeFactory::getOrCreateStyleGroup(const Style& style,
     // Otherwise, a normal group.
     if ( !group )
     {
-        group = new osg::Group();
+        auto styleGroup = new StyleGroup();
+        styleGroup->_style = style;
+        group = styleGroup;
+        //group = new osg::Group();
     }
 
     // apply necessary render styles.
     const RenderSymbol* render = style.get<RenderSymbol>();
     if ( render )
     {
+        if (render->depthOffset().isSet())
+        {
+            DepthOffsetAdapter doa;
+            doa.setGraph(group);
+            doa.setDepthOffsetOptions(*render->depthOffset());
+        }
+
+        if (render->renderBin().isSet())
+        {
+            osg::StateSet* ss = group->getOrCreateStateSet();
+            ss->setRenderBinDetails(
+                ss->getBinNumber(),
+                render->renderBin().get(),
+                osg::StateSet::PROTECTED_RENDERBIN_DETAILS);
+        }
+
+        if (render->order().isSet())
+        {
+            osg::StateSet* ss = group->getOrCreateStateSet();
+            ss->setRenderBinDetails(
+                (int)render->order()->eval(),
+                ss->getBinName().empty() ? "DepthSortedBin" : ss->getBinName(),
+                osg::StateSet::PROTECTED_RENDERBIN_DETAILS);
+        }
+
+        if (render->transparent() == true)
+        {
+            osg::StateSet* ss = group->getOrCreateStateSet();
+            ss->setRenderBinDetails(
+                10,
+                "DepthSortedBin",
+                osg::StateSet::PROTECTED_RENDERBIN_DETAILS);
+        }
+
+        if (render->decal() == true)
+        {
+            osg::StateSet* ss = group->getOrCreateStateSet();
+            ss->setAttributeAndModes(
+                new osg::PolygonOffset(-1, -1), 1);
+
+            ss->setAttributeAndModes(
+                new osg::Depth(osg::Depth::LEQUAL, 0, 1, false));
+        }
+
         if ( render->depthTest().isSet() )
         {
             group->getOrCreateStateSet()->setMode(

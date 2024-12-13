@@ -19,12 +19,11 @@
 * You should have received a copy of the GNU Lesser General Public License
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifndef OSGEARTH_PROCEDURAL_BIOME_LAYER_H
-#define OSGEARTH_PROCEDURAL_BIOME_LAYER_H
+#pragma once
 
-#include "Export"
-#include "Biome"
-#include "BiomeManager"
+#include <osgEarthProcedural/Export>
+#include <osgEarthProcedural/Biome>
+#include <osgEarthProcedural/BiomeManager>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/LayerReference>
 #include <osgEarth/FeatureSource>
@@ -38,15 +37,15 @@ namespace osgEarth
 
         struct OSGEARTHPROCEDURAL_EXPORT LandCoverSample
         {
-            OE_OPTION(std::string, biomeid);
-            OE_OPTION(float, dense);
-            OE_OPTION(float, lush);
-            OE_OPTION(float, rugged);
-            OE_OPTION(std::string, material);
-            OE_OPTION(std::string, soiltype);
-            OE_PROPERTY(std::vector<std::string>, traits);
+            OE_OPTION(std::string, biomeid, {});
+            OE_OPTION(float, dense, 0.0f);
+            OE_OPTION(float, lush, 0.0f);
+            OE_OPTION(float, rugged, 0.0f);
+            OE_OPTION(std::string, material, {});
+            OE_OPTION(std::string, soiltype, {});
+            OE_PROPERTY(std::vector<std::string>, traits, {});
 
-            LandCoverSample() { }
+            LandCoverSample() = default;
 
             LandCoverSample(const Config& conf)
             {
@@ -57,6 +56,19 @@ namespace osgEarth
                 conf.get("rugged", rugged());
                 conf.get("material", material());
                 conf.get("soiltype", soiltype());
+            }
+
+            Config getConfig() const
+            {
+                Config conf;
+                conf.set("biome_id", biomeid());
+                conf.set("traits", traits());
+                conf.set("dense", dense());
+                conf.set("lush", lush());
+                conf.set("rugged", rugged());
+                conf.set("material", material());
+                conf.set("soiltype", soiltype());
+                return conf;
             }
 
             bool valid() const {
@@ -73,7 +85,6 @@ namespace osgEarth
             bool operator < (const LandCoverSample& rhs) const
             {
                 OE_OPTION_LESS(biomeid, rhs.biomeid);
-                //OE_OPTION_LESS(traits, rhs.traits);
                 OE_OPTION_LESS(dense, rhs.dense);
                 OE_OPTION_LESS(lush, rhs.lush);
                 OE_OPTION_LESS(rugged, rhs.rugged);
@@ -99,6 +110,14 @@ namespace osgEarth
                 conf.get("biome_id", biomeid());
             }
 
+            Config getConfig() const
+
+            {
+                Config conf;
+                conf.set("biome_id", biomeid());
+                return conf;
+            }
+
             bool valid() const {
                 return
                     (biomeid().isSet() && !biomeid()->empty());
@@ -106,7 +125,7 @@ namespace osgEarth
 
             bool operator < (const BiomeSample& rhs) const
             {
-                OE_OPTION_LESS(biomeid, rhs.biomeid);            
+                OE_OPTION_LESS(biomeid, rhs.biomeid);
                 return false;
             }
 
@@ -115,32 +134,32 @@ namespace osgEarth
 
 
         /**
-         * BiomeLayer creates rasters that encode Biome indices. 
+         * BiomeLayer creates rasters that encode Biome indices.
          *
          * Each Biome has an associated integer index, corresponding to the order
          * in which it appears in the biome catalog. (NB: This index is totally
          * transparent to the user, and has no relationship to the Biome ID.)
-         * For a given TileKey, this layer will create a raster for which each 
+         * For a given TileKey, this layer will create a raster for which each
          * pixel holds an index corresponding to a specific Biome.
          *
          * At runtime this object will scan each raster, determine which Biomes
          * are currently visible, and tell the BiomeManager to load the corresponding
          * assets.
          */
-        class OSGEARTHPROCEDURAL_EXPORT BiomeLayer : 
-            public ImageLayer, 
+        class OSGEARTHPROCEDURAL_EXPORT BiomeLayer :
+            public ImageLayer,
             public osg::Observer
         {
         public:
             class OSGEARTHPROCEDURAL_EXPORT Options : public ImageLayer::Options
             {
             public:
-                META_LayerOptions(osgEarth, Options, ImageLayer::Options);
+                META_LayerOptions(osgEarthProcedural, Options, ImageLayer::Options);
                 OE_OPTION_LAYER(CoverageLayer, landCoverLayer);
                 OE_OPTION_LAYER(CoverageLayer, biomeBaseLayer);
                 OE_OPTION_SHAREDPTR(BiomeCatalog, biomeCatalog);
-                OE_OPTION(Distance, blendRadius);
-                OE_OPTION(float, blendPercentage);
+                OE_OPTION(Distance, blendRadius, Distance(0.0f, Units::METERS));
+                OE_OPTION(float, blendPercentage, 0.0f);
                 virtual Config getConfig() const;
             private:
                 void fromConfig(const Config& conf);
@@ -187,25 +206,29 @@ namespace osgEarth
 
         public: // Layer
 
-            virtual void addedToMap(const Map*) override;
+            void addedToMap(const Map*) override;
 
-            virtual void removedFromMap(const Map*) override;
+            void removedFromMap(const Map*) override;
 
         protected: // Layer
 
-            virtual void init() override;
+            void init() override;
 
-            virtual Status openImplementation() override;
+            Status openImplementation() override;
 
-            virtual Status closeImplementation() override;
+            Status closeImplementation() override;
+
+            void resizeGLObjectBuffers(unsigned) override;
+
+            void releaseGLObjects(osg::State*) const override;
 
         protected: // ImageLayer
 
-            virtual GeoImage createImageImplementation(
-                const TileKey& key, 
+            GeoImage createImageImplementation(
+                const TileKey& key,
                 ProgressCallback* progress) const override;
 
-            virtual void postCreateImageImplementation(
+            void postCreateImageImplementation(
                 GeoImage& createdImage,
                 const TileKey& key,
                 ProgressCallback* progress) const override;
@@ -220,7 +243,19 @@ namespace osgEarth
 
             using Tracker = std::unordered_map<osg::Object*, TileKey>;
             mutable Mutexed<Tracker> _tracker;
-            void objectDeleted(void*) override;
+
+            class BiomeTrackerToken : public osg::Object {
+            public:
+                META_Object(osgEarth, BiomeTrackerToken);
+                BiomeTrackerToken() = default;
+                BiomeTrackerToken(std::set<int>&& seen, BiomeLayer* layer) : _biome_index_set(seen), _biomeLayer(layer) { }
+                BiomeTrackerToken(const BiomeTrackerToken& rhs, const osg::CopyOp& op) { }
+                ~BiomeTrackerToken();
+                std::set<int> _biome_index_set;
+                osg::observer_ptr<BiomeLayer> _biomeLayer;
+            };
+            void trackerTokenDeleted(BiomeTrackerToken*);
+            friend BiomeTrackerToken;
 
             void trackImage(
                 GeoImage& image,
@@ -243,4 +278,3 @@ namespace osgEarth
     }
 } // namespace osgEarth::Procedural
 
-#endif // OSGEARTH_PROCEDURAL_BIOME_LAYER_H

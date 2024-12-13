@@ -16,9 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-
-#ifndef OSGEARTH_FEATURE_SDF_LAYER_H
-#define OSGEARTH_FEATURE_SDF_LAYER_H
+#pragma once
 
 #include <osgEarth/ImageLayer>
 #include <osgEarth/LayerReference>
@@ -37,10 +35,9 @@ namespace osgEarth
         class OSGEARTH_EXPORT Options : public ImageLayer::Options {
         public:
             META_LayerOptions(osgEarth, Options, ImageLayer::Options);
-            OE_OPTION_LAYER(FeatureSource, featureSource);
+            OE_OPTION_LAYER(FeatureSource, features);
             OE_OPTION_VECTOR(ConfigOptions, filters);
             OE_OPTION_LAYER(StyleSheet, styleSheet);
-            OE_OPTION(bool, inverted);
             virtual Config getConfig() const;
         private:
             void fromConfig(const Config& conf);
@@ -58,38 +55,31 @@ namespace osgEarth
         void setStyleSheet(StyleSheet* styles);
         inline StyleSheet* getStyleSheet() const;
 
-        //! Whether to invert the distance field
-        void setInverted(bool value);
-        bool getInverted() const;
-
     public: // ImageLayer
 
         // Opens the layer and returns a status
-        virtual Status openImplementation() override;
+        Status openImplementation() override;
 
-        virtual GeoImage createImageImplementation(
+        GeoImage createImageImplementation(
             const TileKey& key,
             ProgressCallback* progress) const override;
 
     protected: // Layer
 
         // Called by Map when it adds this layer
-        virtual void addedToMap(const class Map*) override;
+        void addedToMap(const class Map*) override;
 
         // Called by Map when it removes this layer
-        virtual void removedFromMap(const class Map*) override;
+        void removedFromMap(const class Map*) override;
 
         // post-ctor initialization
-        virtual void init() override;
+        void init() override;
+
 
     protected:
-
-        virtual ~FeatureSDFLayer() { }
-
-    private:
         osg::ref_ptr<Session> _session;
         osg::ref_ptr<const FeatureProfile> _featureProfile;
-        osg::ref_ptr<FeatureFilterChain> _filterChain;
+        FeatureFilterChain _filterChain;
         SDFGenerator _sdfGenerator;
 
         void updateSession();
@@ -99,11 +89,10 @@ namespace osgEarth
     
     // template/inline impls .................................................
 
-    FeatureSource* FeatureSDFLayer::getFeatureSource() const { return options().featureSource().getLayer(); }
+    FeatureSource* FeatureSDFLayer::getFeatureSource() const { return options().features().getLayer(); }
     StyleSheet* FeatureSDFLayer::getStyleSheet() const { return options().styleSheet().getLayer(); }
 
 }
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::FeatureSDFLayer::Options);
 
-#endif // OSGEARTH_FEATURE_SDF_LAYER_H

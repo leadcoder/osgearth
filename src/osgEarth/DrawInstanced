@@ -45,32 +45,48 @@ namespace osgEarth { namespace Util
             InstanceGeometry(const InstanceGeometry&, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
             META_Node(osgEarth::Util::DrawInstanced, InstanceGeometry);
 
+            //! Positioning matrices for each instance. 
+            //! NOTE that each matrix includes an embedded object ID - do not use it directly;
+            //! call decodeMatrix() to extract it.
             const std::vector< osg::Matrixf >& getMatrices() const;
             void setMatrices(const std::vector< osg::Matrixf >& matrices);
 
-            virtual bool supports(const osg::PrimitiveFunctor& f) const override { return true; }
-            virtual void accept(osg::PrimitiveFunctor& f) const override;
+            //! Decodes an encoded matrix into one you can use for math.
+            static osg::Matrixf decodeMatrix(const osg::Matrixf& matrix);
 
-            virtual osg::BoundingBox computeBoundingBox() const override;
+            //! A mesh comprising all geometry instances; you can use this for intersection
+            //! or bounds testing
+            osg::Geometry* getProxyGeometry() const {
+                return _mesh;
+            }
+
+        public: // osg::Geometry
+
+            bool supports(const osg::PrimitiveFunctor& f) const override { return true; }
+            void accept(osg::PrimitiveFunctor& f) const override;
+
+            bool supports(const osg::PrimitiveIndexFunctor& f) const override { return true; }
+            void accept(osg::PrimitiveIndexFunctor& f) const override;
+
+            osg::BoundingBox computeBoundingBox() const override;
 
         private:
             std::vector<osg::Matrixf> _matrices;
-            std::vector<osg::Vec3> _mesh;
-            osg::ref_ptr< osg::DrawElementsUInt > _meshDrawElements;
+            osg::ref_ptr<osg::Geometry> _mesh;
         };
 
         /**
-            * Visitor that converts all the primitive sets in a graph to use
-            * instanced draw calls.
-            * Called by convertGraphToUseDrawInstanced().
-            */
+         * Visitor that converts all the primitive sets in a graph to use
+         * instanced draw calls.
+         * Called by convertGraphToUseDrawInstanced().
+         */
         class OSGEARTH_EXPORT ConvertToDrawInstanced : public osg::NodeVisitor
         {
         public:
             /**
-                * Create the visitor that will convert primitive sets to draw
-                * <num> instances.
-                */
+             * Create the visitor that will convert primitive sets to draw
+             * <num> instances.
+             */
             ConvertToDrawInstanced(
                 unsigned                numInstances,
                 bool                    optimize,
@@ -95,22 +111,22 @@ namespace osgEarth { namespace Util
 
 
         /**
-            * Creates a virtual shader program that implements DrawInstanced rendering.
-            * You should prepare the scene graph first by calling
-            * convertGraphToUseDrawInstanced().
-            * @return false If instancing is not available
-            */
+         * Creates a virtual shader program that implements DrawInstanced rendering.
+         * You should prepare the scene graph first by calling
+         * convertGraphToUseDrawInstanced().
+         * @return false If instancing is not available
+         */
         extern OSGEARTH_EXPORT bool install(osg::StateSet* stateset);
         extern OSGEARTH_EXPORT void remove (osg::StateSet* stateset);
 
 
         /**
-            * Processes a scene graph and converts all the top-level MatrixTransform
-            * nodes into shader uniforms that can be used with the VirtualProgram
-            * created by createDrawInstacedShaders.
-            * NOTE: You must also call install(StateSet) to activate instancing.
-            * @return false If instancing is not available
-            */
+         * Processes a scene graph and converts all the top-level MatrixTransform
+         * nodes into shader uniforms that can be used with the VirtualProgram
+         * created by createDrawInstacedShaders.
+         * NOTE: You must also call install(StateSet) to activate instancing.
+         * @return false If instancing is not available
+         */
         extern OSGEARTH_EXPORT bool convertGraphToUseDrawInstanced(
             osg::Group* graph );
     }

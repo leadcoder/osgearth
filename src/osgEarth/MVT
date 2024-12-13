@@ -19,10 +19,12 @@
 #ifndef OSGEARTH_FEATURES_MVT
 #define OSGEARTH_FEATURES_MVT 1
 
+
 #include <osgEarth/Common>
-#include <osgEarth/FeatureSource>
 
 #ifdef OSGEARTH_HAVE_MVT
+
+#include <osgEarth/FeatureSource>
 
 namespace osgEarth { namespace MVT 
 {
@@ -47,8 +49,6 @@ namespace osgEarth { namespace MVT
 
 } } // osgEarth::MVT
 
-
-#ifdef OSGEARTH_HAVE_SQLITE3
 
 namespace osgEarth
 {
@@ -83,18 +83,18 @@ namespace osgEarth
 
     public: // Layer
 
-        virtual Status openImplementation() override;
-        virtual Status closeImplementation() override;
+        Status openImplementation() override;
+        Status closeImplementation() override;
 
     protected:
 
-        virtual void init();
+        void init() override;
 
     public: // FeatureSource
 
-        virtual FeatureCursor* createFeatureCursorImplementation(const Query& query, ProgressCallback* progress);        
+        FeatureCursor* createFeatureCursorImplementation(const Query& query, ProgressCallback* progress) const override;
         
-        virtual const FeatureSchema& getSchema() const { return _schema; }
+        const FeatureSchema& getSchema() const override { return _schema; }
 
     protected:
 
@@ -116,9 +116,9 @@ namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::MVTFeatureSource::Options);
 
-#endif // OSGEARTH_HAVE_SQLITE3
-
-#endif // OSGEARTH_HAVE_MVT
+#else
+#pragma message("osgEarth was not built with MVT support")
+#endif
 
 #endif // OSGEARTH_FEATURES_MVT
 

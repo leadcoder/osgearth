@@ -135,19 +135,12 @@ GeodeticGraticule::Options::getConfig() const
 void
 GeodeticGraticule::Options::fromConfig(const Config& conf)
 {
-    _lineWidth.init(2.0f);
-    _color.init(Color(Color::Yellow, 0.5f));
-    _gridLines.init(10);
-    _gridLinesVisible.init(true);
-    _gridLabelsVisible.init(true);
-    _edgeLabelsVisible.init(true);
-    _resolutions.init("10 5 2.5 1.0 0.5 0.25 0.125 0.0625 0.03125");
     Style labelStyle;
     TextSymbol* t = labelStyle.getOrCreate<TextSymbol>();
-    t->fill()->color().set(1, 1, 1, 1);
+    t->fill().mutable_value().color().set(1, 1, 1, 1);
     t->declutter() = false;
-    _gridLabelStyle.init(labelStyle);
-    _edgeLabelStyle.init(labelStyle);
+    _gridLabelStyle.setDefault(labelStyle);
+    _edgeLabelStyle.setDefault(labelStyle);
 
     conf.get("line_width", _lineWidth);
     conf.get("color", _color);
@@ -225,6 +218,8 @@ GeodeticGraticule::init()
     _labelingEngine = 0L;
     
     _root = new MyGroup(this);
+
+    _visibleTiedToOpen = true;
 }
 
 void
@@ -250,7 +245,7 @@ void
 GeodeticGraticule::removedFromMap(const Map* map)
 {
     VisibleLayer::removedFromMap(map);
-    setMapNode(NULL);
+    setMapNode(nullptr);
     _mapSRS = NULL;
 }
 
@@ -258,13 +253,6 @@ osg::Node*
 GeodeticGraticule::getNode() const
 {
     return _root.get();
-}
-
-void
-GeodeticGraticule::setVisible(bool value)
-{
-    VisibleLayer::setVisible(value);
-    updateGridLineVisibility();
 }
 
 void
@@ -276,11 +264,13 @@ GeodeticGraticule::updateGridLineVisibility()
         osg::StateSet* ss = mapNode->getTerrainEngine()->getSurfaceStateSet();
         if (getVisible() && *_options->gridLinesVisible())
         {
-            ss->removeDefine("OE_DISABLE_GRATICULE");
+            ss->removeDefine("OE_SHOW_GRID_LINES");
+            ss->setDefine("OE_SHOW_GRID_LINES", "1", ~0);
         }
         else
         {
-            ss->setDefine("OE_DISABLE_GRATICULE");
+            ss->removeDefine("OE_SHOW_GRID_LINES");
+            ss->setDefine("OE_SHOW_GRID_LINES", "0", ~0);
         }
     }
 }
@@ -395,15 +385,15 @@ GeodeticGraticule::rebuild()
     // start from scratch
     _root->removeChildren( 0, _root->getNumChildren() );
 
-    setVisible(getVisible());
-
     _labelingEngine = new GeodeticLabelingEngine(_mapSRS.get());
     _labelingEngine->setStyle(options().edgeLabelStyle().get());
     _root->addChild(_labelingEngine);
 
     // destroy all per-camera data so it can reinitialize itself
-    Threading::ScopedMutexLock lock(_cameraDataMapMutex);
+    std::lock_guard<std::mutex> lock(_cameraDataMapMutex);
     _cameraDataMap.clear();
+
+    updateGridLineVisibility();
 }
 
 void
@@ -631,7 +621,7 @@ GeodeticGraticule::updateLabels()
 
     const osgEarth::SpatialReference* srs = osgEarth::SpatialReference::create("wgs84");
 
-    Threading::ScopedMutexLock lock(_cameraDataMapMutex);
+    std::lock_guard<std::mutex> lock(_cameraDataMapMutex);
     for (CameraDataMap::iterator itr = _cameraDataMap.begin(); itr != _cameraDataMap.end(); ++itr)
     {
         CameraData& cdata = itr->second;
@@ -727,7 +717,7 @@ GeodeticGraticule::updateLabels()
 GeodeticGraticule::CameraData&
 GeodeticGraticule::getCameraData(osg::Camera* cam) const
 {
-    Threading::ScopedMutexLock lock(_cameraDataMapMutex);
+    std::lock_guard<std::mutex> lock(_cameraDataMapMutex);
     CameraData& cdata = _cameraDataMap[cam];
 
     // New camera data? Initialize:
@@ -807,7 +797,7 @@ GeodeticGraticule::releaseGLObjects(osg::State* state) const
 {
     VisibleLayer::releaseGLObjects(state);
 
-    Threading::ScopedMutexLock lock(_cameraDataMapMutex);
+    std::lock_guard<std::mutex> lock(_cameraDataMapMutex);
     for (CameraDataMap::iterator i = _cameraDataMap.begin(); i != _cameraDataMap.end(); ++i)
     {
         CameraData& data = i->second;

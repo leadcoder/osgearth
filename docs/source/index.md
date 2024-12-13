@@ -10,17 +10,18 @@ osgEarth is a 3D mapping SDK for OpenSceneGraph.
 
 * Work locally or over the Internet
 
-* Develop applications using a full-featured C++11 API
+* Develop applications using a full-featured C++14 API
 
   
 
 Let's get started!
 
-* [Installation](install.md)
-* [Building the SDK](build.md)
-* [The Earth File](earthfile.md)
+* [Install the SDK](install.md)
+* [Build the SDK yourself](build.md)
+* [Using an Earth File](earthfile.md)
 * [Working with Data](data.md)
 * [Layer Reference](layers.md)
+* [Environment Variables](envvars.md)
 * [FAQ](faq.md)
 * [Release Notes](releasenotes.md)
 * [Upgrade Guide: from 2.x to 3.x](3.0_upgrade_guide.md)

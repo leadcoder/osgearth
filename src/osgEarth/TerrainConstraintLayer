@@ -16,45 +16,51 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-
-#ifndef OSGEARTH_TERRAIN_CONSTRAINT_LAYER_H
-#define OSGEARTH_TERRAIN_CONSTRAINT_LAYER_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/VisibleLayer>
 #include <osgEarth/FeatureSource>
+#include <osgEarth/TiledModelLayer>
 #include <osgEarth/LayerReference>
+#include <osgEarth/TileMesher>
 
 namespace osgEarth
 {
     /**
-     * Provides feature data to the terrain engine to use for
-     * customizing the surface mesh.
+     * Provides data to the terrain engine to use for customizing the surface mesh.
+     * This layer type is used to constrain the terrain surface based on either
+     * a collection of features OR tiled model data.
      */
     class OSGEARTH_EXPORT TerrainConstraintLayer : public VisibleLayer
     {
     public: // serialization
-        class OSGEARTH_EXPORT Options : public VisibleLayer::Options
+        struct OSGEARTH_EXPORT Options : public VisibleLayer::Options
         {
-        public:
             META_LayerOptions(osgEarth, Options, VisibleLayer::Options);
             OE_OPTION_LAYER(FeatureSource, featureSource);
+            OE_OPTION_LAYER(TiledModelLayer, model);
             OE_OPTION_VECTOR(ConfigOptions, filters);
-            OE_OPTION(bool, removeInterior);
-            OE_OPTION(bool, removeExterior);
-            OE_OPTION(bool, hasElevation);
-            OE_OPTION(unsigned, minLevel);
-            virtual Config getConfig() const;
-        private:
-            void fromConfig( const Config& conf );
+            OE_OPTION(bool, removeInterior, false);
+            OE_OPTION(bool, removeExterior, false);
+            OE_OPTION(bool, hasElevation, false);
+            OE_OPTION(unsigned, minLevel, 8);
+            Config getConfig() const override;
+            void fromConfig(const Config& conf);
         };
 
     public:
         META_Layer(osgEarth, TerrainConstraintLayer, Options, VisibleLayer, TerrainConstraint);
 
-        //! Source of the feature data
+        //! Feature data to use for creating terrain constraints
+        //! Use this OR setModelLayer, but not both.
         void setFeatureSource(FeatureSource* features);
         FeatureSource* getFeatureSource() const;
+
+        //! Model data to use for creating terrain constraints
+        //! Use this OR setFeatureSource(), but not both.
+        void setModelLayer(TiledModelLayer* model);
+        TiledModelLayer* getModelLayer() const;
 
         //! Whether the terrain should remove geometry that is interior to polygons
         bool getRemoveInterior() const { return options().removeInterior().get(); }
@@ -73,41 +79,48 @@ namespace osgEarth
         unsigned getMinLevel() const { return options().minLevel().get(); }
         void setMinLevel(unsigned value);
 
-        //! Geospatial extent of this layer's data
-        virtual const GeoExtent& getExtent() const override;
+        //! Geospatial extent of this layer's data, if known.
+        const GeoExtent& getExtent() const override;
 
-        //! Visibility toggle from VisibleLayer
-        virtual void setVisible(bool value) override;
+        //! Feature filters to use when querying the feature source, if applicable.
+        FeatureFilterChain& getFilters() { return _filterChain; }
 
-        FeatureFilterChain* getFilters() const {
-            return _filterchain.get();
-        }
-
-    protected:
-
-        virtual Status openImplementation() override;
-
-        virtual void addedToMap(const Map*) override;
-
-        virtual void removedFromMap(const Map*) override;
+        //! Return a constraint object for a given tile key.
+        //! @param key The tile key
+        //! @param context The filter context, or nullptr if not applicable
+        //! @param progress A progress callback to check for user cancellation
+        //! @return A constraint object
+        MeshConstraint getConstraint(
+            const TileKey& key,
+            FilterContext* context,
+            ProgressCallback* progress) const;
 
     protected:
 
-        /** dtor */
-        virtual ~TerrainConstraintLayer() { }
+        void init() override;
+
+        Status openImplementation() override;
+
+        void addedToMap(const Map*) override;
+
+        void removedFromMap(const Map*) override;
 
     private:
 
         void create();
 
-        osg::ref_ptr<FeatureFilterChain> _filterchain;
-    };
+        FeatureFilterChain _filterChain;
 
-    //! A single constraint (set of features from a given layer with properties)
-    struct TerrainConstraint
-    {
-        FeatureList features;
-        osg::ref_ptr<TerrainConstraintLayer> layer;
+        void getFeatureConstraint(
+            const TileKey& key,
+            FilterContext* context,
+            MeshConstraint& constraint,
+            ProgressCallback* progress) const;
+
+        void getModelConstraint(
+            const TileKey& key,
+            MeshConstraint& constraint,
+            ProgressCallback* progress) const;
     };
 
     /**
@@ -117,30 +130,25 @@ namespace osgEarth
     class OSGEARTH_EXPORT TerrainConstraintQuery
     {
     public:
-        //! Sets the query to use all constraint layers in the map
-        void setMap(const Map* map);
+        std::vector<osg::ref_ptr<TerrainConstraintLayer>> layers;
+        osg::ref_ptr<Session> session;
 
-        //! Adds a single constraint layer
-        void addLayer(TerrainConstraintLayer* layer);
-
-        //! Layers to query
-        std::vector<osg::ref_ptr<TerrainConstraintLayer>>& layers() {
-            return _layers;
+        TerrainConstraintQuery(const Map* map = {}) {
+            if (map) setup(map);
         }
+
+        //! Sets the query to use all constraint layers in the map
+        void setup(const Map* map);
 
         //! Fetches all constraints intersecting the given tilekey
         bool getConstraints(
             const TileKey& key,
-            std::vector<TerrainConstraint>& output,
+            MeshConstraints& output,
             ProgressCallback* progress) const;
-
-    private:
-        std::vector<osg::ref_ptr<TerrainConstraintLayer>> _layers;
     };
 
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::TerrainConstraintLayer::Options);
 
-#endif // OSGEARTH_TERRAIN_CONSTRAINT_LAYER_H
 

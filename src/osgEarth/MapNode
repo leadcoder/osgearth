@@ -63,17 +63,17 @@ namespace osgEarth
         class OSGEARTH_EXPORT Options : public ConfigOptions {
         public:
             META_ConfigOptions(osgEarth, Options, ConfigOptions);
-            OE_OPTION(ProxySettings, proxySettings);
-            OE_OPTION(bool, enableLighting);
-            OE_OPTION(bool, overlayBlending);
-            OE_OPTION(bool, overlayBlendingSource);
-            OE_OPTION(unsigned, overlayTextureSize);
-            OE_OPTION(bool, overlayMipMapping);
-            OE_OPTION(float, overlayResolutionRatio);
-            OE_OPTION(bool, useCascadeDraping);
+            OE_OPTION(int, drapingRenderBinNumber, 1);
+            OE_OPTION(bool, enableLighting, true);
+            OE_OPTION(bool, overlayBlending, true);
+            OE_OPTION(bool, overlayMipMapping, false);
+            OE_OPTION(bool, useCascadeDraping, false);
+            OE_OPTION(float, overlayResolutionRatio, 3.0f);
+            OE_OPTION(float, screenSpaceError, 25.0f);
+            OE_OPTION(unsigned, overlayTextureSize, 4096);
+            OE_OPTION(std::string, overlayBlendingSource, "alpha");
             OE_OPTION(TerrainOptions, terrain);
-            OE_OPTION(int, drapingRenderBinNumber);
-            OE_OPTION(float, screenSpaceError);
+            OE_OPTION(ProxySettings, proxySettings);
             virtual Config getConfig() const;
         private:
             void fromConfig(const Config& conf);
@@ -118,8 +118,7 @@ namespace osgEarth
         const bool& getEnableLighting() const;
 
         //! Access to the terrain-specific options API.
-        TerrainOptionsAPI& getTerrainOptions();
-        const TerrainOptionsAPI& getTerrainOptions() const;
+        TerrainOptionsAPI getTerrainOptions();
 
         //! Spatial Reference System of the underlying map.
         const SpatialReference* getMapSRS() const;
@@ -228,18 +227,18 @@ namespace osgEarth
 
     public: // osg::Object
 
-        virtual const char* libraryName() const { return "osgEarth"; }
-        virtual const char* className() const { return "MapNode"; }
+        const char* libraryName() const override { return "osgEarth"; }
+        const char* className() const override { return "MapNode"; }
 
     public: //override osg::Node
 
-        virtual osg::BoundingSphere computeBound() const;
+        osg::BoundingSphere computeBound() const override;
 
-        virtual void traverse( class osg::NodeVisitor& nv );
+        void traverse(class osg::NodeVisitor& nv) override;
 
-        virtual void resizeGLObjectBuffers(unsigned maxSize);
+        void resizeGLObjectBuffers(unsigned maxSize) override;
 
-        virtual void releaseGLObjects(osg::State* state) const;
+        void releaseGLObjects(osg::State* state) const override;
 
     protected:    
 
@@ -247,7 +246,6 @@ namespace osgEarth
 
     private:
 
-        osg::ref_ptr<Registry> _registry;
         osg::ref_ptr<Map>  _map;
         osg::Group*        _layerNodes;
         unsigned           _lastNumBlacklistedFilenames;
@@ -289,7 +287,7 @@ namespace osgEarth
     private:
         Options _optionsConcrete;
         Options& options() { return _optionsConcrete; }
-        TerrainOptionsAPI _terrainOptionsAPI;
+
     public:
         const Options& options() const { return _optionsConcrete; }
     };

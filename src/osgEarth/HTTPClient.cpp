@@ -24,6 +24,8 @@
 #include <osgEarth/Cache>
 #include <osgEarth/CacheBin>
 #include <osgEarth/URI>
+#include <osgEarth/FileUtils>
+#include "Notify"
 #include <osgDB/ReadFile>
 #include <osgDB/FileNameUtils>
 #include <curl/curl.h>
@@ -431,7 +433,7 @@ HTTPResponse::setHeadersFromConfig(const Config& conf)
 namespace
 {
     // per-thread client map (must be global scope)
-    static PerThread<HTTPClient>       s_clientPerThread("HTTPClient(OE)");
+    static PerThread<HTTPClient>       s_clientPerThread;
 
     static optional<ProxySettings>     s_proxySettings;
 
@@ -443,7 +445,7 @@ namespace
 
     // HTTP debugging.
     static bool                        s_HTTP_DEBUG = false;
-    static Threading::Mutex            s_HTTP_DEBUG_mutex;
+    static std::mutex            s_HTTP_DEBUG_mutex;
     static int                         s_HTTP_DEBUG_request_count;
     static double                      s_HTTP_DEBUG_total_duration;
 
@@ -809,7 +811,7 @@ namespace
                 }
 
                 {
-                    Threading::ScopedMutexLock lock(s_HTTP_DEBUG_mutex);
+                    std::lock_guard<std::mutex> lock(s_HTTP_DEBUG_mutex);
                     s_HTTP_DEBUG_request_count++;
                     s_HTTP_DEBUG_total_duration += response.getDuration();
 
@@ -1055,6 +1057,10 @@ namespace
                 return HTTPResponse(0);
             }
 
+            // Enable automatic HTTP decompression of known types.
+            BOOL enableDecompression = TRUE;
+            InternetSetOption(hConnection, INTERNET_OPTION_HTTP_DECODING, &enableDecompression, sizeof(enableDecompression));
+
             HINTERNET hRequest = HttpOpenRequest(
                 hConnection,            // handle from InternetConnect
                 "GET",                  // verb
@@ -1073,7 +1079,8 @@ namespace
                 return HTTPResponse(0);
             }
 
-            while( !HttpSendRequest(hRequest, NULL, 0, NULL, 0) )
+            const char* headers = "Accept-Encoding: gzip, deflate";
+            while( !HttpSendRequest(hRequest, headers, strlen(headers), NULL, 0) )
             {
                 DWORD errorNum = GetLastError();
 
@@ -1299,7 +1306,7 @@ HTTPClient::initializeImpl()
     if ( ::getenv("OSGEARTH_HTTP_DEBUG") )
     {
         s_HTTP_DEBUG = true;
-        OE_WARN << LC << "HTTP debugging enabled" << std::endl;
+        OE_INFO << LC << "HTTP debugging enabled" << std::endl;
     }
 
     long timeout = s_timeout;
@@ -1552,11 +1559,20 @@ HTTPClient::doGet(const HTTPRequest&    request,
     {
         ReadResult result = bin->readString(cache_uri.cacheKey(), options);
         if (result.succeeded())
-        {
+        {            
             gotFromCache = true;
 
-            expired = cachePolicy->isExpired(result.lastModifiedTime());
-            result.setIsFromCache(true);
+            // If the cache-control header contains no-cache that means that it's ok to store the result in the cache, but it must be requested
+            // from the server each time it is it requested.
+            bool noCache = false;
+            std::string cacheControl = result.metadata().value("cache-control");
+            if (cacheControl.find("no-cache") != std::string::npos)
+            {
+                noCache = true;
+            }
+
+            expired = noCache || cachePolicy->isExpired(result.lastModifiedTime());
+            result.setIsFromCache(true);            
 
             HTTPResponse cacheResponse(HTTPResponse::CATEGORY_SUCCESS);
             osg::ref_ptr<HTTPResponse::Part> part = new HTTPResponse::Part();
@@ -1576,14 +1592,12 @@ HTTPClient::doGet(const HTTPRequest&    request,
 
         if (remoteResponse.getCode() == ReadResult::RESULT_NOT_MODIFIED)
         {
-            OE_DEBUG << LC << uri.full() << " not modified, using cached result" << std::endl;
             // Touch the cached item to update it's last modified timestamp so it doesn't expire again immediately.
             if (bin)
                 bin->touch(cache_uri.cacheKey());
         }
         else
         {
-            OE_DEBUG << LC << "Got remote result for " << uri.full() << std::endl;
             response = remoteResponse;
 
             if (response.isOK())
@@ -1650,11 +1664,10 @@ namespace
     {
         osgDB::ReaderWriter* reader = 0L;
 
+        std::string urlMinusQueryParams = removeQueryParams(url);
         // try extension first:
-        std::string ext = osgDB::getFileExtension( url );
-        auto pos = ext.find("?");
-        if (pos != std::string::npos)
-           ext = ext.substr(0, pos);
+
+        std::string ext = osgDB::getFileExtension(urlMinusQueryParams);
         if ( !ext.empty() )
         {
             reader = osgDB::Registry::instance()->getReaderWriterForExtension( ext );
@@ -1674,8 +1687,6 @@ namespace
         {
             std::istringstream stream(response.getPartAsString(0));
             reader = ImageUtils::getReaderWriterForStream(stream);
-            if (reader)
-                OE_INFO << LC << "Stream detected image data of type " << reader->getName() << std::endl;
         }
 
         if ( !reader && s_HTTP_DEBUG )
@@ -1756,6 +1767,7 @@ HTTPClient::doReadImage(const HTTPRequest&    request,
             response.isCanceled() ? ReadResult::RESULT_CANCELED :
             response.getCode() == HTTPResponse::NOT_FOUND ? ReadResult::RESULT_NOT_FOUND :
             response.getCode() == HTTPResponse::NOT_MODIFIED ? ReadResult::RESULT_NOT_MODIFIED :
+            response.getCode() == HTTPResponse::FORBIDDEN ? ReadResult::RESULT_UNAUTHORIZED :
             response.getCodeCategory() == HTTPResponse::CATEGORY_SERVER_ERROR ? ReadResult::RESULT_SERVER_ERROR :
             ReadResult::RESULT_UNKNOWN_ERROR);
 

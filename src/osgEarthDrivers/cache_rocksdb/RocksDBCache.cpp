@@ -210,10 +210,10 @@ RocksDBCacheImpl::getOrCreateDefaultBin()
     if ( !_db )
         return 0L;
 
-    static Threading::Mutex s_defaultBinMutex;
+    static std::mutex s_defaultBinMutex;
     if ( !_defaultBin.valid() )
     {
-        Threading::ScopedMutexLock lock( s_defaultBinMutex );
+        std::lock_guard<std::mutex> lock( s_defaultBinMutex );
         if ( !_defaultBin.valid() ) // double-check
         {
             _defaultBin = new RocksDBCacheBin("_default", _db, _tracker.get());
@@ -234,7 +234,7 @@ RocksDBCacheImpl::compact()
     if ( !_db )
         return false;
 
-    _db->CompactRange(0L, 0L);
+    _db->CompactRange({}, nullptr, nullptr);
 
     return true;
 }
