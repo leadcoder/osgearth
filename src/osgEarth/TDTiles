@@ -188,7 +188,7 @@ namespace osgEarth { namespace Contrib { namespace ThreeDTiles
         void setParentTile(ThreeDTileNode* parentTile);
 
     public: // LoadableNode
-
+        bool checkIfChildrenAreReady(osgUtil::IncrementalCompileOperation* ico, osgUtil::CullVisitor* cv);
         void load() override
         {
             // Load the content for this tile and attempt to resolve it.

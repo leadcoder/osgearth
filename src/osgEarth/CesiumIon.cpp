@@ -273,8 +273,6 @@ CesiumIon3DTilesLayer::openImplementation()
     if (is_googleapis)
     {
         serverURI = server_url + "v1/3dtiles/root.json?key=" + _key;
-        //URI serverURI("v1/3dtiles/root.json?key=" + _key, URIContext("https://tile.googleapis.com/"));
-        //std::cout << serverURI.full();
     }
     else
     {
@@ -300,10 +298,31 @@ CesiumIon3DTilesLayer::openImplementation()
     // Clone the read options
     osg::ref_ptr< osgDB::Options > readOptions = osgEarth::Registry::instance()->cloneOrCreateOptions(this->getReadOptions());
 
-    ReadResult rr = serverURI.readString(readOptions);
-    if (rr.failed())
+    ReadResult rr;
+    const auto currentCachePolicy = getCacheSettings()->cachePolicy();
+    if (is_googleapis && 
+        (currentCachePolicy == CachePolicy::USAGE_READ_WRITE ||
+            currentCachePolicy == CachePolicy::USAGE_READ_ONLY))
     {
-        return Status(Status::ResourceUnavailable, Stringify() << "Error loading tileset: " << rr.errorDetail());
+		getCacheSettings()->cachePolicy() = CachePolicy::NO_CACHE;
+		rr = serverURI.readString(readOptions);
+		getCacheSettings()->cachePolicy() = currentCachePolicy;
+		if (rr.failed())
+		{
+			rr = serverURI.readString(readOptions);
+			if (rr.failed())
+			{
+				return Status(Status::ResourceUnavailable, Stringify() << "Error loading tileset: " << rr.errorDetail());
+			}
+		}
+	}
+    else
+    {
+        rr = serverURI.readString(readOptions);
+        if (rr.failed())
+        {
+            return Status(Status::ResourceUnavailable, Stringify() << "Error loading tileset: " << rr.errorDetail());
+        }
     }
 
     //OE_NOTICE << "Read tileset " << rr.getString() << std::endl;

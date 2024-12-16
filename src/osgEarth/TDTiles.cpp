@@ -265,32 +265,17 @@ TileContent::fromJSON(const Json::Value& value, LoadContext& lc)
         const bool is_googleapis = lc._uc.referrer().find("tile.googleapis.com") != std::string::npos;
         if (is_googleapis)
         {
-            uri_str = "https://tile.googleapis.com" + uri_str;
-
-            std::string SESSION;
-            std::string KEY;
-            //find key from referrer
-            auto key_pos = lc._uc.referrer().find("key=");
-            if(key_pos != std::string::npos)
-                KEY = lc._uc.referrer().substr(key_pos);
-            else
-                OE_WARN << "TileContent - tile.googleapis: Failed to find key";
-            
-            //find session from referrer
-            auto session_pos = lc._uc.referrer().find("?session=");
-            if (session_pos != std::string::npos && key_pos != std::string::npos)
-                SESSION = lc._uc.referrer().substr(session_pos, key_pos - session_pos-1);
-            else //session must be provided in new url
+            auto lc_parms = Util::extractQueryParams(lc._uc.referrer());
+            const auto lc_session = lc_parms["session"];
+            //if (!lc_session.empty())
             {
-                //...and check that it exist!
-                if (uri_str.find("?session=") == std::string::npos)
+                auto json_parms = Util::extractQueryParams(uri_str);
+                const auto json_session = json_parms["session"];
+                if (!lc_session.empty() && !json_session.empty() && lc_session != json_session)
                 {
-                  //  OE_WARN << "TileContent - tile.googleapis: Failed to find session";
+                    
+                    Util::replaceIn(uri_str, json_session, lc_session);
                 }
-            }
-            if (!uri_str.empty())
-            {
-                uri_str = "https://tile.googleapis.com" + uri_str + SESSION + "&" + KEY;
             }
         }
 #endif
@@ -542,6 +527,7 @@ namespace
 
                 if (rr.failed())
                 {
+                    return nullptr;
                     OE_WARN << "Fail to read tileset \"" << _uri.full() << ": " << rr.errorDetail() << std::endl;
                 }
 
@@ -779,6 +765,7 @@ void ThreeDTileNode::computeBoundingVolume()
         bb.expandBy(world * worldToLocal);
         GeoPoint(srs, extent.west(), extent.north(), _tile->boundingVolume()->region()->zMax()).toWorld(world);
 
+
         // Bounding region culling and display are supposed to ignore the matrix transform of the tile, but b/c of the nested
         // nature of the ThreeDTileNode class the MatrixTransform is going to be applied already by the time
         // that the bounding box culling code and display occur.  We multiply the localToWorld of the bounding box by the
@@ -789,6 +776,10 @@ void ThreeDTileNode::computeBoundingVolume()
     else if (_tile->boundingVolume()->box().isSet())
     {
         _boundingBox = _tile->boundingVolume()->box().get();
+        //const double expand_factor = 0.2;
+        //auto  bb_expand = (_boundingBox._max - _boundingBox._max) * expand_factor;
+        //_boundingBox._max += bb_expand;
+        //_boundingBox._min -= bb_expand;
     }
 }
 
@@ -1080,6 +1071,51 @@ float ThreeDTileNode::getLastCulledFrameTime() const
     return _lastCulledFrameTime;
 }
 
+bool ThreeDTileNode::checkIfChildrenAreReady(ICO* ico, osgUtil::CullVisitor* cv)
+{
+    bool areChildrenReady = true;
+	if (_children)
+	{
+		for (unsigned int i = 0; i < _children->getNumChildren(); i++)
+		{
+			osg::ref_ptr< ThreeDTileNode > childTile = dynamic_cast<ThreeDTileNode*>(_children->getChild(i));
+			if (childTile.valid())
+			{
+                childTile->updateTracking(cv);
+
+               // Can we traverse the child?
+				if (childTile->hasContent())
+				{
+                    // Can we traverse the child?
+                    if (!childTile->isContentReady())
+                    {
+                        childTile->requestContent(ico);
+                        areChildrenReady = false;
+                    }
+					else
+					{
+                        //recurse if child is ThreeDTilesetContentNode
+						auto childTileset = dynamic_cast<ThreeDTilesetContentNode*>(childTile->getContent());
+						if (childTileset)
+						{
+							if (childTileset->getNumChildren() > 0)
+							{
+								auto tileRoot = dynamic_cast<ThreeDTileNode*>(childTileset->getChild(0));
+								if (tileRoot)
+								{
+									if (!tileRoot->checkIfChildrenAreReady(ico, cv))
+                                        areChildrenReady = false;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return areChildrenReady;
+}
+
 void ThreeDTileNode::updateTracking(osgUtil::CullVisitor* cv)
 {
     // Update tracking if this node wasn't immediately loaded.  Tiles that were immediately loaded are expected to be tracked by their parent.
@@ -1127,7 +1163,9 @@ void ThreeDTileNode::traverse(osg::NodeVisitor& nv)
         double error = computeScreenSpaceError(cv);
 
         updateTracking(cv);
-
+#if 1
+        bool areChildrenReady = checkIfChildrenAreReady(ico, cv);
+#else
         bool areChildrenReady = true;
         if (_children.valid())
         {
@@ -1136,6 +1174,7 @@ void ThreeDTileNode::traverse(osg::NodeVisitor& nv)
                 osg::ref_ptr< ThreeDTileNode > childTile = dynamic_cast<ThreeDTileNode*>(_children->getChild(i));
                 if (childTile.valid())
                 {
+
                     childTile->updateTracking(cv);
 
                     // Can we traverse the child?
@@ -1151,8 +1190,9 @@ void ThreeDTileNode::traverse(osg::NodeVisitor& nv)
         {
             areChildrenReady = false;
         }
-
-
+#endif
+     
+        
         if (areChildrenReady && error > _tileset->getMaximumScreenSpaceError() && _children.valid() && _children->getNumChildren() > 0)
         {
             if (_content.valid() && _refine == REFINE_ADD)
