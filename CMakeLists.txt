@@ -20,11 +20,11 @@ project(
 # SDK version number
 set(OSGEARTH_MAJOR_VERSION 3)
 set(OSGEARTH_MINOR_VERSION 7)
-set(OSGEARTH_PATCH_VERSION 0)
+set(OSGEARTH_PATCH_VERSION 1)
 set(OSGEARTH_VERSION ${OSGEARTH_MAJOR_VERSION}.${OSGEARTH_MINOR_VERSION}.${OSGEARTH_PATCH_VERSION})
 
 # Increment this each time the ABI changes
-set(OSGEARTH_SOVERSION 163)
+set(OSGEARTH_SOVERSION 164)
 
 # Require C++14
 set(CMAKE_CXX_STANDARD 14)
@@ -124,6 +124,13 @@ endif()
 # required - globally used
 find_package(OpenGL REQUIRED)
 find_package(OpenSceneGraph REQUIRED COMPONENTS osgManipulator osgShadow osgSim osgViewer osgGA osgUtil osgText osgDB osg OpenThreads)
+
+# For static builds we need to link with Fontconfig directly.
+# There is an unknown issue where the Fc symbols are not found when linking executables statically.
+find_package(Fontconfig QUIET)
+if (Fontconfig_FOUND)
+    list(APPEND OPENSCENEGRAPH_LIBRARIES Fontconfig::Fontconfig)
+endif()
 
 # integrated profiling with tracy?
 if(OSGEARTH_ENABLE_PROFILING)

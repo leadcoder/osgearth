@@ -1,5 +1,7 @@
 #pragma vp_name osgEarth Hex Tiling Library
 
+#pragma import_defines(OE_ENABLE_HEX_TILER_ANISOTROPIC_FILTERING)
+
 // Adapted and ported to GLSL from:
 // https://github.com/mmikk/hextile-demo
 
@@ -57,7 +59,7 @@ void ht_TriangleGrid_f(
     st *= HEX_SCALE; // 2 * 1.sqrt(3);
 
     // Skew input space into simplex triangle grid
-    mat2 gridToSkewedGrid = mat2(1.0, -0.57735027, 0.0, 1.15470054);
+    const mat2 gridToSkewedGrid = mat2(1.0, -0.57735027, 0.0, 1.15470054);
     vec2 skewedCoord = mul(gridToSkewedGrid, st);
 
     vec2 baseId = floor(skewedCoord);
@@ -84,7 +86,7 @@ vec2 ht_hash(vec2 p)
 
 vec2 ht_MakeCenST(ivec2 Vertex)
 {
-    mat2 invSkewMat = mat2(1.0, 0.5, 0.0, 1.0 / 1.15470054);
+    const mat2 invSkewMat = mat2(1.0, 0.5, 0.0, 1.0 / 1.15470054);
     return mul(invSkewMat, Vertex) / HEX_SCALE;
 }
 
@@ -270,6 +272,8 @@ vec4 ht_hex2col(in sampler2D tex, in vec2 st, in float rotStrength, in float tra
     return color;
 }
 
+uniform float oe_hex_tiler_gradient_bias = 0.0;
+
 // Hextiling function optimized for no rotations and to 
 // sample and interpolate both color and material vectors
 void ht_hex2colTex_optimized(
@@ -290,12 +294,29 @@ void ht_hex2colTex_optimized(
     vec2 st2 = st + ht_hash(vertex2);
     vec2 st3 = st + ht_hash(vertex3);
 
+
+#if OE_ENABLE_HEX_TILER_ANISOTROPIC_FILTERING
+
+    // apply a mip bias for sharpness:
+    // https://bgolus.medium.com/sharper-mipmapping-using-shader-based-supersampling-ed7aadb47bec
+    float bias = pow(2.0, oe_hex_tiler_gradient_bias);
+
     // Use the same partial derivitives to sample all three locations
     // to avoid rendering artifacts.
+    vec2 ddx = dFdx(st) * bias, ddy = dFdy(st) * bias;
 
-#if 1
+    vec4 c1 = textureGrad(color_tex, st1, ddx, ddy);
+    vec4 c2 = textureGrad(color_tex, st2, ddx, ddy);
+    vec4 c3 = textureGrad(color_tex, st3, ddx, ddy);
+
+    vec4 m1 = textureGrad(material_tex, st1, ddx, ddy);
+    vec4 m2 = textureGrad(material_tex, st2, ddx, ddy);
+    vec4 m3 = textureGrad(material_tex, st3, ddx, ddy);
+
+#else
     // Fast way: replace textureGrad by manually calculating the LOD
-    // and using textureLod instead (much faster than textureGrad)
+    // and using textureLod instead (much faster than textureGrad, but
+    // you lose the ability to do anisotropic filtering)
     // https://solidpixel.github.io/2022/03/27/texture_sampling_tips.html
 
     ivec2 tex_dim;
@@ -319,18 +340,6 @@ void ht_hex2colTex_optimized(
     vec4 m1 = textureLod(material_tex, st1, lod);
     vec4 m2 = textureLod(material_tex, st2, lod);
     vec4 m3 = textureLod(material_tex, st3, lod);
-#else
-    // Original approach: use textureGrad to supply the same gradient
-    // for each sample point (slow)
-    vec2 ddx = dFdx(st), ddy = dFdy(st);
-
-    vec4 c1 = textureGrad(color_tex, st1, ddx, ddy);
-    vec4 c2 = textureGrad(color_tex, st2, ddx, ddy);
-    vec4 c3 = textureGrad(color_tex, st3, ddx, ddy);
-
-    vec4 m1 = textureGrad(material_tex, st1, ddx, ddy);
-    vec4 m2 = textureGrad(material_tex, st2, ddx, ddy);
-    vec4 m3 = textureGrad(material_tex, st3, ddx, ddy);
 #endif
 
     vec3 W = weighting;
