@@ -37,6 +37,7 @@ namespace osgEarth {
                 SkyOptions(options),
                 _atmosphericLighting(true),
                 _exposure(3.3f),
+                _contrast(1.0f),
                 _daytimeAmbientBoost(5.0f),
                 _allowWireframe(false),
                 _starSize(14.0f),
