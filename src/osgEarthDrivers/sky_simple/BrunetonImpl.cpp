@@ -4,9 +4,87 @@
 #include <osgEarth/VirtualProgram>
 #include <osg/Texture2D>
 #include <osg/Texture3D>
+#include <osgDB/WriteFile>
+#include <osgDB/ReadFile>
+#include <osgDB/FileUtils>
+
+
+#define EB_TEXTURE_EXT ".osgb"
+#define EB_TEXTURE_PATH  ""
+#define EB_TRANSMITTANCE_TEXTURE "eb_transmittance_texture"
+#define EB_IRRADIANCE_TEXTURE "eb_irradiance_texture"
+#define EB_SCATTERING_TEXTURE "eb_scattering_texture"
+#define EB_MIE_SCATTERING_TEXTURE "eb_mie_scattering_texture"
 
 using namespace osgEarth;
 using namespace Bruneton;
+
+
+namespace
+{
+    void writeTex(osg::RenderInfo& ri, dw::Texture* tex, std::string name)
+    {
+        // Get the context id
+        const unsigned int contextID = osgEarth::GLUtils::getSharedContextID(*ri.getState());
+        // Apply the texture
+        auto osgtex = ComputeDrawable::makeOSGTexture(tex);
+        if (tex)
+        {
+            //unbind  GL_TEXTURE_2D to get readImageFromCurrentTexture to catch GL_TEXTURE_3D
+            glBindTexture(GL_TEXTURE_2D, 0);
+            osgtex->apply(*ri.getState());
+            osg::ref_ptr<osg::Image> image = new osg::Image();
+            image->readImageFromCurrentTexture(contextID, false, GL_FLOAT);
+            const std::string filename = EB_TEXTURE_PATH + name + EB_TEXTURE_EXT;
+            osgDB::writeImageFile(*image, filename);
+            OE_INFO << "Wrote image:" << filename << std::endl;
+        }
+    }
+
+    osg::Texture2D* loadTexture2D(std::string name)
+    {
+        std::string filename = EB_TEXTURE_PATH + name + EB_TEXTURE_EXT;
+        auto  img = osgDB::readImageFile(filename);
+        if (!img)
+        {
+           OE_WARN << "failed to read:" << filename << std::endl;
+           OE_HARD_ASSERT(img != nullptr);
+        }
+       
+        auto tex = new osg::Texture2D(img);
+        tex->setFilter(osg::Texture2D::MIN_FILTER, osg::Texture2D::LINEAR);
+        tex->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
+        tex->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
+        tex->setWrap(osg::Texture2D::WRAP_R, osg::Texture2D::CLAMP_TO_EDGE);
+        OE_INFO << "Precomputed texture loaded:" << filename << std::endl;
+        return tex;
+    }
+
+    osg::Texture3D* loadTexture3D(std::string name)
+    {
+        std::string filename = EB_TEXTURE_PATH + name + EB_TEXTURE_EXT;
+        auto  img = osgDB::readImageFile(filename);
+        if (!img)
+        {
+            OE_WARN << "failed to read:" << filename << std::endl;
+            OE_HARD_ASSERT(img != nullptr);
+        }
+        auto tex = new osg::Texture3D(img);
+        tex->setFilter(osg::Texture2D::MIN_FILTER, osg::Texture2D::LINEAR);
+        tex->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::CLAMP_TO_EDGE);
+        tex->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::CLAMP_TO_EDGE);
+        tex->setWrap(osg::Texture2D::WRAP_R, osg::Texture2D::CLAMP_TO_EDGE);
+        OE_INFO << "Precomputed texture loaded:" << filename << std::endl;
+        return tex;
+    }
+
+    bool hasCachedTextures()
+    {
+        const std::string  filename = EB_TEXTURE_PATH + std::string(EB_SCATTERING_TEXTURE) + EB_TEXTURE_EXT;
+        return !osgDB::findDataFile(filename).empty();
+    }
+}
+
 
 ComputeDrawable::ComputeDrawable(
     float bottom_radius,
@@ -41,14 +119,20 @@ ComputeDrawable::ComputeDrawable(
     _do_white_balance(false),
 
     // false => per-vertex radiance; true => per-fragment radiance (slower)
-    _best_quality(best_quality)
+    _best_quality(best_quality),
+    _use_texture_cache(false)
 {
+    if (getenv("OE_EB_TEXTURE_CACHE"))
+    {
+        _use_texture_cache = atoi(getenv("OE_EB_TEXTURE_CACHE")) != 0;
+    }
     setCullingActive(false);
 }
 
 void
 ComputeDrawable::drawImplementation(osg::RenderInfo& ri) const
 {
+    
     // Values from "Reference Solar Spectral Irradiance: ASTM G-173", ETR column
     // (see http://rredc.nrel.gov/solar/spectra/am1.5/ASTMG173/ASTMG173.html),
     // summed and averaged in each bin (e.g. the value for 360nm is the average
@@ -164,7 +248,16 @@ ComputeDrawable::drawImplementation(osg::RenderInfo& ri) const
 
     int num_scattering_orders = 4;
 
-    _model->initialize(num_scattering_orders);
+
+    bool force_generate_textures = false;
+    if (getenv("OE_EB_UPDATE_TEXTURE_CACHE"))
+    {
+        force_generate_textures = atoi(getenv("OE_EB_UPDATE_TEXTURE_CACHE")) == 1;
+    }
+    const auto generate_textures = force_generate_textures || !hasCachedTextures() || !_use_texture_cache;
+    
+    if(generate_textures)
+       _model->initialize(num_scattering_orders);
 
     double white_point_r = 1.0;
     double white_point_g = 1.0;
@@ -181,7 +274,17 @@ ComputeDrawable::drawImplementation(osg::RenderInfo& ri) const
     }
 
     _white_point = glm::vec3(float(white_point_r), float(white_point_g), float(white_point_b));
-
+    if (generate_textures &&  (_use_texture_cache || force_generate_textures))
+    {
+        //dump textures
+        writeTex(ri, _model->m_scattering_texture, EB_SCATTERING_TEXTURE);
+        writeTex(ri, _model->m_transmittance_texture, EB_TRANSMITTANCE_TEXTURE);
+        writeTex(ri, _model->m_irradiance_texture, EB_IRRADIANCE_TEXTURE);
+        if (!_model->m_combine_scattering_textures)
+        {
+            writeTex(ri, _model->m_optional_single_mie_scattering_texture, EB_MIE_SCATTERING_TEXTURE);
+        }
+    }
     ri.getState()->setLastAppliedProgramObject(nullptr);
     ri.getState()->dirtyAllAttributes();
     ri.getState()->apply();
@@ -214,12 +317,27 @@ ComputeDrawable::populateRenderingStateSets(
 
     if (!_transmittance_tex.valid())
     {
-        _transmittance_tex = makeOSGTexture(_model->m_transmittance_texture);
-        _scattering_tex = makeOSGTexture(_model->m_scattering_texture);
-        _irradiance_tex = makeOSGTexture(_model->m_irradiance_texture);
-        if (!_model->m_combine_scattering_textures)
+        const auto use_texture_files = hasCachedTextures() && _use_texture_cache;
+        if (use_texture_files)
         {
-            _single_mie_scattering_tex = makeOSGTexture(_model->m_optional_single_mie_scattering_texture);
+            _transmittance_tex = loadTexture2D(EB_TRANSMITTANCE_TEXTURE);
+            _irradiance_tex = loadTexture2D(EB_IRRADIANCE_TEXTURE);
+            _scattering_tex = loadTexture3D(EB_SCATTERING_TEXTURE);
+            if (!_model->m_combine_scattering_textures)
+            {
+                _single_mie_scattering_tex = loadTexture3D(EB_MIE_SCATTERING_TEXTURE);
+            }
+        }
+        else
+        {
+            _transmittance_tex = makeOSGTexture(_model->m_transmittance_texture);
+            _irradiance_tex = makeOSGTexture(_model->m_irradiance_texture);
+            _scattering_tex = makeOSGTexture(_model->m_scattering_texture);
+
+            if (!_model->m_combine_scattering_textures)
+            {
+                _single_mie_scattering_tex = makeOSGTexture(_model->m_optional_single_mie_scattering_texture);
+            }
         }
     }
 
@@ -365,7 +483,7 @@ ComputeDrawable::populateRenderingStateSets(
 }
 
 osg::Texture*
-ComputeDrawable::makeOSGTexture(dw::Texture* dwt) const
+ComputeDrawable::makeOSGTexture(dw::Texture* dwt)
 {
     if (dwt->target() == GL_TEXTURE_2D)
         return new WrapTexture2D(static_cast<dw::Texture2D*>(dwt));

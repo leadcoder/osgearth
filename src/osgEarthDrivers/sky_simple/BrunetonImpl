@@ -98,16 +98,15 @@ namespace Bruneton
         float _length_unit_in_meters;
 
         bool _best_quality;
+        bool _use_texture_cache;
 
         mutable osg::ref_ptr<osg::Texture>
             _transmittance_tex,
             _scattering_tex,
             _irradiance_tex,
             _single_mie_scattering_tex;
-
+        static osg::Texture* makeOSGTexture(dw::Texture*);
     private:
-        osg::Texture* makeOSGTexture(dw::Texture*) const;
-
         mutable osgEarth::TextureImageUnitReservation _reservation[4];
     };
 
