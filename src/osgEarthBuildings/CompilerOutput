@@ -56,7 +56,8 @@ namespace osgEarth { namespace Buildings
             _mutex.lock();
             osg::ref_ptr<osg::Texture>& t = _cache[skin->imageURI()->full()];
             if (!t.valid()) {
-                t = skin->createTexture(readOptions);
+                osg::ref_ptr<osg::Image> image = skin->createColorImage(readOptions);
+                t = skin->createTexture(image);
             }
             _mutex.unlock();
             return t.get();
