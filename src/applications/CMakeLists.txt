@@ -20,6 +20,7 @@ if(NOT OSGEARTH_BUILD_PLATFORM_IPHONE)
         
         if(OSGEARTH_BUILD_IMGUI_NODEKIT)
             add_subdirectory(osgearth_imgui)
+			add_subdirectory(osgearth_cubemap)
         endif()
         
         if(OSGEARTH_BUILD_PROCEDURAL_NODEKIT)
