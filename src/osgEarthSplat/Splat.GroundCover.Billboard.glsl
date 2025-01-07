@@ -21,6 +21,7 @@
   uniform mat4 OE_GROUNDCOVER_HEIGHT_MATRIX;
   uniform float oe_GroundCover_minHeight = 10;
   uniform float oe_GroundCover_maxHeight = 20;
+  uniform float oe_GroundCover_heightLayerScale = 1.0;
 #endif
 
 #pragma import_defines(OE_GROUND_COLOR_SAMPLER)
@@ -149,9 +150,10 @@ void oe_GroundCover_VS(inout vec4 vertex_view)
 
 #ifdef OE_GROUNDCOVER_HEIGHT_SAMPLER
     float wh_ratio = render[gl_InstanceID].width / render[gl_InstanceID].height;
-    float height = (0.5 + texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r) *falloff;
+    float height = (0.5 + texture(OE_GROUNDCOVER_HEIGHT_SAMPLER, (OE_GROUNDCOVER_HEIGHT_MATRIX*oe_layer_tilec).st).r) * oe_GroundCover_heightLayerScale;
     if(height < oe_GroundCover_minHeight || height > oe_GroundCover_maxHeight)
         return;
+    height * falloff;
     
     float width = wh_ratio * height;
 #else
