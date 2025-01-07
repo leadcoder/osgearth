@@ -44,7 +44,7 @@ BuildingLayer::~BuildingLayer()
 void
 BuildingLayer::init()
 {
-    VisibleLayer::init();
+    TiledModelLayer::init();
 
     // Create the root group
     _root = new osg::Group();
@@ -70,6 +70,19 @@ BuildingLayer::setFeatureSource(FeatureSource* source)
             createSceneGraph();
         }
     }
+}
+
+Layer::Stats
+BuildingLayer::reportStats() const
+{    
+    auto pager = findTopMostNodeOfType<BuildingPager>(_root);
+    if (pager)
+    {
+        Stats report;
+        report.push_back({ "Resident tiles", std::to_string((unsigned)*pager->_residentTiles) });
+        return report;
+    }
+    else return {};
 }
 
 osg::Node*
@@ -106,7 +119,7 @@ BuildingLayer::openImplementation()
         return Status(Status::ConfigurationError, "Missing required catalog");
     }
 
-    return VisibleLayer::openImplementation();
+    return TiledModelLayer::openImplementation();
 }
 
 void
@@ -146,10 +159,9 @@ BuildingLayer::createSceneGraph()
 
     // assertion:
     FeatureSource* fs = options().featureSource().getLayer();
-    if (!fs || !_session.valid() || !map.valid())
+    if (!fs || !fs->isOpen() || !_session.valid() || !map.valid())
     {
-        //if (getStatus().isOK())
-        //    setStatus(Status(Status::ServiceUnavailable, "Internal assertion failure, call support"));
+        setStatus(Status(Status::ServiceUnavailable, "Feature source is unavailable"));
         return;
     }
     
@@ -162,17 +174,23 @@ BuildingLayer::createSceneGraph()
     }
 
     // Set up the scene graph
-    BuildingPager* pager = new BuildingPager(map, profile );
+    BuildingPager* pager = new BuildingPager(
+        map.get(),
+        profile,
+        options().useNVGL().get());
+
+    auto filters = FeatureFilterChain::create(options().filters(), getReadOptions());
+
     pager->setName("BuildingPager");
-    pager->setAdditive        ( options().additiveLODs().get() );
-    pager->setElevationPool   ( map->getElevationPool() );
-    pager->setSession         ( _session.get() );
-    pager->setFeatureSource   ( fs );
-    pager->setCatalog         ( _catalog.get() );
-    pager->setCompilerSettings( options().compilerSettings().get() );
-    pager->setPriorityOffset  ( options().priorityOffset().get() );
-    pager->setPriorityScale   ( options().priorityScale().get() );
-    //pager->setClusterCullingEnabled(options().clusterCulling().get());
+    pager->setAdditive(options().additiveLODs().get());
+    pager->setElevationPool(map->getElevationPool());
+    pager->setSession(_session.get());
+    pager->setFeatureSource(fs, std::move(filters));
+    pager->setCatalog(_catalog.get());
+    pager->setCompilerSettings(options().compilerSettings().get());
+    pager->setPriorityOffset(options().priorityOffset().get());
+    pager->setPriorityScale(options().priorityScale().get());
+    pager->setClusterCullingEnabled(options().clusterCulling().get());
     pager->setSceneGraphCallbacks(getSceneGraphCallbacks());
 
     if (options().verboseWarnings().isSetTo(true) ||
@@ -274,4 +292,35 @@ BuildingLayer::getExtent() const
     }
 
     return GeoExtent::INVALID;
+}
+
+unsigned
+BuildingLayer::getMinLevel() const
+{
+    auto pager = osgEarth::findTopMostNodeOfType<BuildingPager>(_root.get());
+    return pager ? pager->getMinLevel() : 0u;
+}
+
+unsigned
+BuildingLayer::getMaxLevel() const
+{
+    auto pager = osgEarth::findTopMostNodeOfType<BuildingPager>(_root.get());
+    return pager ? pager->getMaxLevel() : 99u;
+}
+
+const Profile*
+BuildingLayer::getProfile() const
+{
+    auto pager = osgEarth::findTopMostNodeOfType<BuildingPager>(_root.get());
+    return pager ? pager->getProfile() : nullptr;
+}
+
+osg::ref_ptr<osg::Node>
+BuildingLayer::createTileImplementation(const TileKey& key, ProgressCallback* progress) const
+{
+    osg::ref_ptr<osg::Node> node;
+    auto pager = osgEarth::findTopMostNodeOfType<BuildingPager>(_root.get());
+    if (pager)
+        node = pager->createNode(key, progress);
+    return node;
 }

@@ -31,6 +31,8 @@
 #include <osgEarth/Session>
 #include <osgEarth/ResourceCache>
 #include <osgEarth/MeshFlattener>
+#include <osgEarth/Chonk>
+#include <osgEarth/Capabilities>
 #include <osgDB/WriteFile>
 #include <set>
 
@@ -96,14 +98,18 @@ CompilerOutput::addDrawable(osg::Drawable* drawable, const std::string& tag)
     {
         _index->tagDrawable( drawable, _currentFeature );
     }
+
+    if (_metadata && _currentFeature)
+    {     
+        auto id = _metadata->add(_currentFeature, true);
+        _metadata->tagDrawable(drawable, id);
+    }
 }
 
 void
 CompilerOutput::addInstance(ModelResource* model, const osg::Matrix& matrix)
 {
-    _instances[model].push_back( matrix );
-
-    //TODO: index it. the vector needs to be a vector of pair<matrix,feature>
+    _instances[model].push_back( std::make_pair(matrix, _currentFeature));    
 }
 
 std::string
@@ -143,8 +149,8 @@ namespace
                         osg::Texture* tex = dynamic_cast<osg::Texture*>(sa);
                         if (tex)
                         {
-                            osg::Texture* sharedTex = _cache->getOrInsert(tex);
-                            if (sharedTex != 0L && sharedTex != tex)
+                            osg::ref_ptr<osg::Texture> sharedTex = _cache->getOrInsert(tex);
+                            if (sharedTex.valid() && sharedTex.get() != tex)
                             {
                                 j->second.first = sharedTex;
                             }
@@ -203,10 +209,12 @@ osg::StateSet*
 CompilerOutput::getSkinStateSet(SkinResource* skin, const osgDB::Options* readOptions)
 {
     osg::ref_ptr<osg::StateSet>& ss = _skinStateSetCache[skin->imageURI()->full()];
-    if (!ss.valid()) {
+    if (!ss.valid())
+    {
         ss = new osg::StateSet();
-        osg::Texture* tex = _texCache->get(skin, readOptions);
-        if (tex) {
+        osg::ref_ptr<osg::Texture> tex = _texCache->getOrCreate(skin, readOptions);
+        if (tex.valid())
+        {
             ss->setTextureAttributeAndModes(0, tex, osg::StateAttribute::ON);
         }
         //OE_INFO << LC << "Cached stateset for texture " << skin->getName() << "\n";
@@ -290,11 +298,21 @@ void CompilerOutput::addInstancesNormal(osg::MatrixTransform* root, Session* ses
 
          // Build a normal scene graph based on MatrixTransforms, and then convert it 
          // over to use instancing if it's available.
-         const MatrixVector& mats = i->second;
-         for (MatrixVector::const_iterator m = mats.begin(); m != mats.end(); ++m)
+         const InstanceVector& instanceVector = i->second;
+         for (InstanceVector::const_iterator m = instanceVector.begin(); m != instanceVector.end(); ++m)
          {
-            osg::MatrixTransform* modelxform = new osg::MatrixTransform(*m);
+            osg::MatrixTransform* modelxform = new osg::MatrixTransform(m->first);
             modelxform->addChild(modelNode.get());
+            if (_index && m->second.valid())
+            {
+                _index->tagNode(modelxform, m->second.get());
+            }
+
+            if (_metadata && m->second.valid())
+            {
+                auto id = _metadata->add(m->second.get(), true);
+                _metadata->tagNode(modelxform, id);
+            }
             modelGroup->addChild(modelxform);
          }
 
@@ -348,17 +366,25 @@ void CompilerOutput::addInstancesZeroWorkCallbackBased(osg::MatrixTransform* roo
       float maxRange = _range*lodScale;
 
       const URI& uri = res->uri().value().full();
-      const MatrixVector& srcMatricees = it->second;
+      const InstanceVector& srcMatricees = it->second;
 
       InstancedModelNode::Instances& dstInstances = instancedModelNode->_mapModelToInstances[uri.full()];
       InstancedModelNode::MatrixdVector& dstMatrices = dstInstances.matrices;
+      InstancedModelNode::ObjectIdVector& dstObjectIds = dstInstances.objectIds;
 
       dstInstances.minRange = 0.0f;
       dstInstances.maxRange = maxRange;
 
       for (int matrixIndex = 0; matrixIndex < srcMatricees.size(); ++matrixIndex)
       {
-         dstMatrices.push_back(srcMatricees[matrixIndex]);
+         dstMatrices.push_back(srcMatricees[matrixIndex].first);
+
+         if (_metadata)
+         {
+            osg::ref_ptr< Feature > feature = srcMatricees[matrixIndex].second;
+            ObjectID id = feature.valid() ? _metadata->add(feature.get(), true) : ObjectID(0);
+            dstObjectIds.push_back(id);
+         }
       }
    }
 
@@ -384,12 +410,193 @@ void CompilerOutput::addInstances(osg::MatrixTransform* root, Session* session, 
       addInstancesZeroWorkCallbackBased(root, session, settings, readOptions, progress);
    }
 }
+osg::Node*
+CompilerOutput::createSceneGraph(
+    Session* session,
+    const CompilerSettings& settings,
+    const osgDB::Options* readOptions,
+    ProgressCallback* progress) const
+{
+    if (_textures.valid() && _residentData)
+    {
+        return createSceneGraphUnifiedNV(session, settings, readOptions, progress);
+    }
+    else
+    {
+        return createSceneGraphLegacy(session, settings, readOptions, progress);
+    }
+}
 
 osg::Node*
-CompilerOutput::createSceneGraph(Session*                session,
-                                 const CompilerSettings& settings,
-                                 const osgDB::Options*   readOptions,
-                                 ProgressCallback*       progress) const
+CompilerOutput::createSceneGraphUnifiedNV(
+    Session* session,
+    const CompilerSettings& settings,
+    const osgDB::Options* readOptions,
+    ProgressCallback* progress) const
+{
+    osg::ref_ptr<ChonkDrawable> drawable = new ChonkDrawable();
+
+    // This object will convert OSG geometry into Chonks,
+    // (which are indirect rendering units)
+    ChonkFactory factory(_textures.get());
+
+    // This user function will ensure that we can share arena textures
+    // across tiles in the pager.
+    ResidentData::Ptr rd = _residentData;
+    auto get_or_create = [rd](osg::Texture* osgTex, bool& isNew)
+    {
+        std::lock_guard<std::mutex> lock(rd->_m);
+
+        Texture::WeakPtr& weak = rd->_textures[osgTex];
+        Texture::Ptr arena_tex = weak.lock();
+        isNew = (arena_tex == nullptr);
+        if (isNew)
+        {
+            arena_tex = Texture::create(osgTex);
+            weak = arena_tex;
+        }
+        return arena_tex;
+    };
+    factory.setGetOrCreateFunction(get_or_create);
+    
+    // Parametric geometry:
+#if 0
+    // per-building. This works nicely but renders slowly.
+    // todo: consider chopping it up into subsections using
+    // an RTREE, for culling purposes?
+    for (auto& geode : _geodes)
+    {
+        auto& group = geode.second;
+        for (unsigned i = 0; i < group->getNumChildren(); ++i)
+        {
+            Chonk::Ptr c = Chonk::create();
+            c->add(group->getChild(i), 1.0f, FLT_MAX, factory);
+            drawable->add(c);
+
+            // TODO: lods
+        }
+    }
+#else
+    // per-geode group. Renders faster since every building is a unique geometry
+    for (auto& taggedGeode : _geodes)
+    {
+        auto& tag = taggedGeode.first;
+        auto& group = taggedGeode.second;
+
+        float far_pixel_scale = 1.0f;
+
+        const CompilerSettings::LODBin* bin = settings.getLODBin(tag);
+        if (bin)
+        {
+            if (bin->lodScale > 0.0f)
+                far_pixel_scale = far_pixel_scale / bin->lodScale;
+        }
+        
+        Chonk::Ptr c = Chonk::create();
+        c->add(group.get(), far_pixel_scale, FLT_MAX, factory);
+        drawable->add(c);
+    }
+#endif
+
+    // External models:
+    for (unsigned i = 0; i < _externalModelsGroup->getNumChildren(); ++i)
+    {
+        auto node = _externalModelsGroup->getChild(i);
+        if (node)
+        {
+            Chonk::Ptr c = Chonk::create();
+            c->add(node, 1.0f, FLT_MAX, factory);
+            drawable->add(c);
+        }
+    }
+
+    // Instanced models
+    for (auto iter : _instances)
+    {
+        auto& resource = iter.first;
+        auto& matrices = iter.second;
+
+        _residentData->_m.lock();
+        Chonk::Ptr chonk = _residentData->_chonks[resource.get()].lock();
+        _residentData->_m.unlock();
+
+        if (chonk == nullptr)
+        {
+            osg::ref_ptr<osg::Node> model;
+            if (session->getResourceCache()->cloneOrCreateInstanceNode(resource, model, readOptions))
+            {
+                chonk = Chonk::create();
+                chonk->add(model.get(), 1.0f, FLT_MAX, factory);
+
+                _residentData->_m.lock();
+                _residentData->_chonks[resource.get()] = chonk;
+                _residentData->_m.unlock();
+            }
+            else
+            {
+                OE_WARN << LC << "Failed to load " << resource->uri()->full() << std::endl;
+            }
+        }
+
+        if (chonk)
+        {
+            for (auto& matrix : matrices)
+            {
+                drawable->add(chonk, matrix.first * getWorldToLocal());
+            }
+        }
+    }
+
+    if (drawable.valid())
+    {
+        osg::ref_ptr<osg::MatrixTransform> root = new osg::MatrixTransform(getLocalToWorld());
+        
+        root->setName("oe.BuildingLayer.root");
+
+#if 1
+        root->addChild(drawable);
+#else
+        // TEST code to make a bounding box
+        auto geom = new osg::Geometry();
+
+        osg::BoundingBox box = drawable->getBoundingBox();
+        auto verts = new osg::Vec3Array();
+        for(int i=0; i<8; ++i)
+            verts->push_back(box.corner(i));
+        geom->setVertexArray(verts);
+
+        const GLushort elements[36] = {
+            0,1,3, 3,2,0,
+            1,5,7, 7,3,1,
+            5,4,6, 6,7,5,
+            4,0,2, 2,6,4,
+            2,3,7, 7,6,2,
+            4,5,1, 1,0,4 };
+        geom->addPrimitiveSet(new osg::DrawElementsUShort(GL_TRIANGLES, 36, elements));
+
+        Chonk::Ptr c = Chonk::create();
+        c->add(geom, factory);
+        ChonkDrawable* d = new ChonkDrawable();
+        d->add(c);
+        root->addChild(d);
+
+        //root->addChild(geom);
+#endif
+        return root.release();
+    }
+    else
+    {
+        return nullptr;
+    }
+}
+
+
+osg::Node*
+CompilerOutput::createSceneGraphLegacy(
+    Session*                session,
+    const CompilerSettings& settings,
+    const osgDB::Options*   readOptions,
+    ProgressCallback*       progress) const
 {
     // install the master matrix for this graph:
     osg::ref_ptr<osg::MatrixTransform> root = new osg::MatrixTransform( getLocalToWorld() );
@@ -555,12 +762,12 @@ namespace
 
             else if (dynamic_cast<ElevationsLodNode*>(&node))
             {
-                // If this class was been flagged for Indirect rendering,
-                // generate shaders on the elevationsLOD node
-                Registry::instance()->shaderGenerator().run(
-                    static_cast<ElevationsLodNode*>(&node)->elevationsLOD.get(),
-                    "ElevationsLodNode",
-                    _sscache.get());
+                // The presence of an ElevationLodNode means this class was flagged
+                // for indirect rendering. In this case we do not need to generate
+                // any shaders (the target app will do so) AND we also do not need
+                // to traverse down into the node.
+
+                // NOP (no traverse)
             }
 
             else

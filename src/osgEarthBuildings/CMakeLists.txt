@@ -5,11 +5,7 @@ ELSE ()
     ADD_DEFINITIONS(-DOSGEARTHBUILDINGS_LIBRARY_STATIC)
 ENDIF()
 
-set(LIB_NAME osgEarthBuildings)
-
-# set(HEADER_PATH ${OSGEARTH_SOURCE_DIR}/include/${LIB_NAME})
-
-set(LIB_PUBLIC_HEADERS
+set(HEADERS
     Analyzer
     BuildContext
     Building
@@ -41,7 +37,7 @@ set(LIB_PUBLIC_HEADERS
 	FilterUsage
 )
 
-set(LIB_COMMON_FILES
+set(SOURCES
     Analyzer.cpp
     Building.cpp
     BuildingCatalog.cpp
@@ -69,9 +65,7 @@ set(LIB_COMMON_FILES
 )
 
 add_osgearth_library(
-    TARGET ${LIB_NAME}
-    SOURCES ${LIB_COMMON_FILES}
-    PUBLIC_HEADERS ${LIB_PUBLIC_HEADERS}
-    SHADERS ${TARGET_GLSL}
-    TEMPLATES ${TARGET_IN}
-    FOLDER "NodeKits")
+    TARGET osgEarthBuildings
+    PUBLIC_HEADERS ${HEADERS}
+    SOURCES ${SOURCES}
+    FOLDER "NodeKits" )

@@ -81,8 +81,7 @@ BuildingCatalog::createBuildings(Feature*              feature,
             Polygon* polygon = dynamic_cast<Polygon*>(iter2.next());
             if ( polygon && polygon->isValid() )
             {
-                auto bs = polygon->getBounds()._max - polygon->getBounds()._min;
-                float area = bs.x()* bs.y();
+                float area = area2d(polygon->getBounds());
 
                 // A footprint is the minumum info required to make a building.
                 osg::ref_ptr<Building> building = cloneBuildingTemplate(feature, tags, height, area);

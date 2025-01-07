@@ -21,10 +21,13 @@
 #include <osgEarth/Registry>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/Query>
+#include <osgEarth/MetadataNode>
 #include <osgEarth/StyleSheet>
 #include <osgEarth/Metrics>
 #include <osgEarth/Utils>
 #include <osgEarth/NodeUtils>
+#include <osgEarth/Chonk>
+#include <osgEarth/Capabilities>
 
 #include <osgUtil/Optimizer>
 #include <osgUtil/Statistics>
@@ -32,6 +35,7 @@
 #include <osg/CullFace>
 #include <osg/Geometry>
 #include <osg/MatrixTransform>
+#include <osgUtil/RenderBin>
 
 #include <osgDB/WriteFile>
 
@@ -99,7 +103,26 @@ BuildingPager::CacheManager::releaseGLObjects(osg::State* state) const
         _stateSetCache->clear();
     }
     
-    OE_INFO << LC << "Cleared all internal caches" << std::endl;
+    OE_DEBUG << LC << "Cleared all internal caches" << std::endl;
+
+    // invoke parent's implementation
+    osg::Group::releaseGLObjects(state);
+}
+
+void
+BuildingPager::CacheManager::resizeGLObjectBuffers(unsigned size)
+{
+    if (_texCache.valid())
+    {
+        _texCache->resizeGLObjectBuffers(size);
+    }
+
+    if (_stateSetCache.valid())
+    {
+        //_stateSetCache->resizeGLObjectBuffers(size);
+    }
+
+    osg::Group::resizeGLObjectBuffers(size);
 }
 
 void
@@ -121,7 +144,6 @@ BuildingPager::CacheManager::traverse(osg::NodeVisitor& nv)
         osg::Group::traverse(nv);
 
         int after = RenderBinUtils::getTotalNumRenderLeaves(cv->getCurrentRenderBin());
-
         int newLeaves = after - before;
         if (newLeaves > 0)
         {
@@ -137,17 +159,16 @@ BuildingPager::CacheManager::traverse(osg::NodeVisitor& nv)
         // if nothing was culled, clear out the caches and release their memory.
         // _cullCompleted = so it will work if update is called more than once
         //                  between culls
-        if (_cullCompleted.exchange(false) && 
-            _renderLeavesDetected && 
-            _renderLeaves == 0)
+        if (_cullCompleted.exchange(false))
         {
-            releaseGLObjects(nullptr);
-            _renderLeavesDetected = false;
+            if (_renderLeavesDetected && _renderLeaves == 0)
+            {
+                releaseGLObjects(nullptr);
+                _renderLeavesDetected = false;
+            }
+            osg::Group::traverse(nv);
         }
-
         _renderLeaves = 0;
-
-        osg::Group::traverse(nv);
     }
 
     else
@@ -161,20 +182,42 @@ BuildingPager::CacheManager::traverse(osg::NodeVisitor& nv)
 //...................................................................
 
 
-BuildingPager::BuildingPager(const osgEarth::Map* map, const Profile* profile) :
-SimplePager(map, profile ),
-_index     ( nullptr ),
-_filterUsage(FILTER_USAGE_NORMAL),
-_verboseWarnings(false)
+BuildingPager::BuildingPager(const Map* map, const Profile* profile, bool useNVGLIfSupported) :
+    SimplePager(map, profile),
+    _index(nullptr),
+    _filterUsage(FILTER_USAGE_NORMAL),
+    _verboseWarnings(false),
+    _residentTiles(std::make_shared<std::atomic_int>(0))
 {
     _profile = ::getenv("OSGEARTH_BUILDINGS_PROFILE") != nullptr;
 
     _caches = new CacheManager();
     _caches->setName("BuildingPager Cache Manager");
 
+    osg::StateSet* ss = getOrCreateStateSet();
+
     // Disable backface culling?
-    this->getOrCreateStateSet()->setAttributeAndModes(
+    ss->setAttributeAndModes(
         new osg::CullFace(), osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
+
+    ss->setMode(GL_BLEND, 1);
+
+    _usingNVGL = useNVGLIfSupported && GLUtils::useNVGL();
+
+    if (_usingNVGL)
+    {
+        OE_INFO << LC << "Using NVIDIA GL rendering" << std::endl;
+
+        // Texture arena for the entire layer
+        _textures = new TextureArena();
+        _textures->setName("BuildingPager");
+        _textures->setBindingPoint(1);
+        _textures->setAutoRelease(true);
+        ss->setAttribute(_textures);
+
+        // Stores weak pointers to chonks for sharing.
+        _residentData = std::make_shared<ResidentData>();
+    }
 }
 
 void
@@ -229,9 +272,10 @@ BuildingPager::setSession(Session* session)
 }
 
 void
-BuildingPager::setFeatureSource(FeatureSource* features)
+BuildingPager::setFeatureSource(FeatureSource* features, FeatureFilterChain&& filters)
 {
     _features = features;
+    _filters = filters;
 }
 
 void
@@ -314,7 +358,7 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     //Registry::instance()->startActivity(activityName);
 
     //osg::CVMarkerSeries series("PagingThread");
-    ////osg::CVSpan UpdateTick(series, 4, activityName.c_str());
+    //osg::CVSpan UpdateTick(series, 4, activityName.c_str());
 
     // result:
     osg::ref_ptr<osg::Node> node;
@@ -334,14 +378,20 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     //Registry::instance()->startActivity("RCache skins", Stringify() << _session->getResourceCache()->getSkinStats()._entries);
     //Registry::instance()->startActivity("RCache insts", Stringify() << _session->getResourceCache()->getInstanceStats()._entries);
 
+    osg::ref_ptr< osgEarth::MetadataNode > metadata = new MetadataNode;
+
     // Holds all the final output.
     CompilerOutput output;
     output.setName(tileKey.str());
     output.setTileKey(tileKey);
     output.setIndex(_index);
+    output.setMetadata(metadata.get());
     output.setTextureCache(_caches->_texCache.get());
     output.setStateSetCache(_caches->_stateSetCache.get());
     output.setFilterUsage(_filterUsage);
+    // GL4/NV support:
+    output.setTextureArena(_textures.get());
+    output.setResidentData(_residentData);
     
     bool canceled = false;
     bool caching = true;
@@ -350,7 +400,7 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     // Try to load from the cache.
     if (cacheReadsEnabled(readOptions.get()) && !canceled)
     {
-       // osg::CVSpan UpdateTick(series2, 4, "ReadFromCache");
+        //osg::CVSpan UpdateTick(series2, 4, "ReadFromCache");
 
         node = output.readFromCache(readOptions.get(), progress);
     }
@@ -360,18 +410,13 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     canceled = canceled || (progress && progress->isCanceled());
 
     if (!node.valid() && !canceled)
-    {
+    {     
         // fetch the style for this LOD:
         std::string styleName = Stringify() << tileKey.getLOD();
         const Style* style = _session->styles() ? _session->styles()->getStyle(styleName) : nullptr;
 
         // Create a cursor to iterator over the feature data:
-        Query query;
-        query.tileKey() = tileKey;
-
-        
-        osg::ref_ptr<FeatureCursor> cursor = _features->createFeatureCursor(query, {}, nullptr,progress);
-            
+        osg::ref_ptr<FeatureCursor> cursor = _features->createFeatureCursor(tileKey, _filters, nullptr, progress);
         if (cursor.valid() && cursor->hasMore() && !canceled)
         {
            //osg::CVSpan UpdateTick(series, 4, "buildFromScratch");
@@ -449,27 +494,33 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
                 // set the distance at which details become visible.
                 osg::BoundingSphered tileBound = getBounds(tileKey);
                 output.setRange(tileBound.radius() * getRangeFactor());
+
                 node = output.createSceneGraph(_session.get(), _compilerSettings, readOptions.get(), progress);
 
-                osg::MatrixTransform * mt = dynamic_cast<osg::MatrixTransform *> (node.get());
-                if (mt)
+                // skip this if we are using NV -gw
+#if 0
+                if (!_usingNVGL)
                 {
-                   /*osg::ref_ptr<osg::Group> oqn;
-                   if (osgEarth::OcclusionQueryNodeFactory::_occlusionFactory) {
-                      oqn = osgEarth::OcclusionQueryNodeFactory::_occlusionFactory->createQueryNode();
-                   }
-                   if (oqn.get()) 
-                   {
-                      oqn->setName("BuildingPager::oqn");
-                      //oqn.get()->setDebugDisplay(true);
-                      while (mt->getNumChildren()) {
-                         oqn.get()->addChild(mt->getChild(0));
-                         mt->removeChild(mt->getChild(0));
-                      }
-                      mt->addChild(oqn.get());
-                   }*/
-
+                    osg::MatrixTransform* mt = dynamic_cast<osg::MatrixTransform *> (node.get());
+                    if (mt)
+                    {
+                        osg::ref_ptr<osg::Group> oqn;
+                        if (osgEarth::OcclusionQueryNodeFactory::_occlusionFactory) {
+                            oqn = osgEarth::OcclusionQueryNodeFactory::_occlusionFactory->createQueryNode();
+                        }
+                        if (oqn.get())
+                        {
+                            oqn->setName("BuildingPager::oqn");
+                            //oqn.get()->setDebugDisplay(true);
+                            while (mt->getNumChildren()) {
+                                oqn.get()->addChild(mt->getChild(0));
+                                mt->removeChild(mt->getChild(0));
+                            }
+                            mt->addChild(oqn.get());
+                        }
+                    }
                 }
+#endif
             }
             else
             {
@@ -480,7 +531,7 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
         // This can go here now that we can serialize DIs and TBOs.
         if (node.valid() && !canceled)
         {
-           // osg::CVSpan UpdateTick(series2, 4, "postProcess");
+            //osg::CVSpan UpdateTick(series2, 4, "postProcess");
 
             // apply render symbology, if it exists.
             if (style)
@@ -495,6 +546,11 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
 
             output.writeToCache(node.get(), readOptions.get(), progress);
         }
+
+        if (node.valid() && node->getBound().valid())
+        {
+            node->getOrCreateUserDataContainer()->addUserObject(new Util::TrackerTag(_residentTiles));
+        }
     }
 
     Registry::instance()->endActivity(activityName);
@@ -506,7 +562,16 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     }
     else
     {
-        return node;
+        if (metadata && node)
+        {
+            metadata->addChild(node);
+            metadata->finalize();
+            return metadata;
+        }
+        else
+        {
+            return node;
+        }
     }
 }
 

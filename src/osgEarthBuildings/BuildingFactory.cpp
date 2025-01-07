@@ -194,7 +194,6 @@ BuildingFactory::create(Feature*               feature,
 
         // Prepare for terrain clamping by finding the minimum and 
         // maximum elevations under the feature:
-
         bool terrainMinMaxValid = false;
         float min = FLT_MAX, max = -FLT_MAX;
         osg::ref_ptr<const Map> map = _session->getMap();
@@ -202,17 +201,21 @@ BuildingFactory::create(Feature*               feature,
         if (needToClamp && feature->getGeometry() && map.valid())
         {
             std::vector<osg::Vec3d> points;
-            for(auto& i : feature->getGeometry()->asVector())
-                points.push_back(i);
-
+            ConstGeometryIterator cgi(feature->getGeometry(), false);
+            while (cgi.hasMore())
+            {
+                auto part = cgi.next();
+                for (auto& i : part->asVector())
+                    points.push_back(i);
+            }
             envelope.sampleMapCoords(points.begin(), points.end(), progress);
 
             for(auto& i : points)
             {
                 if (i.z() != NO_DATA_VALUE)
                 {
-                    min = osg::minimum(min, (float)i.z());
-                    max = osg::maximum(max, (float)i.z());
+                    min = std::min(min, (float)i.z());
+                    max = std::max(max, (float)i.z());
                     terrainMinMaxValid = true;
                 }
             }

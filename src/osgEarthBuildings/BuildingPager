@@ -16,8 +16,7 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#ifndef OSGEARTH_BUILDINGS_BUILDING_PAGER_H
-#define OSGEARTH_BUILDINGS_BUILDING_PAGER_H
+#pragma once
 
 #include "Common"
 #include "BuildingFactory"
@@ -30,6 +29,7 @@
 #include <osgEarth/FeatureSource>
 #include <osgEarth/FeatureIndex>
 #include <osgEarth/SimplePager>
+#include <osgEarth/TextureArena>
 
 #include <osgDB/ObjectCache>
 
@@ -45,13 +45,16 @@ namespace osgEarth { namespace Buildings
     public:
 
         /** Constructs the pager with a target profile */
-        BuildingPager(const osgEarth::Map* map, const Profile* profile);
+        BuildingPager(
+            const Map* map,
+            const Profile* profile,
+            bool use_nvgl_if_possible);
 
         /** Session under which to load buildings */
         void setSession(Session* session);
 
         /** Source from which to query features */
-        void setFeatureSource(FeatureSource* features);
+        void setFeatureSource(FeatureSource* features, FeatureFilterChain&& filters);
 
         /** Build catalog to use for creating building templates */
         void setCatalog(BuildingCatalog* catalog);
@@ -94,26 +97,33 @@ namespace osgEarth { namespace Buildings
             std::atomic_bool _renderLeavesDetected;
             void traverse(osg::NodeVisitor& nv) override;
             void releaseGLObjects(osg::State*) const override;
+            void resizeGLObjectBuffers(unsigned) override;
         };
 
-        osg::ref_ptr<Session>             _session;
-        osg::ref_ptr<FeatureSource>       _features;
-        osg::ref_ptr<BuildingCatalog>     _catalog;
-        osg::ref_ptr<BuildingCompiler>    _compiler;
-        CompilerSettings                  _compilerSettings;
-        FeatureIndexBuilder*              _index;
+        osg::ref_ptr<Session> _session;
+        osg::ref_ptr<FeatureSource> _features;
+        FeatureFilterChain _filters;
+        osg::ref_ptr<BuildingCatalog> _catalog;
+        osg::ref_ptr<BuildingCompiler> _compiler;
+        CompilerSettings _compilerSettings;
+        FeatureIndexBuilder* _index = nullptr;
         osg::observer_ptr<ElevationPool>  _elevationPool;
-        bool                              _profile;
+        bool _profile;
         osg::ref_ptr<CacheManager> _caches;
         FilterUsage _filterUsage;
         bool _verboseWarnings;
+        bool _usingNVGL;
+        osg::ref_ptr<TextureArena> _textures;
+        ResidentData::Ptr _residentData;
+        std::shared_ptr<std::atomic_int> _residentTiles;
 
         bool cacheReadsEnabled(const osgDB::Options*) const;
         bool cacheWritesEnabled(const osgDB::Options*) const;
 
         void applyRenderSymbology(osg::Node*, const Style& style) const;
+
+        friend class BuildingLayer;
     };
 
 } } // namespace
 
-#endif // OSGEARTH_BUILDINGS_BUILDING_PAGER_H
