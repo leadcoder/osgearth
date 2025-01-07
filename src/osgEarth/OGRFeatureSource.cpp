@@ -446,7 +446,13 @@ OGRFeatureSource::openImplementation()
     // Data source at a URL?
     if (options().url().isSet())
     {
-        _source = options().url()->full();
+        if (startsWith(options().url()->base(), "/vsi"))
+        {
+            _source = options().url()->base();
+        }
+        else
+            _source = options().url()->full();
+
 
         // ..inside a zip file?
         if (osgEarth::endsWith(_source, ".zip", false) || _source.find(".zip/") != std::string::npos)
