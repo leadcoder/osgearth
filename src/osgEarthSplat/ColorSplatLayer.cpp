@@ -184,7 +184,7 @@ ColorSplatLayer::prepareForRendering(TerrainEngine* engine)
 		ColorSplattingShaders splatting;
 		VirtualProgram* vp = VirtualProgram::getOrCreate(stateset);
 		vp->setName(typeid(*this).name());
-		splatting.load(vp, splatting.SplatTerrain);
+		splatting.load(vp, splatting.SplatTerrain, getReadOptions());
 		OE_DEBUG << LC << "Statesets built!! Ready!\n";
 	}
 }
