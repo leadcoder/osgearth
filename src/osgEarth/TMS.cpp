@@ -302,7 +302,7 @@ TileMap::getURL(const osgEarth::TileKey& tilekey, bool invertY)
                 {
                     return itr->getHref() + "/" + std::to_string(x) + "/" + std::to_string(y) + "." + _format.getExtension();
                 }
-                else if (osgDB::containsServerAddress(_filename))
+                else if (osgDB::containsServerAddress(_filename) && _filename.find(".xml") == std::string::npos)
                 {
                     auto f = _filename;
                     if (!f.empty() && f.back() != '/') f += "/";
