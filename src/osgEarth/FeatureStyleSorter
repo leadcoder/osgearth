@@ -1,0 +1,88 @@
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
+ */
+#pragma once
+
+#include <osgEarth/StyleSheet>
+#include <osgEarth/Session>
+#include <osgEarth/Feature>
+#include <osgEarth/Filter>
+
+namespace osgEarth
+{
+    /**
+    * Sorts input features by style and then runs a user-supplied
+    * function on each group of features that share the same style.
+    */
+    class OSGEARTH_EXPORT FeatureStyleSorter
+    {
+    public:
+        FeatureStyleSorter() = default;
+
+        using PreprocessorFunction = std::function<void(
+            FeatureList& features,
+            ProgressCallback* progress)>;
+
+        using StyleFunction = std::function<void(
+            const Style& style,
+            FeatureList& features,
+            ProgressCallback* progress)>;
+
+        //! Sorts the input features by style and runs the processFeaturesForStyle function
+        //! on each group of features that share the same style.
+        //! @param key The tile key
+        //! @param buffer The buffer distance for feature query
+        //! @param session The session containing the Map and other global resources
+        //! @param filters The filter chain to apply to the features before sorting
+        //! @param featurePreprocessor A user function to preprocess the features before sorting
+        //! @param processFeaturesForStyle A user function to process the features for each style
+        //! @param progress Cancelation callback
+        void sort(
+            const TileKey& key,
+            const Distance& buffer,
+            Session* session,
+            const FeatureFilterChain& filters,
+            PreprocessorFunction featurePreprocessor,
+            StyleFunction processFeaturesForStyle,
+            ProgressCallback* progress) const;
+
+    protected:
+        void getFeatures(
+            Session* session,
+            const Query& query,
+            const GeoExtent& extent,
+            const FeatureFilterChain& filters,
+            PreprocessorFunction featurePreprocessor,
+            FeatureList& output,
+            ProgressCallback* progress) const;
+
+        void sort_usingEmbeddedStyles(
+            const TileKey& key,
+            const Distance& buffer,
+            const FeatureFilterChain& filters,
+            Session* session,
+            PreprocessorFunction featurePreprocessor,
+            StyleFunction processFeaturesForStyle,
+            ProgressCallback* progress) const;
+
+        void sort_usingSelectors(
+            const TileKey& key,
+            const Distance& buffer,
+            const FeatureFilterChain& filters,
+            Session* session,
+            PreprocessorFunction featurePreprocessor,
+            StyleFunction processFeaturesForStyle,
+            ProgressCallback* progress) const;
+
+        void sort_usingOneStyle(
+            const Style& style,
+            const TileKey& key,
+            const Distance& buffer,
+            const FeatureFilterChain& filters,
+            Session* session,
+            PreprocessorFunction featurePreprocessor,
+            StyleFunction processFeaturesForStyle,
+            ProgressCallback* progress) const;
+    };
+}

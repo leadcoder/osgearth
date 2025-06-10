@@ -52,8 +52,8 @@ endif()
 
 # Source code .....................................................
 
-# Name all the library files
 SET(LIB_NAME osgEarth)
+
 
 set(TARGET_GLSL
     CascadeDraping.glsl
@@ -82,21 +82,21 @@ set(TARGET_GLSL
     RTTPicker.glsl
     WindLayer.CS.glsl
     PBR.glsl
-    Fog.glsl
-)
-
-set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
+	Fog.glsl)
 
 set(TARGET_IN
     BuildConfig.in    
     Version.in
     Shaders.cpp.in)
-
-configure_shaders(
-    Shaders.cpp.in
-    ${SHADERS_CPP}
-    ${TARGET_GLSL} )
     
+# auto-generate the shaders cpp:
+set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
+configure_shaders(Shaders.cpp.in ${SHADERS_CPP} ${TARGET_GLSL})
+
+# Declare the dynamic headers -- we'll generate them later when all the HAVE vars are set.
+set(OSGEARTH_VERSION_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/Version")
+set(OSGEARTH_BUILDCONFIG_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/BuildConfig")
+
 SET(TARGET_H    
     AGG.h
     AltitudeFilter
@@ -146,6 +146,7 @@ SET(TARGET_H
     ColorFilter
     Common
     Composite
+    CompositeFeatureSource
     CompressedArray
     CompositeTiledModelLayer
     Config
@@ -193,6 +194,7 @@ SET(TARGET_H
     FeatureDisplayLayout
     FeatureElevationLayer
     FeatureImageLayer
+    FeatureImageRTTLayer
     FeatureIndex
     FeatureModelGraph
     FeatureModelLayer
@@ -202,6 +204,7 @@ SET(TARGET_H
     FeatureSDFLayer
     FeatureSource
     FeatureSourceIndexNode
+    FeatureStyleSorter
     FileUtils
     Fill
     Filter
@@ -255,7 +258,7 @@ SET(TARGET_H
     InstanceSymbol
     IntersectionPicker
     IOTypes
-    JoinPointsLinesFilter
+    JoinLines
     JsonUtils
     LabelNode
     LandCover
@@ -461,14 +464,6 @@ SET(TARGET_H
     ${OSGEARTH_BUILDCONFIG_HEADER}
     ${OSGEARTH_VERSION_HEADER}
 )
-
-if(OSGEARTH_BUILD_LEGACY_CONTROLS_API)
-    list(APPEND TARGET_H
-        ActivityMonitorTool
-        MouseCoordsTool
-        Controls)
-endif()
-
 set(TARGET_SRC
     AltitudeFilter.cpp
     AltitudeSymbol.cpp
@@ -514,6 +509,7 @@ set(TARGET_SRC
     Color.cpp
     ColorFilter.cpp
     Composite.cpp
+    CompositeFeatureSource.cpp
     CompositeTiledModelLayer.cpp
     Compressors.cpp
     CompressedArray.cpp
@@ -559,6 +555,7 @@ set(TARGET_SRC
     FeatureDisplayLayout.cpp
     FeatureElevationLayer.cpp
     FeatureImageLayer.cpp
+    FeatureImageRTTLayer.cpp
     FeatureModelGraph.cpp
     FeatureModelLayer.cpp
     FeatureModelSource.cpp
@@ -567,7 +564,7 @@ set(TARGET_SRC
     FeatureSDFLayer.cpp
     FeatureSource.cpp
     FeatureSourceIndexNode.cpp
-    FileGDBFeatureSource.cpp
+    FeatureStyleSorter.cpp
     FileUtils.cpp
     Fill.cpp
     Filter.cpp
@@ -618,7 +615,7 @@ set(TARGET_SRC
     InstanceSymbol.cpp
     IntersectionPicker.cpp
     IOTypes.cpp
-    JoinPointsLinesFilter.cpp
+    JoinLines.cpp
     JsonUtils.cpp
     LabelNode.cpp
     LandCover.cpp
@@ -800,13 +797,17 @@ set(TARGET_SRC
     ${SHADERS_CPP}
 )
 
-# whether to build the osgEarth::Util::Controls API, which has been
-# mostly replaced by ImGui
+# include the old legacy API controls?
 if(OSGEARTH_BUILD_LEGACY_CONTROLS_API)
-    list(APPEND TARGET_SRC
-        ActivityMonitorTool.cpp
-        MouseCoordsTool.cpp
-        Controls.cpp)
+    list(APPEND TARGET_H   ActivityMonitorTool     MouseCoordsTool     Controls)
+    list(APPEND TARGET_SRC ActivityMonitorTool.cpp MouseCoordsTool.cpp Controls.cpp)
+endif()
+
+# include the geocoder (built into gdal)?
+if(OSGEARTH_ENABLE_GEOCODER)
+    set(OSGEARTH_HAVE_GEOCODER ON)
+    list(APPEND TARGET_H   Geocoder)
+    list(APPEND TARGET_SRC Geocoder.cpp)
 endif()
 
 
@@ -824,20 +825,10 @@ if(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
     endif()
 endif()
 
-if(OSGEARTH_ENABLE_GEOCODER)
-    set(OSGEARTH_HAVE_GEOCODER ON)
-    list(APPEND TARGET_H Geocoder)
-    list(APPEND TARGET_SRC Geocoder.cpp)
-endif()
-
-# Declare the dynamic headers -- we'll generate them later when all the HAVE vars are set.
-set(OSGEARTH_VERSION_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/Version")
-set(OSGEARTH_BUILDCONFIG_HEADER "${OSGEARTH_BUILDTIME_INCLUDE_DIR}/osgEarth/BuildConfig")
-
-
+# configure the library:
 add_osgearth_library(
     TARGET ${LIB_NAME}
-    PUBLIC_HEADERS ${TARGET_H} ${OSGEARTH_VERSION_HEADER} ${OSGEARTH_BUILDCONFIG_HEADER}
+    PUBLIC_HEADERS ${TARGET_H}
     SOURCES ${TARGET_SRC}
     SHADERS ${TARGET_GLSL}
     TEMPLATES ${TARGET_IN} )
@@ -913,6 +904,12 @@ if(meshoptimizer_FOUND)
     target_link_libraries(${LIB_NAME} PRIVATE meshoptimizer::meshoptimizer)
 endif()
 
+if(SuperluminalAPI_FOUND)
+    message(STATUS "Found SuperLuminalAPI.")
+    set(OSGEARTH_HAVE_SUPERLUMINALAPI ON)
+    target_link_libraries(${LIB_NAME} PRIVATE SuperluminalAPI)    
+endif()
+
 # pthreads?
 if(UNIX)
     target_link_libraries(${LIB_NAME} PUBLIC Threads::Threads)
@@ -939,7 +936,8 @@ else()
 endif()
 
 
-# Generate the dynamic headers.
+# Generate the dynamic headers, now that all the OSGEARTH_HAVE_* vars are set:
+
 message(STATUS "Creating ${OSGEARTH_BUILDCONFIG_HEADER}")
 configure_file(BuildConfig.in ${OSGEARTH_BUILDCONFIG_HEADER})
 

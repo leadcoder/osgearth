@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2014 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include "TileNode"
 #include "SurfaceNode"
@@ -22,15 +8,11 @@
 #include "Loader"
 #include "LoadTileData"
 #include "SelectionInfo"
-#include "ElevationTextureUtils"
 #include "TerrainCuller"
-#include "RexTerrainEngineNode"
 
 #include <osgEarth/TerrainTileModel>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/ImageUtils>
-#include <osgEarth/Utils>
-#include <osgEarth/NodeUtils>
 #include <osgEarth/Metrics>
 #include <osgEarth/Notify>
 
@@ -59,7 +41,8 @@ TileNode::TileNode(const TileKey& key, TileNode* parent, EngineContext* context,
     _lastTraversalFrame(0),
     _loadPriority(0.0f)
 {
-    OE_HARD_ASSERT(context != nullptr);
+    if (!context)
+        return;
 
     // build the actual geometry for this node
     createGeometry(progress);
@@ -69,14 +52,14 @@ TileNode::TileNode(const TileKey& key, TileNode* parent, EngineContext* context,
     unsigned tw, th;
     _key.getProfile()->getNumTiles(_key.getLOD(), tw, th);
 
-    const double m = 65536; //pow(2.0, 16.0);
+    //const double m = 65536; //pow(2.0, 16.0);
 
     double x = (double)_key.getTileX();
     double y = (double)(th - _key.getTileY() - 1);
 
     _tileKeyValue.set(
-        (float)(x-tw/2), //(int)fmod(x, m),
-        (float)(y-th/2), // (int)fmod(y, m),
+        (float)x, //(float)(x-tw/2), //(int)fmod(x, m),
+        (float)y, //(float)(y-th/2), // (int)fmod(y, m),
         (float)_key.getLOD(),
         -1.0f);
 

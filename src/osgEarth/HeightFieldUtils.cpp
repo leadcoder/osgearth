@@ -1,21 +1,7 @@
 
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/HeightFieldUtils>
@@ -278,6 +264,8 @@ HeightFieldUtils::getHeightAtLocation(const osg::HeightField* hf, double x, doub
     return getHeightAtPixel(hf, px, py, interpolation);
 }
 
+#if 0
+// removed, because it's not used, and b/c it's hard-coded to the earth's ellipsoid
 osg::Vec3
 HeightFieldUtils::getNormalAtLocation(const HeightFieldNeighborhood& hood, double x, double y, double llx, double lly, double dx, double dy, RasterInterpolation interp)
 {
@@ -358,6 +346,7 @@ HeightFieldUtils::getNormalAtLocation(const HeightFieldNeighborhood& hood, doubl
     
     return n; // TODO, include curv
 }
+#endif
 
 float
 HeightFieldUtils::getHeightAtNormalizedLocation(const osg::HeightField* input,

@@ -1,27 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/ImageOverlay>
 #include <osgEarth/AnnotationRegistry>
-#include <osgEarth/MeshSubdivider>
 #include <osgEarth/GeometryUtils>
 #include <osgEarth/MapNode>
 #include <osgEarth/NodeUtils>
@@ -29,11 +11,8 @@
 #include <osgEarth/DrapeableNode>
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/Registry>
-#include <osg/Geode>
-#include <osg/ShapeDrawable>
 #include <osg/Texture2D>
-#include <osg/io_utils>
-#include <algorithm>
+#include <osg/ImageStream>
 
 #define LC "[ImageOverlay] "
 
@@ -87,10 +66,20 @@ ImageOverlay::ImageOverlay(const Config& conf, const osgDB::Options* readOptions
 {
     construct();
 
-    conf.get( "url",   _imageURI );
+    conf.get("url", _imageURI);
+
     if ( _imageURI.isSet() )
     {
-        setImage( _imageURI->getImage(readOptions) );
+        auto image = _imageURI->getImage(readOptions);
+        if (image)
+        {
+            setImage(image);
+
+            // if it's a stream, auto-play it.
+            auto stream = dynamic_cast<osg::ImageStream*>(image);
+            if (stream)
+                stream->play();
+        }
     }
 
     optional<float> tmpAlpha;
@@ -304,12 +293,34 @@ ImageOverlay::getImage() const
     return _image.get();
 }
 
+namespace
+{
+    bool requiresUpdateCall(osg::Image* image)
+    {
+        if (!image) return false;
+        if (image->requiresUpdateCall()) return true;
+        if (dynamic_cast<osg::ImageStream*>(image)) return true;
+        return false;
+    }
+}
+
 void ImageOverlay::setImage( osg::Image* image )
 {
     if (_image != image)
     {
+        if (_image.valid() && requiresUpdateCall(_image.get()))
+        {
+            ADJUST_UPDATE_TRAV_COUNT(this, -1);
+        }
+
         _image = image;
-        dirty();        
+
+        if (_image.valid() && requiresUpdateCall(_image.get()))
+        {
+            ADJUST_UPDATE_TRAV_COUNT(this, +1);
+        }
+
+        dirty();
     }
 }
 
@@ -780,6 +791,11 @@ ImageOverlay::traverse(osg::NodeVisitor &nv)
         {
             _updateScheduled = false;
             ADJUST_UPDATE_TRAV_COUNT(this, -1);
+        }
+
+        if (_image && _image->requiresUpdateCall())
+        {
+            _image->update(&nv);
         }
     }
 

@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
  * Copyright 2008-2014 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * MIT License
  */
 #ifndef OSGEARTH_DRIVER_JOIN_FEATUREFILTER_OPTIONS
 #define OSGEARTH_DRIVER_JOIN_FEATUREFILTER_OPTIONS 1
@@ -38,12 +24,21 @@ namespace osgEarth { namespace Drivers
 
         /** Features to load and use as boundary geometries */
         OE_OPTION_LAYER(FeatureSource, featureSource);
+        /*
+        * Whether to do a "rough" join, meaning all features within the extent of a feature context
+        * will take the first feature that intersects the context rather than checking the
+        * intersection for each feature.  This is useful for the common use case of joining
+        * a country boundary file to classify buildings.  There are lots of buildings, but usually only
+        * one country so we don't need to check an intersection against each building so we can get a performance boost.
+        */
+        OE_OPTION(bool, rough, false);
 
     public:
         Config getConfig() const {
             Config conf = ConfigOptions::getConfig();
             conf.key() = "join";
             featureSource().set(conf, "features");
+            conf.set("rough", rough());
             return conf;
         }
 
@@ -56,6 +51,7 @@ namespace osgEarth { namespace Drivers
     private:
         void fromConfig( const Config& conf ) {
             featureSource().get(conf, "features");
+            conf.get("rough", rough());
         }
     };
 

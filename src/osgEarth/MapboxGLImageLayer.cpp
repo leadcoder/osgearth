@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/MapboxGLImageLayer>
 #include <osgEarth/Session>
@@ -1318,6 +1304,8 @@ MapBoxGLImageLayer::createImageImplementation(const TileKey& key, ProgressCallba
                 continue;
             }
 
+            FilterContext context(session.get(), featureSource->getFeatureProfile(), key.getExtent());
+
             // TODO:  Maybe you don't need to zoom up for each layer, only once per feature source.
 
             LayeredFeatures layeredFeatures;
@@ -1437,24 +1425,23 @@ MapBoxGLImageLayer::createImageImplementation(const TileKey& key, ProgressCallba
                     }
                     Style style;
                     style.getOrCreateSymbol<PolygonSymbol>()->fill() = Color(layer.paint().fillColor().evaluate(key.getLOD()));
-                    featureRasterizer.render(
-                        features,
-                        style,
-                        featureSource->getFeatureProfile(),
-                        session->styles());
+                    featureRasterizer.render(features, style, context);
+                        //features,
+                        //style,
+                        //featureSource->getFeatureProfile(),
+                        //session->styles());
                     numFeaturesRendered += features.size();
                 }
                 else if (layer.type() == "line")
                 {
                     Style style;
                     style.getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().color() = layer.paint().lineColor().evaluate(key.getLOD());
-                    style.getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().width() = layer.paint().lineWidth().evaluate(key.getLOD());
-                    style.getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().widthUnits() = Units::PIXELS;
-                    featureRasterizer.render(
-                        features,
-                        style,
-                        featureSource->getFeatureProfile(),
-                        session->styles());
+                    style.getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().width() = Distance(layer.paint().lineWidth().evaluate(key.getLOD()), Units::PIXELS);
+                    featureRasterizer.render(features, style, context);
+                        //features,
+                        //style,
+                        //featureSource->getFeatureProfile(),
+                        //session->styles());
                     numFeaturesRendered += features.size();
                 }
                 else if (layer.type() == "symbol")
@@ -1499,11 +1486,11 @@ MapBoxGLImageLayer::createImageImplementation(const TileKey& key, ProgressCallba
 
                     }
 
-                    featureRasterizer.render(
-                        features,
-                        style,
-                        featureSource->getFeatureProfile(),
-                        session->styles());
+                    featureRasterizer.render(features, style, context);
+                        //features,
+                        //style,
+                        //featureSource->getFeatureProfile(),
+                        //session->styles());
 
                     numFeaturesRendered += features.size();
                 }

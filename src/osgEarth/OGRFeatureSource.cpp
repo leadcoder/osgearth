@@ -1,33 +1,20 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/OGRFeatureSource>
 #include <osgEarth/OgrUtils>
 #include <osgEarth/GeometryUtils>
 #include <osgEarth/FeatureCursor>
 #include <osgEarth/Filter>
-
-#include <osgEarth/Registry>
 #include <osgEarth/StringUtils>
 
 #include <gdal.h>
 #include <queue>
-#include <list>
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+#include <Superluminal/PerformanceAPI.h>
+#endif
 
 #define LC "[OGRFeatureSource] "
 
@@ -36,7 +23,7 @@ using namespace osgEarth;
 namespace osgEarth { namespace OGR
 {
     // helper function.
-    OGRLayerH openLayer(OGRDataSourceH ds, const std::string& layer)
+    OGRLayerH openLayer(GDALDatasetH ds, const std::string& layer)
     {
         OGRLayerH h = GDALDatasetGetLayerByName(ds, layer.c_str());
         if ( !h )
@@ -85,8 +72,8 @@ namespace osgEarth { namespace OGR
 //........................................................................
 
 OGR::OGRFeatureCursor::OGRFeatureCursor(
-    OGRDataSourceH dsHandle,
-    OGRLayerH layerHandle,
+    void* dsHandle,
+    void* layerHandle,
     const FeatureSource* source,
     const FeatureProfile* profile,
     const Query& query,
@@ -99,71 +86,63 @@ OGR::OGRFeatureCursor::OGRFeatureCursor(
     _source(source),
     _dsHandle(dsHandle),
     _layerHandle(layerHandle),
-    _resultSetHandle(0L),
-    _spatialFilter(0L),
-    _query(query),
     _chunkSize(chunkSize == 0u ? 500u : chunkSize),
-    _nextHandleToQueue(0L),
-    _resultSetEndReached(false),
     _profile(profile),
     _filters(filters),
-    _rewindPolygons(rewindPolygons)
+    _rewindPolygons(rewindPolygons),
+    _query(query)
 {
-    std::string expr;
-    std::string from = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
-
-    std::string driverName = OGR_Dr_GetName(OGR_DS_GetDriver(dsHandle));
-
-    // Quote the layer name if it is a shapefile, so we can handle any weird filenames like those with spaces or hyphens.
-    // Or quote any layers containing spaces for PostgreSQL
-    if (driverName == "ESRI Shapefile" || driverName == "VRT" ||
-        from.find(' ') != std::string::npos)
-    {
-        std::string delim = "\"";
-        from = delim + from + delim;
-    }
+    std::string sql_expr;
 
     if (_query.expression().isSet())
     {
+        std::string from = OGR_FD_GetName(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
+        std::string driverName = GDALGetDriverShortName(GDALGetDatasetDriver(static_cast<GDALDatasetH>(dsHandle)));
+
+        // Quote the layer name if it is a shapefile, so we can handle any weird filenames like those with spaces or hyphens.
+        // Or quote any layers containing spaces for PostgreSQL
+        if (driverName == "ESRI Shapefile" ||
+            driverName == "VRT" || 
+            from.find(' ') != std::string::npos ||
+            from.find('-') != std::string::npos)
+        {
+            std::string delim = "\"";
+            from = delim + from + delim;
+        }
+
         // build the SQL: allow the Query to include either a full SQL statement or
         // just the WHERE clause.
-        expr = _query.expression().value();
+        sql_expr = _query.expression().value();
 
         // if the expression is just a where clause, expand it into a complete SQL expression.
-        std::string temp = osgEarth::toLower(expr);
+        std::string temp = osgEarth::toLower(sql_expr);
 
         if (temp.find("select") != 0)
         {
             std::stringstream buf;
-            buf << "SELECT * FROM " << from << " WHERE " << expr;
+            buf << "SELECT * FROM " << from << " WHERE " << sql_expr;
             std::string bufStr;
             bufStr = buf.str();
-            expr = bufStr;
+            sql_expr = bufStr;
         }
-    }
-    else
-    {
-        std::stringstream buf;
-        buf << "SELECT * FROM " << from;
-        expr = buf.str();
-    }
 
-    //Include the order by clause if it's set
-    if (_query.orderby().isSet())
-    {
-        std::string orderby = _query.orderby().value();
-
-        std::string temp = osgEarth::toLower(orderby);
-
-        if (temp.find("order by") != 0)
+        //Include the order by clause if it's set
+        if (_query.orderby().isSet())
         {
-            std::stringstream buf;
-            buf << "ORDER BY " << orderby;
-            std::string bufStr;
-            bufStr = buf.str();
-            orderby = buf.str();
+            std::string orderby = _query.orderby().value();
+
+            std::string temp = osgEarth::toLower(orderby);
+
+            if (temp.find("order by") != 0)
+            {
+                std::stringstream buf;
+                buf << "ORDER BY " << orderby;
+                std::string bufStr;
+                bufStr = buf.str();
+                orderby = buf.str();
+            }
+            sql_expr += (" " + orderby);
         }
-        expr += (" " + orderby);
     }
 
     // if the tilekey is set, convert it to feature profile coords
@@ -184,34 +163,40 @@ OGR::OGRFeatureCursor::OGRFeatureCursor(
         OGR_G_AddPoint(ring, _query.bounds()->xMin(), _query.bounds()->yMin(), 0);
 
         _spatialFilter = OGR_G_CreateGeometry(wkbPolygon);
-        OGR_G_AddGeometryDirectly(_spatialFilter, ring);
+        OGR_G_AddGeometryDirectly(static_cast<OGRGeometryH>(_spatialFilter), ring);
         // note: "Directly" above means _spatialFilter takes ownership if ring handle
     }
 
-    _resultSetHandle = GDALDatasetExecuteSQL(_dsHandle, expr.c_str(), _spatialFilter, 0L);
-
-    if (_resultSetHandle)
+    if (sql_expr.empty() == false)
     {
-        OGR_L_ResetReading(_resultSetHandle);
+        // SQL query:
+        _resultSetHandle = GDALDatasetExecuteSQL(static_cast<GDALDatasetH>(_dsHandle), sql_expr.c_str(), static_cast<OGRGeometryH>(_spatialFilter), nullptr);
     }
+    else
+    {
+        // Normal query:
+        _resultSetHandle = _layerHandle;
+        
+        if (_spatialFilter)
+        {
+            // apply the spatial filter to the layer:
+            OGR_L_SetSpatialFilter(static_cast<OGRLayerH>(_resultSetHandle), static_cast<OGRGeometryH>(_spatialFilter));
+        }
+    }
+
+    OGR_L_ResetReading(static_cast<OGRLayerH>(_resultSetHandle));
 
     readChunk();
 }
 
-OGR::OGRFeatureCursor::OGRFeatureCursor(OGRLayerH resultSetHandle, const FeatureProfile* profile) :
-    FeatureCursor(NULL),
+OGR::OGRFeatureCursor::OGRFeatureCursor(void* resultSetHandle, const FeatureProfile* profile) :
+    FeatureCursor(nullptr),
     _resultSetHandle(resultSetHandle),
-    _profile(profile),
-    _dsHandle(NULL),
-    _layerHandle(NULL),
-    _spatialFilter(0L),
-    _chunkSize(500),
-    _nextHandleToQueue(0L),
-    _resultSetEndReached(false)
+    _profile(profile)
 {
     if (_resultSetHandle)
     {
-        OGR_L_ResetReading(_resultSetHandle);
+        OGR_L_ResetReading(static_cast<OGRLayerH>(_resultSetHandle));
     }
 
     readChunk();
@@ -220,16 +205,16 @@ OGR::OGRFeatureCursor::OGRFeatureCursor(OGRLayerH resultSetHandle, const Feature
 OGR::OGRFeatureCursor::~OGRFeatureCursor()
 {
     if ( _nextHandleToQueue )
-        OGR_F_Destroy( _nextHandleToQueue );
+        OGR_F_Destroy( static_cast<OGRFeatureH>(_nextHandleToQueue) );
 
     if ( _dsHandle && _resultSetHandle != _layerHandle )
-        OGR_DS_ReleaseResultSet( _dsHandle, _resultSetHandle );
+        GDALDatasetReleaseResultSet( static_cast<GDALDatasetH>(_dsHandle), static_cast<OGRLayerH>(_resultSetHandle) );
 
     if ( _spatialFilter )
-        OGR_G_DestroyGeometry( _spatialFilter );
+        OGR_G_DestroyGeometry( static_cast<OGRGeometryH>(_spatialFilter) );
 
     if ( _dsHandle )
-        OGRReleaseDataSource( _dsHandle );
+        GDALClose( static_cast<GDALDatasetH>(_dsHandle) );
 }
 
 bool
@@ -263,26 +248,21 @@ OGR::OGRFeatureCursor::readChunk()
 {
     if ( !_resultSetHandle )
         return;
+
+    OgrUtils::OGRFeatureFactory factory;
+    factory.srs = _profile->getSRS();
+    factory.interp = _profile->geoInterp();
+    factory.rewindPolygons = _rewindPolygons;
     
     while( _queue.size() < _chunkSize && !_resultSetEndReached )
     {
         FeatureList filterList;
         while( filterList.size() < _chunkSize && !_resultSetEndReached )
         {
-            OGRFeatureH handle = OGR_L_GetNextFeature( _resultSetHandle );
+            OGRFeatureH handle = OGR_L_GetNextFeature( static_cast<OGRLayerH>(_resultSetHandle) );
             if ( handle )
             {
-                /*
-                // Crop the geometry by the spatial filter.  Could be useful for tiling.
-                if (_spatialFilter)
-                {
-                    OGRGeometryH geomRef = OGR_F_GetGeometryRef(handle);
-                    OGRGeometryH intersection = OGR_G_Intersection(geomRef, _spatialFilter);
-                    OGR_F_SetGeometry(handle, intersection);
-                }
-                */
-                osg::ref_ptr<Feature> feature = OgrUtils::createFeature(
-                    handle, _profile->getSRS(), _rewindPolygons);
+                osg::ref_ptr<Feature> feature = factory.createFeature(handle);
 
                 if (feature.valid())
                 {
@@ -314,34 +294,15 @@ OGR::OGRFeatureCursor::readChunk()
             }
         }
 
-#if 0
-        // preprocess the features using the filter list:
-        if (!_filters.empty())
+        for (auto& feature : filterList)
         {
-            FilterContext cx;
-            cx.setProfile( _profile.get() );
-            if (_query.bounds().isSet())
-            {
-                cx.extent() = GeoExtent(_profile->getSRS(), _query.bounds().get());
-            }
-            else
-            {
-                cx.extent() = _profile->getExtent();
-            }
-
-            cx = _filters.push(filterList, cx);
-        }
-#endif
-
-        for(FeatureList::const_iterator i = filterList.begin(); i != filterList.end(); ++i)
-        {
-            _queue.push( i->get() );
+            _queue.push(feature);
         }
     }
 
     if (_chunkSize == ~0)
     {
-        OGR_L_ResetReading(_resultSetHandle);
+        OGR_L_ResetReading(static_cast<OGRLayerH>(_resultSetHandle));
     }
 }
 
@@ -409,20 +370,20 @@ OGRFeatureSource::closeImplementation()
     {
         if (_needsSync)
         {
-            OGR_L_SyncToDisk(_layerHandle); // for writing only
-            const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
+            OGR_L_SyncToDisk(static_cast<OGRLayerH>(_layerHandle)); // for writing only
+            const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
             std::stringstream buf;
             buf << "REPACK " << name;
             std::string bufStr;
             bufStr = buf.str();
-            OGR_DS_ExecuteSQL(_dsHandle, bufStr.c_str(), 0L, 0L);
+            GDALDatasetExecuteSQL(static_cast<GDALDatasetH>(_dsHandle), bufStr.c_str(), 0L, 0L);
         }
         _layerHandle = 0L;
     }
 
     if (_dsHandle)
     {
-        OGRReleaseDataSource(_dsHandle);
+        GDALClose(static_cast<GDALDatasetH>(_dsHandle));
         _dsHandle = 0L;
     }
 
@@ -564,7 +525,7 @@ OGRFeatureSource::openImplementation()
         }
 
         // Open a specific layer within the data source, if applicable:
-        _layerHandle = OGR::openLayer(_dsHandle, options().layer().value());
+        _layerHandle = OGR::openLayer(static_cast<GDALDatasetH>(_dsHandle), options().layer().value());
         if (!_layerHandle)
         {
             return Status(Status::ResourceUnavailable, Stringify() << "Failed to open layer \"" << options().layer().get() << "\" from \"" << _source << "\"");
@@ -580,7 +541,7 @@ OGRFeatureSource::openImplementation()
         else
         {
             // extract the SRS and Extent:                
-            OGRSpatialReferenceH srHandle = OGR_L_GetSpatialRef(_layerHandle);
+            OGRSpatialReferenceH srHandle = OGR_L_GetSpatialRef(static_cast<OGRLayerH>(_layerHandle));
             if (!srHandle)
             {
                 return Status(Status::ResourceUnavailable, Stringify() << "No spatial reference found in \"" << _source << "\"");
@@ -594,7 +555,7 @@ OGRFeatureSource::openImplementation()
 
             // extract the full extent of the layer:
             OGREnvelope env;
-            if (OGR_L_GetExtent(_layerHandle, &env, 1) != OGRERR_NONE)
+            if (OGR_L_GetExtent(static_cast<OGRLayerH>(_layerHandle), &env, 1) != OGRERR_NONE)
             {
                 return Status(Status::ResourceUnavailable, Stringify() << "Invalid extent returned from \"" << _source << "\"");
             }
@@ -613,15 +574,15 @@ OGRFeatureSource::openImplementation()
         // assuming we successfully opened the layer, build a spatial index if requested.
         if (options().buildSpatialIndex() == true)
         {
-            if ((options().forceRebuildSpatialIndex() == true) || (OGR_L_TestCapability(_layerHandle, OLCFastSpatialFilter) == 0))
+            if ((options().forceRebuildSpatialIndex() == true) || (OGR_L_TestCapability(static_cast<OGRLayerH>(_layerHandle), OLCFastSpatialFilter) == 0))
             {
                 OE_DEBUG << LC << _source << ": building spatial index for " << getName() << std::endl;
                 std::stringstream buf;
-                const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
+                const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
                 buf << "CREATE SPATIAL INDEX ON " << name;
                 std::string bufStr;
                 bufStr = buf.str();
-                OGR_DS_ExecuteSQL(_dsHandle, bufStr.c_str(), 0L, 0L);
+                GDALDatasetExecuteSQL(static_cast<GDALDatasetH>(_dsHandle), bufStr.c_str(), 0L, 0L);
             }
             else
             {
@@ -631,13 +592,13 @@ OGRFeatureSource::openImplementation()
 
 
         //Get the feature count
-        _featureCount = OGR_L_GetFeatureCount(_layerHandle, 1);
+        _featureCount = OGR_L_GetFeatureCount(static_cast<OGRLayerH>(_layerHandle), 1);
 
         // establish the feature schema:
         initSchema();
 
         // establish the geometry type for this feature layer:
-        OGRwkbGeometryType wkbType = OGR_FD_GetGeomType(OGR_L_GetLayerDefn(_layerHandle));
+        OGRwkbGeometryType wkbType = OGR_FD_GetGeomType(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
         if (
             wkbType == wkbPolygon ||
             wkbType == wkbPolygon25D)
@@ -775,13 +736,13 @@ OGRFeatureSource::create(const FeatureProfile* profile,
     if (driverName.empty())
         driverName = "ESRI Shapefile";
 
-    _ogrDriverHandle = OGRGetDriverByName(driverName.c_str());
+    _ogrDriverHandle = GDALGetDriverByName(driverName.c_str());
 
     _dsHandleThreadId = std::this_thread::get_id();
 
     // this handle may ONLY be used from this thread!
     // https://github.com/OSGeo/gdal/blob/v2.4.1/gdal/gcore/gdaldataset.cpp#L2577
-    _dsHandle = OGR_Dr_CreateDataSource(_ogrDriverHandle, _source.c_str(), NULL);
+    _dsHandle = GDALCreate(static_cast<GDALDriverH>(_ogrDriverHandle), _source.c_str(), 0, 0, 0, GDT_Unknown, NULL);
 
     if (!_dsHandle)
     {
@@ -792,9 +753,9 @@ OGRFeatureSource::create(const FeatureProfile* profile,
 
     OGRwkbGeometryType ogrGeomType = OgrUtils::getOGRGeometryType(geometryType);
 
-    OGRSpatialReferenceH ogrSRS = profile->getSRS()->getHandle();
+    OGRSpatialReferenceH ogrSRS = static_cast<OGRSpatialReferenceH>(profile->getSRS()->getHandle());
 
-    _layerHandle = OGR_DS_CreateLayer(_dsHandle, "", ogrSRS, ogrGeomType, NULL);
+    _layerHandle = GDALDatasetCreateLayer(static_cast<GDALDatasetH>(_dsHandle), "", ogrSRS, ogrGeomType, NULL);
 
     if (!_layerHandle)
     {
@@ -809,7 +770,7 @@ OGRFeatureSource::create(const FeatureProfile* profile,
             i->second == ATTRTYPE_INT ? OFTInteger :
             OFTString;
         OGRFieldDefnH fdef = OGR_Fld_Create(i->first.c_str(), type);
-        OGR_L_CreateField(_layerHandle, fdef, TRUE);
+        OGR_L_CreateField(static_cast<OGRLayerH>(_layerHandle), fdef, TRUE);
     }
 
     _featureCount = 0;
@@ -825,21 +786,25 @@ OGRFeatureSource::buildSpatialIndex()
 {
    if (_dsHandle &&
        _layerHandle && 
-       OGR_L_TestCapability(_layerHandle, OLCFastSpatialFilter) == 0 &&
+       OGR_L_TestCapability(static_cast<OGRLayerH>(_layerHandle), OLCFastSpatialFilter) == 0 &&
        _dsHandleThreadId == std::this_thread::get_id())
    {
        std::stringstream buf;
-       const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(_layerHandle));
+       const char* name = OGR_FD_GetName(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
        buf << "CREATE SPATIAL INDEX ON " << name;
        std::string bufStr;
        bufStr = buf.str();
-       OGR_DS_ExecuteSQL(_dsHandle, bufStr.c_str(), 0L, 0L);
+       GDALDatasetExecuteSQL(static_cast<GDALDatasetH>(_dsHandle), bufStr.c_str(), 0L, 0L);
    }
 }
 
 FeatureCursor*
 OGRFeatureSource::createFeatureCursorImplementation(const Query& query, ProgressCallback* progress) const
 {
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+    PERFORMANCEAPI_INSTRUMENT_DATA("filename", _source.c_str());
+#endif
+
     if (_geometry.valid())
     {
         return new GeometryFeatureCursor(
@@ -849,7 +814,7 @@ OGRFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
     }
     else
     {
-        OGRDataSourceH dsHandle = 0L;
+        GDALDatasetH dsHandle = 0L;
         OGRLayerH layerHandle = 0L;
 
         const char* openOptions[2] = {
@@ -898,7 +863,7 @@ OGRFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
         {
             if (dsHandle)
             {
-                OGRReleaseDataSource(dsHandle);
+                GDALClose(dsHandle);
             }
 
             return 0L;
@@ -911,7 +876,7 @@ OGRFeatureSource::deleteFeature(FeatureID fid)
 {
     if (_writable && _layerHandle)
     {
-        if (OGR_L_DeleteFeature(_layerHandle, fid) == OGRERR_NONE)
+        if (OGR_L_DeleteFeature(static_cast<OGRLayerH>(_layerHandle), fid) == OGRERR_NONE)
         {
             _needsSync = true;
             return true;
@@ -939,14 +904,15 @@ OGRFeatureSource::getFeature(FeatureID fid)
 
     if (_layerHandle && !isBlacklisted(fid))
     {
-        OGRFeatureH handle = OGR_L_GetFeature(_layerHandle, fid);
+        OGRFeatureH handle = OGR_L_GetFeature(static_cast<OGRLayerH>(_layerHandle), fid);
         if (handle)
         {
-            result = OgrUtils::createFeature(
-                handle,
-                getFeatureProfile()->getSRS(),
-                getFeatureProfile()->geoInterp(),
-                *_options->rewindPolygons());
+            OgrUtils::OGRFeatureFactory factory;
+            factory.srs = getFeatureProfile()->getSRS();
+            factory.interp = getFeatureProfile()->geoInterp();
+            factory.rewindPolygons = _options->rewindPolygons().value();
+
+            result = factory.createFeature(handle);
 
             OGR_F_Destroy(handle);
         }
@@ -969,7 +935,7 @@ OGRFeatureSource::getSchema() const
 bool
 OGRFeatureSource::insertFeature(Feature* feature)
 {
-    OGRFeatureH feature_handle = OGR_F_Create(OGR_L_GetLayerDefn(_layerHandle));
+    OGRFeatureH feature_handle = OGR_F_Create(OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle)));
     if (feature_handle)
     {
         const AttributeTable& attrs = feature->getAttrs();
@@ -1002,7 +968,7 @@ OGRFeatureSource::insertFeature(Feature* feature)
         }
 
         // assign the geometry:
-        OGRFeatureDefnH def = ::OGR_L_GetLayerDefn(_layerHandle);
+        OGRFeatureDefnH def = ::OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle));
 
         OGRwkbGeometryType reported_type = OGR_FD_GetGeomType(def);
 
@@ -1012,7 +978,7 @@ OGRFeatureSource::insertFeature(Feature* feature)
             OE_WARN << LC << "OGR_F_SetGeometryDirectly failed!" << std::endl;
         }
 
-        OGRErr err = OGR_L_CreateFeature(_layerHandle, feature_handle);
+        OGRErr err = OGR_L_CreateFeature(static_cast<OGRLayerH>(_layerHandle), feature_handle);
         if (err != OGRERR_NONE)
         {
             //TODO: handle error better
@@ -1066,7 +1032,7 @@ OGRFeatureSource::parseGeometryUrl(const URI& geomUrl, const osgDB::Options* dbO
 void
 OGRFeatureSource::initSchema()
 {
-    OGRFeatureDefnH layerDef = OGR_L_GetLayerDefn(_layerHandle);
+    OGRFeatureDefnH layerDef = OGR_L_GetLayerDefn(static_cast<OGRLayerH>(_layerHandle));
     for (int i = 0; i < OGR_FD_GetFieldCount(layerDef); i++)
     {
         OGRFieldDefnH fieldDef = OGR_FD_GetFieldDefn(layerDef, i);

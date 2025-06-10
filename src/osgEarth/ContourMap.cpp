@@ -1,29 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2012 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include <osgEarth/ContourMap>
 #include <osgEarth/Shaders>
 #include <osgEarth/Registry>
 #include <osgEarth/TerrainEngineNode>
-#include <osgEarth/MapNode>
+#include <osgEarth/VerticalDatum>
+#include <osgDB/WriteFile>
 
 #define LC "[ContourMap] "
 
@@ -56,6 +40,7 @@ ContourMapLayer::Options::getConfig() const
     }
     if (!stopsConf.empty())
         conf.add(stopsConf);
+    conf.set("vdatum", vdatum());
     return conf;
 }
 
@@ -70,6 +55,7 @@ ContourMapLayer::Options::fromConfig(const Config& conf)
         if (stop.get("elevation", s.elevation) && stop.get("color", s.color))
             stops().emplace_back(s);
     }
+    conf.get("vdatum", vdatum());
 }
 
 //........................................................................
@@ -80,17 +66,23 @@ void
 ContourMapLayer::setTransferFunction(osg::TransferFunction1D* xfer)
 {
     _xfer = xfer;
+    dirty();
+}
+
+void
+ContourMapLayer::dirty()
+{
+    OE_SOFT_ASSERT_AND_RETURN(_xfer.valid() && _xferMin.valid() && _xferRange.valid(), void());
+
     _xferTexture->setImage(_xfer->getImage());
     _xferMin->set(_xfer->getMinimum());
     _xferRange->set(_xfer->getMaximum() - _xfer->getMinimum());
-
-    //OE_WARN << "min=" << _xfer->getMinimum() << ", range=" << (_xfer->getMaximum()-_xfer->getMinimum()) << std::endl;
 }
 
 void
 ContourMapLayer::init()
 {
-    VisibleLayer::init();
+    super::init();
 
     setRenderType(RENDERTYPE_TERRAIN_SURFACE);
 
@@ -127,6 +119,7 @@ ContourMapLayer::init()
 
     // build a transfer function.
     osg::TransferFunction1D* xfer = new osg::TransferFunction1D();
+    xfer->allocate(1024);
 
     if (options().stops().empty() == false)
     {
@@ -137,16 +130,20 @@ ContourMapLayer::init()
     }
     else
     {
-        float s = 2500.0f;
-        xfer->setColor(-1.0000 * s, osg::Vec4f(0, 0, 0.5, 1), false);
-        xfer->setColor(-0.2500 * s, osg::Vec4f(0, 0, 1, 1), false);
-        xfer->setColor(0.0000 * s, osg::Vec4f(0, .5, 1, 1), false);
-        xfer->setColor(0.0010 * s, Color("#C2B280FF"), false);
-        xfer->setColor(0.0062 * s, osg::Vec4f(.84, .84, .25, 1), false);
-        xfer->setColor(0.1250 * s, osg::Vec4f(.125, .62, 0, 1), false);
-        xfer->setColor(0.3250 * s, osg::Vec4f(.80, .70, .47, 1), false);
-        xfer->setColor(0.7500 * s, osg::Vec4f(.5, .5, .5, 1), false);
-        xfer->setColor(1.0000 * s, osg::Vec4f(1, 1, 1, 1), false);
+        xfer->setColor(-7500.0f, Color("#000016"));
+        xfer->setColor(-2500.0f, Color("#00007f"));
+        xfer->setColor(-625.0f, Color("#0000ff"));
+        xfer->setColor(-1.0f, Color("#007fff"));
+        xfer->setColor(0.0f, Color("#c2b280"));
+        xfer->setColor(50.0f, Color("#d6d63f"));
+        xfer->setColor(250.0f, Color("#1f9e00"));
+        xfer->setColor(1000.0f, Color("#30632c"));
+        xfer->setColor(1750.0f, Color("#a37714"));
+        xfer->setColor(2250.0f, Color("#6c2f2f"));
+        xfer->setColor(2600.0f, Color("#7f7f7f"));
+        xfer->setColor(3000.0f, Color("#ffffff"));
+        xfer->setColor(5500.0f, Color("#83eeff"));
+        xfer->setColor(8000.0f, Color("#ff1d7f"));
     }
 
     xfer->updateImage();
@@ -156,23 +153,61 @@ ContourMapLayer::init()
 void
 ContourMapLayer::prepareForRendering(TerrainEngine* engine)
 {
-    VisibleLayer::prepareForRendering(engine);
+    super::prepareForRendering(engine);
 
-    if (!engine->getResources()->reserveTextureImageUnitForLayer(_reservation, this, "ContourMap"))
+    if (!engine->getResources()->reserveTextureImageUnitForLayer(_reservationColorRamp, this, "ContourMap"))
     {
         setStatus(Status::ResourceUnavailable, "No texture image units available");
         return;
     }
 
     osg::StateSet* stateset = getOrCreateStateSet();
-    stateset->setTextureAttributeAndModes(_reservation.unit(), _xferTexture.get(), osg::StateAttribute::ON);
-    _xferSampler->set(_reservation.unit());
+    stateset->setTextureAttribute(_reservationColorRamp.unit(), _xferTexture.get());
+    _xferSampler->set(_reservationColorRamp.unit());
+
+    if (!options().vdatum()->empty())
+    {
+        auto* vdatum = VerticalDatum::get(options().vdatum().get());
+        if (vdatum)
+        {
+            if (!engine->getResources()->reserveTextureImageUnitForLayer(_reservationGeoid, this, "ContourMap"))
+            {
+                setStatus(Status::ResourceUnavailable, "No texture image units available");
+                return;
+            }
+
+            auto* geoid = vdatum->getGeoid();
+            OE_SOFT_ASSERT_AND_RETURN(geoid, void());
+
+            auto* hf = geoid->getHeightField();
+            OE_SOFT_ASSERT_AND_RETURN(hf, void());
+
+            auto image = new osg::Image();
+            image->allocateImage(hf->getNumColumns(), hf->getNumRows(), 1, GL_RED, GL_FLOAT);
+            memcpy(image->data(), hf->getFloatArray()->getDataPointer(), hf->getFloatArray()->getTotalDataSize());
+
+            auto tex = new osg::Texture2D(image);
+            tex->setInternalFormat(GL_R32F);
+            tex->setResizeNonPowerOfTwoHint(false);
+            tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            tex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+            tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::NEAREST);
+            tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::NEAREST);
+
+            stateset->setTextureAttribute(_reservationGeoid.unit(), tex);
+            stateset->addUniform(new osg::Uniform("oe_contour_geoid", _reservationGeoid.unit()));
+            stateset->setDefine("OE_USE_GEOID");
+
+            osgDB::writeImageFile(*image, "geoid.tif");
+        }
+    }
 }
 
 Status
 ContourMapLayer::closeImplementation()
 {
-    _reservation.release();
+    _reservationColorRamp.release();
+    _reservationGeoid.release();
 
-    return VisibleLayer::closeImplementation();
+    return super::closeImplementation();
 }

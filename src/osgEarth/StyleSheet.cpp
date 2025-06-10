@@ -1,27 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/StyleSheet>
 #include <osgEarth/CssUtils>
-#include <algorithm>
 
 #define LC "[StyleSheet] "
 
@@ -44,11 +26,9 @@ StyleSheet::Options::getConfig() const
     }
 
     conf.remove("style");
-    for (StyleMap::const_iterator i = styles().begin();
-        i != styles().end();
-        ++i)
+    for(auto& style_entry : styles())
     {
-        conf.add("style", i->second.getConfig());
+        conf.add("style", style_entry.second.getConfig());
     }
 
     conf.remove("library");
@@ -68,11 +48,17 @@ StyleSheet::Options::getConfig() const
         Config scriptConf("script");
 
         if (!_script->name.empty())
+        {
             scriptConf.set("name", _script->name);
+        }
         if (!_script->language.empty())
+        {
             scriptConf.set("language", _script->language);
+        }
         if (_script->uri.isSet())
+        {
             scriptConf.set("url", _script->uri->base());
+        }
         else if (!_script->code.empty())
         {
             auto code = _script->code;
@@ -84,7 +70,7 @@ StyleSheet::Options::getConfig() const
                 code = code.substr(0, pos);
             }
 
-            scriptConf.setValue(_script->code);
+            scriptConf.setValue(code);
         }
 
         conf.add(scriptConf);
@@ -110,7 +96,7 @@ StyleSheet::Options::fromConfig(const Config& conf)
 
         _libraries[resLib->getName()] = resLib;
     }
-
+    
     // read in any scripts
     _script = NULL;
     const Config& scriptConf = conf.child("script");
@@ -215,14 +201,16 @@ StyleSheet::Options::fromConfig(const Config& conf)
 
                 auto_script << "// __oe_auto__\n";
                 auto_script << "function __oe_select_style() {\n";
+                auto_script << "    var combo = '';\n";
             }
 
-            auto_script << "    if (" << selector_symbol->predicate().get() << ") return \"" << style.getName() << "\";\n";
+            auto_script << "    if (" << selector_symbol->predicate().get() << ") combo = combo + '" << style.getName() << ",';\n";
         }
     }
 
     if (auto_selector)
     {
+        auto_script << "    if (combo.length > 0) return combo.substring(0, combo.length-1);\n";
         auto_script << "    return 'default';\n}\n";
         auto new_code = auto_script.str();
 

@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/ImageUtils>
@@ -2204,6 +2190,17 @@ namespace
         }
     };
 
+    //! Select an appropriate reader for the given data type.
+    //! 
+    //! NOTE!!
+    //! Fopr UNSIGNED data types, we are using a SIGNED reader, except in the case
+    //! of GL_UNSIGNED_BYTE. This is because the OSG TIFF reader always declares
+    //! the data to be unsigned even when it's not. That's a bug, but it does not
+    //! hurt us to generate signed data for unsigned input, so this is an acceptable
+    //! workaround.
+    //! 
+    //! The exception is GL_UNSIGNED_BYTE which is commonly normalized into [0..1]
+    //! so we will maintain signed-ness for that.
     template<int GLFormat>
     inline ImageUtils::PixelReader::ReaderFunc
     chooseReader(GLenum dataType)
@@ -2215,13 +2212,13 @@ namespace
         case GL_UNSIGNED_BYTE:
             return &ColorReader<GLFormat, GLubyte>::read;
         case GL_SHORT:
-            return &ColorReader<GLFormat, GLshort>::read;
         case GL_UNSIGNED_SHORT:
-            return &ColorReader<GLFormat, GLushort>::read;
+            return &ColorReader<GLFormat, GLshort>::read;
+            //return &ColorReader<GLFormat, GLushort>::read;
         case GL_INT:
-            return &ColorReader<GLFormat, GLint>::read;
         case GL_UNSIGNED_INT:
-            return &ColorReader<GLFormat, GLuint>::read;
+            return &ColorReader<GLFormat, GLint>::read;
+            //return &ColorReader<GLFormat, GLuint>::read;
         case GL_FLOAT:
             return &ColorReader<GLFormat, GLfloat>::read;
         case GL_UNSIGNED_SHORT_5_5_5_1:
@@ -2235,6 +2232,7 @@ namespace
         }
     }
 
+    //! Selects a reader based on the input pixel format and type.
     inline ImageUtils::PixelReader::ReaderFunc
     getReader( GLenum pixelFormat, GLenum dataType )
     {
@@ -2869,12 +2867,15 @@ ImageUtils::getMaxTextureSize(const osg::Image* image, const osgDB::Options* opt
 
         else if (!options->getOptionString().empty())
         {
-            std::vector<std::string> tokens;
-            StringTokenizer(options->getOptionString(), tokens);
+            auto tokens = StringTokenizer()
+                .whitespaceDelims()
+                .standardQuotes()
+                .tokenize(options->getOptionString());
+
             for (auto& token : tokens)
             {
-                std::vector<std::string> kvp;
-                StringTokenizer(token, kvp, "=");
+                auto kvp = StringTokenizer().delim("=").standardQuotes().tokenize(token);
+
                 if (kvp.size() == 2 && kvp[0] == "osgearth.max_texture_size")
                 {
                     maxdim = std::max(as<int>(kvp[1], maxdim), 1);

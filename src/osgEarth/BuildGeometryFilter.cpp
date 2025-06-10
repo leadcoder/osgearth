@@ -1,20 +1,6 @@
-/* -*_maxPolyTilingAngle_deg-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/BuildGeometryFilter>
 #include <osgEarth/Session>
@@ -32,20 +18,14 @@
 #include <osgEarth/Clamping>
 #include <osgEarth/LineDrawable>
 #include <osgEarth/PointDrawable>
-#include <osgEarth/StateSetCache>
 #include <osgEarth/Registry>
 #include <osgEarth/StyleSheet>
 #include <osg/Geode>
 #include <osg/Geometry>
-#include <osg/LineStipple>
-#include <osg/Point>
 #include <osg/TriangleIndexFunctor>
 #include <osgText/Text>
 #include <osgUtil/Tessellator>
 #include <osgUtil/Optimizer>
-#include <osgUtil/Simplifier>
-#include <osgDB/WriteFile>
-#include <osg/Version>
 #include <iterator>
 #include <osgEarth/Notify>
 #include "weemesh.h"
@@ -474,6 +454,13 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
     typedef std::map< std::string, osg::ref_ptr< osg::Geode > > TextureToGeodeMap;
     TextureToGeodeMap geodes;
 
+    // Do we have a resource library?
+    ResourceLibrary* resourceLib = nullptr;
+    if (context.getSession() && context.getSession()->styles())
+    {
+        resourceLib = context.getSession()->styles()->getResourceLibrary(_style.get<LineSymbol>()->library().get());
+    }
+
     // iterate over all features.
     for( FeatureList::iterator i = features.begin(); i != features.end(); ++i )
     {
@@ -486,18 +473,9 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
         if ( !line )
             continue;
 
-        URI imageURI;
-
-        // Image URI
-        if (line->imageURI().isSet() && context.getSession()) // && context.getSession()->getResourceCache())
-        {
-            StringExpression temp( *line->imageURI() );
-            imageURI = URI(input->eval(temp, context.getSession()), temp.uriContext()).full();
-        }
-
         // Try to find the existing geode, otherwise create one.
         osg::ref_ptr< osg::Geode > geode;
-        TextureToGeodeMap::iterator itr = geodes.find(imageURI.full());
+        TextureToGeodeMap::iterator itr = geodes.find(line->imageURI()->full());
         if (itr != geodes.end())
         {
             geode = itr->second;
@@ -507,37 +485,68 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
             geode = new osg::Geode;
 
             // Create the texture for the geode.
-            if (imageURI.empty() == false)
+            if (line->imageURI().isSet() && !line->imageURI()->empty())
             {
-                osg::ref_ptr<osg::Texture> tex;
-                if (context.getSession()->getResourceCache())
+                osg::ref_ptr<osg::StateSet> stateSet;
+
+                if (resourceLib)
                 {
-                    context.getSession()->getResourceCache()->getOrCreateLineTexture(
-                        imageURI, tex, context.getDBOptions());
-                }
-                else
-                {
-                    osg::ref_ptr<osg::Image> image = imageURI.getImage(context.getDBOptions());
-                    if (image.valid())
+                    auto* skin = resourceLib->getSkin(line->imageURI()->base(), context.getDBOptions());
+                    if (skin)
                     {
-                        tex = new osg::Texture2D(image);
-                        tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-                        tex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
-                        tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-                        tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-                        tex->setMaxAnisotropy(4.0f);
-                        tex->setResizeNonPowerOfTwoHint(false);
-                        tex->setUnRefImageDataAfterApply(false);
+                        if (context.resourceCache())
+                        {
+                            context.resourceCache()->getOrCreateStateSet(skin, stateSet, context.getDBOptions());
+                        }
+
+                        else
+                        {
+                            stateSet = skin->createStateSet(context.getDBOptions());
+                        }
                     }
                 }
 
-                if (tex.valid())
+                if (!stateSet.valid())
                 {
-                    geode->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex.get(), 1);
+                    osg::ref_ptr<osg::Texture> tex;
+
+                    if (context.getSession()->getResourceCache())
+                    {
+                        context.getSession()->getResourceCache()->getOrCreateLineTexture(
+                            line->imageURI().value(), tex, context.getDBOptions());
+                    }
+
+                    else
+                    {
+
+                        osg::ref_ptr<osg::Image> image = line->imageURI()->getImage(context.getDBOptions());
+                        if (image.valid())
+                        {
+                            tex = new osg::Texture2D(image);
+                            tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+                            tex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                            tex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+                            tex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                            tex->setMaxAnisotropy(4.0f);
+                            tex->setResizeNonPowerOfTwoHint(false);
+                            tex->setUnRefImageDataAfterApply(false);
+                        }
+                    }
+
+                    if (tex.valid())
+                    {
+                        stateSet = new osg::StateSet();
+                        stateSet->setTextureAttributeAndModes(0, tex.get(), 1);
+                    }
+                }
+
+                if (stateSet.valid())
+                {
+                    geode->setStateSet(stateSet);
                 }
             }
 
-            geodes[imageURI.full()] = geode;
+            geodes[line->imageURI()->full()] = geode;
         }
 
         // run a symbol script if present.
@@ -545,6 +554,12 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
         {
             StringExpression temp( line->script().get() );
             input->eval( temp, &context );
+        }
+
+        Distance lineWidth(1.0f, Units::PIXELS);
+        if (line->stroke().isSet() && line->stroke()->width().isSet())
+        {
+            lineWidth = line->stroke()->width()->eval(input, context);
         }
 
         // The operator we'll use to make lines into polygons.
@@ -555,9 +570,10 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
         }
         else
         {
-            polygonizer = new PolygonizeLinesOperator(line);
+            auto p = new PolygonizeLinesOperator(line);
+            p->_copyToBackFace = (line->doubleSided() == true);
+            polygonizer = p;            
         }
-        //GPULinesOperator gpuLines(*line->stroke() );
 
         // iterate over all the feature's geometry parts. We will treat
         // them as lines strings.
@@ -599,7 +615,7 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
 
             // turn the lines into polygons.
             CopyHeightsCallback copyHeights(hats.get());
-            osg::Geometry* geom = (*polygonizer)( verts.get(), normals.get(), gpuClamping? &copyHeights : 0L, twosided );
+            osg::Geometry* geom = (*polygonizer)(verts.get(), normals.get(), lineWidth.as(Units::METERS), gpuClamping ? &copyHeights : nullptr, twosided);
             //osg::Geometry* geom = gpuLines(verts.get());
             if ( geom )
             {
@@ -625,9 +641,13 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
     {
         // Optimize the Geode
         osg::Geode* geode = itr->second.get();
-        osgUtil::Optimizer::MergeGeometryVisitor mg;
-        mg.setTargetMaximumNumberOfVertices(Registry::instance()->getMaxNumberOfVertsPerDrawable());
-        geode->accept(mg);
+
+        if (mergeGeometry() == true)
+        {
+            osgUtil::Optimizer::MergeGeometryVisitor mg;
+            mg.setTargetMaximumNumberOfVertices(Registry::instance()->getMaxNumberOfVertsPerDrawable());
+            geode->accept(mg);
+        }
 
         if (_optimizeVertexOrdering == true)
         {
@@ -652,7 +672,7 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
 {
     // Group to contain all the lines we create here
     LineGroup* drawables = new LineGroup();
-
+    
     bool makeECEF = false;
     const SpatialReference* featureSRS = 0L;
     const SpatialReference* outputSRS = 0L;
@@ -691,6 +711,13 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
             input->eval( temp, &context );
         }
 
+        Distance strokeWidth(1.0, Units::PIXELS);
+        if (line->stroke()->width().isSet())
+        {
+            strokeWidth = line->stroke()->width()->eval(input, context);
+            //strokeWidth = input->eval(line->stroke()->width().value(), &context);
+        }
+
         GeometryIterator parts( input->getGeometry(), true );
         while( parts.hasMore() )
         {
@@ -722,8 +749,7 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
 
             if (line->stroke().isSet())
             {
-                if (line->stroke()->width().isSet())
-                    drawable->setLineWidth(line->stroke()->width().get());
+                drawable->setLineWidth(strokeWidth.as(Units::PIXELS));
 
                 if (line->stroke()->stipplePattern().isSet())
                     drawable->setStipplePattern(line->stroke()->stipplePattern().get());
@@ -1012,7 +1038,7 @@ namespace
                 if (auto cropped = geometry->crop(&boundary))
                 {
                     // Use an iterator since crop could return a multi-polygon
-                    GeometryIterator gi(cropped.get(), false);
+                    GeometryIterator gi(cropped, false);
                     while (gi.hasMore())
                     {
                         Geometry* geom = gi.next();
@@ -1183,7 +1209,8 @@ BuildGeometryFilter::tileAndBuildPolygon(
     OE_SOFT_ASSERT_AND_RETURN(input != nullptr, void());
     OE_SOFT_ASSERT_AND_RETURN(input->getType() != Geometry::TYPE_MULTI, void());
 
-    const double circum = 40041000.0; //m
+    double R = outputSRS ? outputSRS->getEllipsoid().getSemiMajorAxis() : 6378137.0;
+    double circum = osg::PI * 2.0 * R;
     double ref_x = 0.0, ref_y = 0.0;
 
     osg::ref_ptr<osg::Vec3Array> verts = new osg::Vec3Array();
@@ -1797,15 +1824,11 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
     // Split features across the dateline if necessary
     if (context.getOutputSRS() && !context.getOutputSRS()->isGeographic())
     {
-        for(FeatureList::iterator itr = input.begin(); itr != input.end(); ++itr)
+        for(auto& feature : input)
         {
-            osg::ref_ptr<Feature> f = new Feature(*itr->get());
-            f->splitAcrossAntimeridian();
-            splitFeatures.emplace_back(f);
-            //Feature* f = itr->clone(); // itr->get();
-            //FeatureList tmpSplit;
-            //f->splitAcrossDateLine(tmpSplit);
-            //splitFeatures.insert(splitFeatures.end(), tmpSplit.begin(), tmpSplit.end());
+            auto* clone = new Feature(*feature.get());
+            clone->splitAcrossAntimeridian();
+            splitFeatures.emplace_back(clone);
         }
     }
     else
@@ -1814,25 +1837,42 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         std::copy(input.begin(), input.end(), std::back_inserter(splitFeatures));
     }
 
+    osg::ref_ptr<osg::Group> polysGroup, linesGroup, pointsGroup, meshesGroup;
+
     for(FeatureList::iterator i = splitFeatures.begin(); i != splitFeatures.end(); ++i)
     {
         Feature* f = i->get();
 
         // first consider the overall style:
-        bool has_polysymbol     = poly != 0L;
-        bool has_linesymbol     = line != 0L && line->stroke()->widthUnits() == Units::PIXELS;
-        bool has_polylinesymbol = line != 0L && line->stroke()->widthUnits() != Units::PIXELS;
-        bool has_pointsymbol    = point != 0L;
-        bool has_wirelinessymbol = line && line->useWireLines().value();
+        bool has_polysymbol = poly != 0L;
+        bool has_pointsymbol = point != 0L;
+
+        bool has_linesymbol = false;
+        bool has_polylinesymbol = false;
+        bool has_wirelinessymbol = false;
+
+        if (line)
+        {
+            bool widthInPixels = line->stroke()->width()->eval(f, context).getUnits() == Units::PIXELS;
+            has_linesymbol = widthInPixels;
+            has_polylinesymbol = !widthInPixels;
+            has_wirelinessymbol = line->useWireLines() == true;
+        }
 
         // if the featue has a style set, that overrides:
         if ( f->style().isSet() )
         {
-            has_polysymbol     = has_polysymbol     || (f->style()->has<PolygonSymbol>());
-            has_linesymbol     = has_linesymbol     || (f->style()->has<LineSymbol>() && f->style()->get<LineSymbol>()->stroke()->widthUnits() == Units::PIXELS);
-            has_polylinesymbol = has_polylinesymbol || (f->style()->has<LineSymbol>() && f->style()->get<LineSymbol>()->stroke()->widthUnits() != Units::PIXELS);
-            has_pointsymbol    = has_pointsymbol    || (f->style()->has<PointSymbol>());
-            has_wirelinessymbol = has_wirelinessymbol || (f->style()->has<LineSymbol>() && f->style()->get<LineSymbol>()->useWireLines().value());
+            has_polysymbol = has_polysymbol     || (f->style()->has<PolygonSymbol>());
+            has_pointsymbol = has_pointsymbol || (f->style()->has<PointSymbol>());
+
+            auto* f_line = f->style()->get<LineSymbol>();
+            if (f_line)
+            {
+                bool widthInPixels = f_line->stroke()->width()->eval(f, context).getUnits() == Units::PIXELS;
+                has_linesymbol = has_linesymbol || (widthInPixels == true);
+                has_polylinesymbol = has_polylinesymbol || (widthInPixels == false);
+                has_wirelinessymbol = has_wirelinessymbol || (f_line->useWireLines() == true);
+            }
         }
 
         // if there's a polygon with outlining disabled, nix the line symbol.
@@ -1871,10 +1911,10 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
 
         if ( has_polysymbol )
         {
-            if (f->getGeometry()->getType() == Geometry::TYPE_TRIMESH)
-                meshes.push_back(f);
-            else
-                polygons.push_back( f );
+            //if (f->getGeometry()->getType() == Geometry::TYPE_TRIMESH)
+            //    meshes.push_back(f);
+            //else
+            polygons.push_back( f );
         }
 
         if (has_linesymbol)
@@ -1926,7 +1966,10 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
             GenerateNormals gen;
             geode->accept(gen);
 
-            result->addChild( geode.get() );
+            if (!polysGroup.valid())
+                polysGroup = new osg::Group();
+
+            polysGroup->addChild( geode.get() );
         }
     }
 
@@ -1934,14 +1977,14 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
     {
         OE_TEST << LC << "Building " << polygonizedLines.size() << " polygonized lines." << std::endl;
         bool twosided = polygons.size() > 0 ? false : true;
-        osg::ref_ptr< osg::Group > lines = processPolygonizedLines(polygonizedLines, twosided, context,
-                                                                   false);
-
+        osg::ref_ptr< osg::Group > lines = processPolygonizedLines(polygonizedLines, twosided, context, false);
         if (lines->getNumChildren() > 0)
         {
-            result->addChild( lines.get() );
-        }
+            if (!linesGroup.valid())
+                linesGroup = new osg::Group();
 
+            linesGroup->addChild( lines.get() );
+        }
     }
 
     if ( wireLines.size() > 0 )
@@ -1951,7 +1994,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
 
         if (lines->getNumChildren() > 0)
         {
-            result->addChild( lines.get() );
+            if (!meshesGroup.valid())
+                meshesGroup = new osg::Group();
+            meshesGroup->addChild( lines.get() );
         }
 
     }
@@ -1964,7 +2009,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
 
         if ( group->getNumChildren() > 0 )
         {
-            result->addChild(group.get());
+            if (!linesGroup.valid())
+                linesGroup = new osg::Group();
+            linesGroup->addChild(group.get());
         }
     }
 
@@ -1976,7 +2023,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
 
         if ( group->getNumChildren() > 0 )
         {
-            result->addChild(group.get());
+            if (!pointsGroup.valid())
+                pointsGroup = new osg::Group();
+            pointsGroup->addChild(group.get());
         }
     }
 
@@ -1986,9 +2035,21 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
 
         if (group->getNumChildren() > 0)
         {
-            result->addChild(group.get());
+            if (!meshesGroup.valid())
+                meshesGroup = new osg::Group();
+            meshesGroup->addChild(group.get());
         }
     }
+
+    if (polysGroup.valid())
+        result->addChild(polysGroup.get());
+    if (linesGroup.valid())
+        result->addChild(linesGroup.get());
+    if (pointsGroup.valid())
+        result->addChild(pointsGroup.get());
+    if (meshesGroup.valid())
+        result->addChild(meshesGroup.get());
+
 
     //// indicate that geometry contains clamping attributes
     if (_style.has<AltitudeSymbol>() &&

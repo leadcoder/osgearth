@@ -1,30 +1,16 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-
-#ifndef OSGEARTH_XYZ_H
-#define OSGEARTH_XYZ_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/ElevationLayer>
 #include <osgEarth/URI>
 #include <osgEarth/Threading>
+#include <osgEarth/Containers>
+#include <osgEarth/GeoCommon>
 
 /**
  * XYZ layers. These are general purpose tiled layers that conform
@@ -62,35 +48,6 @@ namespace osgEarth { namespace XYZ
         std::string::size_type _rotateStart, _rotateEnd;
         mutable std::atomic_int _rotate_iter;
     };
-
-    // Internal serialization options
-    class OSGEARTH_EXPORT XYZImageLayerOptions : public ImageLayer::Options
-    {
-    public:
-        META_LayerOptions(osgEarth, XYZImageLayerOptions, ImageLayer::Options);
-        OE_OPTION(URI, url);
-        OE_OPTION(bool, invertY);
-        OE_OPTION(std::string, format);
-        static Config getMetadata();
-        virtual Config getConfig() const;
-    private:
-        void fromConfig(const Config& conf);
-    };
-
-    // Internal serialization options
-    class OSGEARTH_EXPORT XYZElevationLayerOptions : public ElevationLayer::Options
-    {
-    public:
-        META_LayerOptions(osgEarth, XYZElevationLayerOptions, ElevationLayer::Options);
-        OE_OPTION(URI, url);
-        OE_OPTION(bool, invertY);
-        OE_OPTION(std::string, format);
-        OE_OPTION(std::string, elevationEncoding);
-        static Config getMetadata();
-        virtual Config getConfig() const;
-    private:
-        void fromConfig(const Config& conf);
-    };
 } }
 
 
@@ -119,8 +76,20 @@ namespace osgEarth
      */
     class OSGEARTH_EXPORT XYZImageLayer : public ImageLayer
     {
-    public: // serialization
-        typedef XYZ::XYZImageLayerOptions Options;
+    public:
+        class OSGEARTH_EXPORT Options : public ImageLayer::Options
+        {
+        public:
+            META_LayerOptions(osgEarth, Options, ImageLayer::Options);
+            OE_OPTION(URI, url);
+            OE_OPTION(bool, invertY, false);
+            OE_OPTION(std::string, format, {});
+            OE_OPTION(unsigned, minLevel, 0);
+            OE_OPTION(unsigned, maxLevel, 10);
+            Config getConfig() const override;
+        private:
+            void fromConfig(const Config& conf);
+        };
 
     public:
         META_Layer(osgEarth, XYZImageLayer, Options, ImageLayer, XYZImage);
@@ -170,7 +139,23 @@ namespace osgEarth
     class OSGEARTH_EXPORT XYZElevationLayer : public ElevationLayer
     {
     public:
-        typedef XYZ::XYZElevationLayerOptions Options;
+        // Internal serialization options
+        class OSGEARTH_EXPORT Options : public ElevationLayer::Options
+        {
+        public:
+            META_LayerOptions(osgEarth, Options, ElevationLayer::Options);
+            OE_OPTION(URI, url);
+            OE_OPTION(bool, invertY, false);
+            OE_OPTION(std::string, format, {});
+            OE_OPTION(unsigned, minLevel, 0);
+            OE_OPTION(unsigned, maxLevel, 10);
+            OE_OPTION(std::string, elevationEncoding, {});
+            OE_OPTION(bool, stitchEdges, false);
+            OE_OPTION(RasterInterpolation, interpolation, INTERP_BILINEAR);
+            Config getConfig() const override;
+        private:
+            void fromConfig(const Config& conf);
+        };
 
     public:
         META_Layer(osgEarth, XYZElevationLayer, Options, ElevationLayer, XYZElevation);
@@ -191,21 +176,35 @@ namespace osgEarth
         const std::string& getFormat() const;
 
         //! Encoding encoding type
+        //! @param value Encoding type, one of "" (default), "mapbox", "terrarium"
         void setElevationEncoding(const std::string& value);
         const std::string& getElevationEncoding() const;
+
+        //! Whether to stitch the edges of abutting tiles together to prevent gaps.
+        //! Some elevation data is image based, and the side of one tile does not match
+        //! the value on the correspond side of the abutting tile. This option will
+        //! resample the data to make the edges match, for a small performance hit.
+        //! @param value True to stitch edges (default is false)
+        void setStitchEdges(const bool& value);
+        const bool& getStitchEdges() const;
+
+        //! Interpolation method to use when stitching edges = true.
+        //! Default is INTERP_BILINEAR.
+        void setInterpolation(const RasterInterpolation& value);
+        const RasterInterpolation& getInterpolation() const;
 
     public: // Layer
         
         //! Establishes a connection to the XYZ data
-        virtual Status openImplementation() override;
+        Status openImplementation() override;
 
         //! Creates a heightfield for the given tile key
-        virtual GeoHeightField createHeightFieldImplementation(const TileKey& key, ProgressCallback* progress) const override;
+        GeoHeightField createHeightFieldImplementation(const TileKey& key, ProgressCallback* progress) const override;
 
     protected: // Layer
 
         //! Called by constructors
-        virtual void init();
+        void init() override;
 
     protected:
 
@@ -214,11 +213,10 @@ namespace osgEarth
 
     private:
         osg::ref_ptr<XYZImageLayer> _imageLayer;
+        mutable Util::LRUCache<TileKey, GeoImage> _stitchingCache{ true, 64 };
     };
 
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::XYZImageLayer::Options);
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::XYZElevationLayer::Options);
-
-#endif // OSGEARTH_XYZ_H

@@ -1,23 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-#ifndef OSGEARTH_FEATURES_FEATURE_MODEL_LAYER
-#define OSGEARTH_FEATURES_FEATURE_MODEL_LAYER 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/FeatureSource>
@@ -81,7 +66,7 @@ namespace osgEarth
         const bool& getEnableLighting() const;
 
         //! Forces a rebuild on this FeatureModelLayer.
-        void dirty();
+        void dirty() override;
 
     public:
         class CreateFeatureNodeFactoryCallback : public osg::Referenced {
@@ -98,19 +83,19 @@ namespace osgEarth
     public: // Layer
 
         // opens the layer and returns the status
-        virtual Status openImplementation();
+        Status openImplementation() override;
 
         // closes the layer
-        virtual Status closeImplementation();
+        Status closeImplementation() override;
 
         // The Node representing this layer.
-        virtual osg::Node* getNode() const;
+        osg::Node* getNode() const override;
 
         //! Extent of the feature layer, if available (INVALID if not)
-        virtual const GeoExtent& getExtent() const;
+        const GeoExtent& getExtent() const override;
 
         //! Serialization
-        virtual Config getConfig() const;
+        Config getConfig() const override;
 
     public: // key value reporter
 
@@ -119,13 +104,13 @@ namespace osgEarth
     protected: // Layer
         
         // called by the map when this layer is added
-        virtual void addedToMap(const Map*);
+        void addedToMap(const Map*) override;
 
         // called by the map when this layer is removed
-        virtual void removedFromMap(const Map*);
+        void removedFromMap(const Map*) override;
 
         // post-ctor initialization
-        virtual void init();
+        void init() override;
 
     protected:
 
@@ -134,16 +119,16 @@ namespace osgEarth
         //! You can override this as an alternative to setting the CreateFeatureNodeFactoryCallback
         virtual FeatureNodeFactory* createFeatureNodeFactoryImplementation() const;
 
+        //! Created the FMG; override to customize
+        virtual void create();
+
     private:
         osg::ref_ptr<class Session> _session;
         osg::ref_ptr<osg::Group> _root;
         bool _graphDirty;
         osg::ref_ptr<CreateFeatureNodeFactoryCallback> _createFactoryCallback;
         
-        void create();
         FeatureNodeFactory* createFeatureNodeFactory();
     };
 
 } // namespace osgEarth
-
-#endif // OSGEARTH_FEATURES_FEATURE_MODEL_LAYER

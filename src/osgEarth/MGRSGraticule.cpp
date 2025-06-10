@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/MGRSGraticule>
 #include <osgEarth/UTMLabelingEngine>
@@ -111,7 +97,7 @@ namespace
         {
             // Read source data into an array:
             FeatureList sqids;
-            osg::ref_ptr<FeatureCursor> sqid_cursor = sqid_fs->createFeatureCursor(Query::ALL);
+            osg::ref_ptr<FeatureCursor> sqid_cursor = sqid_fs->createFeatureCursor(Query());
             if (sqid_cursor.valid() && sqid_cursor->hasMore())
                 sqid_cursor->fill(sqids);
 
@@ -454,7 +440,8 @@ namespace
                     osg::ref_ptr<Feature> f = new Feature(polygon.get(), _utm.get());
                     f->transform(_feature->getSRS());
 
-                    if (auto cropped = f->getGeometry()->crop(_extent.bounds()))
+                    osg::ref_ptr<Geometry> cropped = f->getGeometry()->crop(_extent.bounds());
+                    if (cropped.valid())
                     {
                         f->setGeometry(cropped.get());
                         f->set("easting", x);
@@ -518,7 +505,7 @@ namespace
 
             if (auto cropped = f->getGeometry()->crop(_extent.bounds()))
             {
-                f->setGeometry(cropped.get());
+                f->setGeometry(cropped);
             }
 
             GeometryCompilerOptions gco;
@@ -1293,7 +1280,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("gzd");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(1, 0, 0, 0.25);
-            line->stroke().mutable_value().width() = 4.0;
+            line->stroke().mutable_value().width() = Distance(4.0, Units::PIXELS);
             line->tessellation() = 20;
             TextSymbol* text = style.getOrCreate<TextSymbol>();
             text->fill().mutable_value().color() = Color::White;
@@ -1316,7 +1303,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("100000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(1,1,0,alpha);
-            line->stroke().mutable_value().width() = 3;
+            line->stroke().mutable_value().width() = Distance(3, Units::PIXELS);
             TextSymbol* text = style.getOrCreate<TextSymbol>();
             text->fill().mutable_value().color() = Color::White;
             text->halo().mutable_value().color() = Color::Black;
@@ -1330,7 +1317,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("10000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(0,1,0,alpha);
-            line->stroke().mutable_value().width() = 2;
+            line->stroke().mutable_value().width() = Distance(2, Units::PIXELS);
             styles->addStyle(style);
         }
 
@@ -1340,7 +1327,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("1000");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(.5,.5,1,alpha);
-            line->stroke().mutable_value().width() = 2;
+            line->stroke().mutable_value().width() = Distance(2, Units::PIXELS);
             styles->addStyle(style);
         }
 
@@ -1350,7 +1337,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("100");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(1,1,1,alpha);
-            line->stroke().mutable_value().width() = 1;
+            line->stroke().mutable_value().width() = Distance(1, Units::PIXELS);
             styles->addStyle(style);
         }
 
@@ -1360,7 +1347,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("10");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(1,1,1,alpha);
-            line->stroke().mutable_value().width() = 1;
+            line->stroke().mutable_value().width() = Distance(1, Units::PIXELS);
             styles->addStyle(style);
         }
 
@@ -1370,7 +1357,7 @@ MGRSGraticule::setUpDefaultStyles()
             Style style("1");
             LineSymbol* line = style.getOrCreate<LineSymbol>();
             line->stroke().mutable_value().color().set(1,1,1,alpha);
-            line->stroke().mutable_value().width() = 0.5;
+            line->stroke().mutable_value().width() = Distance(0.5, Units::PIXELS);
             styles->addStyle(style);
         }
     }

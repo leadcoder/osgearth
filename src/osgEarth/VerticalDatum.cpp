@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/VerticalDatum>
@@ -22,7 +8,6 @@
 #include <osgEarth/GeoData>
 
 #include <osgDB/ReadFile>
-#include <stdlib.h>
 
 using namespace osgEarth;
 
@@ -40,7 +25,7 @@ namespace
 } 
 
 VerticalDatum*
-VerticalDatum::get( const std::string& initString )
+VerticalDatum::get(const std::string& initString)
 {
     VerticalDatum* result = nullptr;
 
@@ -69,13 +54,57 @@ VerticalDatum::get( const std::string& initString )
     if ( !result )
     {
         OE_DEBUG << LC << "Initializing vertical datum: " << initString << std::endl;
-        result = VerticalDatumFactory::create( initString );
+        result = create( initString );
         if ( result )
             _vdatumCache[s] = result;
     }
     
     return result;
 }
+
+VerticalDatum*
+VerticalDatum::create(const std::string& init)
+{
+    osg::ref_ptr<VerticalDatum> datum;
+
+    bool inverted = false;
+    std::string base_name = trim(init);
+
+    // if the name starts with "-", we are creating an inverted datum.
+    if (!base_name.empty() && base_name[0] == '-')
+    {
+        base_name = base_name.substr(1);
+        inverted = true;
+    }
+
+    std::string driverExt = "osgearth_vdatum_" + base_name;
+    auto rw = osgDB::Registry::instance()->getReaderWriterForExtension(driverExt);
+    if (rw)
+    {
+        auto rr = rw->readObject("." + driverExt, nullptr);
+        osg::ref_ptr<osg::Object> object = rr.getObject();
+        datum = dynamic_cast<VerticalDatum*>(object.release());
+        if (!datum)
+        {
+            OE_WARN << "WARNING: Failed to load Vertical Datum driver for \"" << init << "\"" << std::endl;
+        }
+    }
+
+    // invert the heights if requested.
+    if (datum.valid() && inverted)
+    {
+        auto geoid = datum->_geoid;
+        osg::HeightField::HeightList& heights = geoid->getHeightField()->getHeightList();
+        for (auto& h : heights)
+            h = -h;
+
+        datum->_initString = init;
+        datum->_name = datum->_name + " (inverted)";
+    }
+
+    return datum.release();
+}
+
 
 // --------------------------------------------------------------------------
 
@@ -218,31 +247,4 @@ VerticalDatum::isEquivalentTo( const VerticalDatum* rhs ) const
         return false;
 
     return true;
-}
-
-
-//------------------------------------------------------------------------
-
-#undef  LC
-#define LC "[VerticalDatumFactory] "
-
-VerticalDatum*
-VerticalDatumFactory::create( const std::string& init )
-{
-    osg::ref_ptr<VerticalDatum> datum;
-
-    std::string driverExt = "osgearth_vdatum_" + init;
-    auto rw = osgDB::Registry::instance()->getReaderWriterForExtension(driverExt);
-    if (rw)
-    {
-        auto rr = rw->readObject("."+driverExt, nullptr);
-        osg::ref_ptr<osg::Object> object = rr.getObject();
-        datum = dynamic_cast<VerticalDatum*>(object.release());
-        if (!datum)
-        {
-            OE_WARN << "WARNING: Failed to load Vertical Datum driver for \"" << init << "\"" << std::endl;
-        }
-    }
-
-    return datum.release();
 }

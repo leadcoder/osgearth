@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
  * Copyright 2008-2014 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * MIT License
  */
 #include "IntersectFeatureFilterOptions"
 
@@ -59,13 +45,20 @@ public: // FeatureFilter
         return Status::OK();
     }
 
-    virtual void addedToMap(const class Map* map) override
+    void addedToMap(const class Map* map) override
     {
         if (!_featureSource.valid())
         {
-            featureSource().open(_readOptions.get());
-            featureSource().addedToMap(map);
-            _featureSource = featureSource().getLayer();
+            auto status = featureSource().open(_readOptions.get());
+            if (status.isOK())
+            {
+                featureSource().addedToMap(map);
+                _featureSource = featureSource().getLayer();
+            }
+            else
+            {
+                OE_WARN << LC << status.message() << std::endl;
+            }
         }
     }
 
@@ -165,7 +158,9 @@ public: // FeatureFilter
                 }
             }
 
-            input = output;
+            //OE_INFO << LC << "isect: " << input.size() << " in, " << output.size() << " out" << std::endl;
+
+            input.swap(output);
         }
 
         return context;

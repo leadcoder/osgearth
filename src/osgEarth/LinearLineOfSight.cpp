@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/LinearLineOfSight>
 #include <osgEarth/TerrainEngineNode>
@@ -461,34 +444,6 @@ LineOfSightTether::operator()(osg::Node* node, osg::NodeVisitor* nv)
     traverse(node, nv);
 }
 
-
-/**********************************************************************/
-
-namespace 
-{
-    class LOSDraggerCallback : public osgEarth::Dragger::PositionChangedCallback
-    {
-    public:
-        LOSDraggerCallback(LinearLineOfSightNode* los, bool start):
-          _los(los),
-          _start(start)
-          {      
-          }
-
-          virtual void onPositionChanged(const osgEarth::Dragger* sender, const osgEarth::GeoPoint& position)
-          {   
-              if ( _start )
-                  _los->setStart( position );
-              else
-                  _los->setEnd( position );          
-          }
-
-          
-          LinearLineOfSightNode* _los;
-          bool _start;
-    };
-}
-
 /**********************************************************************/
 
 namespace
@@ -514,13 +469,19 @@ LinearLineOfSightEditor::LinearLineOfSightEditor(LinearLineOfSightNode* los):
 _los(los)
 {
     _startDragger  = new osgEarth::SphereDragger( _los->getMapNode());
-    _startDragger->addPositionChangedCallback(new LOSDraggerCallback(_los.get(), true ) );    
+    _startDragger->onPositionChanged([=](auto* sender, const osgEarth::GeoPoint& position)
+        {
+            _los->setStart(position);
+        });
     static_cast<osgEarth::SphereDragger*>(_startDragger)->setColor(osg::Vec4(0,0,1,0));
     addChild(_startDragger);
 
     _endDragger = new osgEarth::SphereDragger( _los->getMapNode());
     static_cast<osgEarth::SphereDragger*>(_endDragger)->setColor(osg::Vec4(0,0,1,0));
-    _endDragger->addPositionChangedCallback(new LOSDraggerCallback(_los.get(), false ) );
+    _endDragger->onPositionChanged([=](auto* sender, const osgEarth::GeoPoint& position)
+        {
+            _los->setEnd(position);
+        });
 
     addChild(_endDragger);
 

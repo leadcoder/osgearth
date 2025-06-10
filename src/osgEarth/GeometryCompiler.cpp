@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "GeometryCompiler"
 
@@ -29,21 +15,13 @@
 #include <osgEarth/Session>
 
 #include <osgEarth/Utils>
-#include <osgEarth/CullingUtils>
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
 #include <osgEarth/ShaderGenerator>
 #include <osgEarth/ShaderUtils>
-#include <osgEarth/Utils>
 #include <osgEarth/Metrics>
 
-#include <osg/MatrixTransform>
-#include <osg/Timer>
 #include <osg/KdTree>
-#include <osgDB/WriteFile>
-#include <osgUtil/Optimizer>
-
-#include <cstdlib>
 
 #define LC "[GeometryCompiler] "
 
@@ -77,7 +55,8 @@ _optimize              ( false ),
 _optimizeVertexOrdering( true ),
 _validate              ( false ),
 _maxPolyTilingAngle    ( 45.0f ),
-_useOSGTessellator     ( false )
+_useOSGTessellator     ( false ),
+_buildKDTrees          ( true )
 {
     //nop
 }
@@ -97,7 +76,8 @@ _optimize              ( s_defaults.optimize().value() ),
 _optimizeVertexOrdering( s_defaults.optimizeVertexOrdering().value() ),
 _validate              ( s_defaults.validate().value() ),
 _maxPolyTilingAngle    ( s_defaults.maxPolygonTilingAngle().value() ),
-_useOSGTessellator     (s_defaults.useOSGTessellator().value())
+_useOSGTessellator     (s_defaults.useOSGTessellator().value()),
+_buildKDTrees          ( s_defaults.buildKDTrees().value() )
 {
     fromConfig(conf.getConfig());
 }
@@ -119,6 +99,7 @@ GeometryCompilerOptions::fromConfig( const Config& conf )
     conf.get( "validate", _validate );
     conf.get( "max_polygon_tiling_angle", _maxPolyTilingAngle );
     conf.get( "use_osg_tessellator", _useOSGTessellator);
+    conf.get( "build_kdtrees", _buildKDTrees );
 
     conf.get( "shader_policy", "disable",  _shaderPolicy, SHADERPOLICY_DISABLE );
     conf.get( "shader_policy", "inherit",  _shaderPolicy, SHADERPOLICY_INHERIT );
@@ -143,6 +124,7 @@ GeometryCompilerOptions::getConfig() const
     conf.set( "validate", _validate );
     conf.set( "max_polygon_tiling_angle", _maxPolyTilingAngle );
     conf.set( "use_osg_tessellator", _useOSGTessellator);
+    conf.set( "build_kdtrees", _buildKDTrees );
 
     conf.set( "shader_policy", "disable",  _shaderPolicy, SHADERPOLICY_DISABLE );
     conf.set( "shader_policy", "inherit",  _shaderPolicy, SHADERPOLICY_INHERIT );
@@ -313,6 +295,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
     }
 
     // resample the geometry if necessary:
+    // @deprecated, remove this, dupe of the ResampleFilter
     if (_options.resampleMode().isSet())
     {
         ResampleFilter resample;
@@ -325,7 +308,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
         if ( trackHistory ) history.push_back( "resample" );
     }
 
-    // check whether we need to do elevation clamping:
+    // check whether we need to do elevation adjustment:
     bool altRequired =
         _options.ignoreAltitudeSymbol() != true &&
         altitude && (
@@ -334,7 +317,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
             altitude->verticalScale().isSet() ||
             altitude->script().isSet() );
 
-    // instance substitution (replaces marker)
+    // instance substitution:
     if ( model )
     {
         const InstanceSymbol* instance = (const InstanceSymbol*)model;
@@ -411,10 +394,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
             extrude.setFeatureNameExpr( *_options.featureName() );
 
         if (_options.mergeGeometry().isSet())
-            extrude.setMergeGeometry(*_options.mergeGeometry());
-        //else if (_options.optimize() == true)
-        //    extrude.setMergeGeometry(false);
-            
+            extrude.setMergeGeometry(*_options.mergeGeometry());            
 
         osg::Node* node = extrude.push( workingSet, sharedCX );
         if ( node )
@@ -422,7 +402,6 @@ GeometryCompiler::compile(FeatureList&          workingSet,
             if ( trackHistory ) history.push_back( "extrude" );
             resultGroup->addChild( node );
         }
-
     }
 
     // simple geometry
@@ -440,8 +419,11 @@ GeometryCompiler::compile(FeatureList&          workingSet,
         BuildGeometryFilter filter( style );
 
         filter.maxGranularity() = *_options.maxGranularity();
-        filter.geoInterp()      = *_options.geoInterp();
+        filter.geoInterp() = *_options.geoInterp();
         filter.useOSGTessellator() = *_options.useOSGTessellator();
+        filter.mergeGeometry() = *_options.mergeGeometry();
+
+
 
         if (_options.maxPolygonTilingAngle().isSet())
             filter.maxPolygonTilingAngle() = *_options.maxPolygonTilingAngle();
@@ -488,6 +470,11 @@ GeometryCompiler::compile(FeatureList&          workingSet,
             if ( trackHistory ) history.push_back( "text" );
             resultGroup->addChild( node );
         }
+    }
+
+    if (render)
+    {
+        render->applyTo(resultGroup.get());
     }
 
     if (Registry::capabilities().supportsGLSL())
@@ -567,7 +554,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
     }
 
     // Build kdtrees to increase intersection speed.
-    if (osgDB::Registry::instance()->getKdTreeBuilder())
+    if ((_options.buildKDTrees() == true) && osgDB::Registry::instance()->getKdTreeBuilder())
     {
         osg::ref_ptr< osg::KdTreeBuilder > kdTreeBuilder = osgDB::Registry::instance()->getKdTreeBuilder()->clone();
         resultGroup->accept(*kdTreeBuilder.get());

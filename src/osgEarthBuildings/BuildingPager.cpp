@@ -437,7 +437,7 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
             if (alt && alt->clampingResolution().isSet())
             {
                 // use the resolution in the symbology if available
-                clampingResolution.set(alt->clampingResolution().get(), units);
+                clampingResolution.set(alt->clampingResolution()->getValue(), units);
             }
             else
             {

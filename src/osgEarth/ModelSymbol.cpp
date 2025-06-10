@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/ModelSymbol>
 #include <osgEarth/ModelResource>
@@ -124,11 +110,16 @@ ModelSymbol::createResource() const
 void
 ModelSymbol::parseSLD(const Config& c, Style& style)
 {
+    if (match(c.key(), "library")) {
+        if (!c.value().empty())
+            style.getOrCreate<SkinSymbol>()->library() = Strings::unquote(c.value());
+    }
+    else
     if ( match(c.key(), "model") ) {
         style.getOrCreate<ModelSymbol>()->url() = StringExpression(c.value(), c.referrer());
     }    
     else if ( match(c.key(),"model-library") ) {
-        style.getOrCreate<ModelSymbol>()->library() = StringExpression(c.value());
+        style.getOrCreate<ModelSymbol>()->library() = Strings::unquote(c.value());
     }
     else if ( match(c.key(), "model-placement") ) {
         if      ( match(c.value(), "vertex") )   

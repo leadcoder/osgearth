@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/XmlUtils>
@@ -473,8 +459,11 @@ XmlDocument::load( std::istream& in, const URIContext& uriContext )
         OE_WARN << xmlDoc.ErrorDesc() << " (row " << xmlDoc.ErrorRow() << ", col " << xmlDoc.ErrorCol() << ")" << std::endl;
 
         // print some context
-        StringVector output;
-        StringTokenizer lines(xmlStr, output, "\n", "", true, false);
+        auto output = StringTokenizer()
+            .delim("\n")
+            .trimTokens(false)
+            .tokenize(xmlStr);
+
         int startLine = osg::maximum(0, xmlDoc.ErrorRow()-12);
         int endLine = osg::minimum((int)(output.size())-1, xmlDoc.ErrorRow()+4);
         for(int i=startLine; i<=endLine; ++i)

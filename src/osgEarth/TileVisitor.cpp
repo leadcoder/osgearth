@@ -1,26 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/TileVisitor>
-#include <osgEarth/TileEstimator>
-#include <osgEarth/FileUtils>
 #include <thread>
-#include <algorithm>
 
 #include <osg/os_utils>
 #define OS_SYSTEM osg_system
@@ -32,7 +15,8 @@ TileVisitor::TileVisitor() :
     _total(0),
     _processed(0),
     _minLevel(0),
-    _maxLevel(99)
+    _maxLevel(99),
+    _lastProgressUpdate(std::chrono::steady_clock::now())
 {
 }
 
@@ -42,7 +26,8 @@ TileVisitor::TileVisitor(TileHandler* handler) :
     _total(0),
     _processed(0),
     _minLevel(0),
-    _maxLevel(99)
+    _maxLevel(99),
+    _lastProgressUpdate(std::chrono::steady_clock::now())
 {
 }
 
@@ -162,7 +147,7 @@ void TileVisitor::processKey( const TileKey& key )
     lod = key.getLevelOfDetail();
 
     // Only process this key if it has a chance of succeeding.
-    if (!hasData(key))
+    if (lod >= getMinLevel() && !hasData(key))
     {
         return;
     }
@@ -197,17 +182,29 @@ void TileVisitor::processKey( const TileKey& key )
 
 void TileVisitor::incrementProgress(unsigned int amount)
 {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - _lastProgressUpdate).count();    
+    bool shouldReportProgress = false;
+
     {
         std::lock_guard<std::mutex> lk(_progressMutex );
         _processed += amount;
+        if (elapsed >= 5 || _processed >= _total)
+        {           
+            _lastProgressUpdate = now;
+            shouldReportProgress = true;
+        }
     }
 
     if (_progress.valid())
-    {
-        // If report progress returns true then mark the task as being cancelled.
-        if (_progress->reportProgress( _processed, _total ))
-        {
-            _progress->cancel();
+    {        
+        if (shouldReportProgress)
+        {   
+            // If report progress returns true then mark the task as being cancelled.
+            if (_progress->reportProgress( _processed, _total ))
+            {
+                _progress->cancel();
+            }
         }
     }
 }
@@ -275,10 +272,10 @@ bool MultithreadedTileVisitor::handleTile(const TileKey& key)
     // atomically increment the task count
     //_numTiles++;
 
-    // don't let the task queue get too large...?
+    // don't let the task queue get too large...?    
     while(jobs::get_metrics()->total_pending() > 1000)
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     // Add the tile to the task queue.
@@ -315,8 +312,10 @@ bool TaskList::load( const std::string &filename)
     std::string line;
     while( getline(in, line) )
     {
-        std::vector< std::string > parts;
-        StringTokenizer(line, parts, "," );
+        auto parts = StringTokenizer()
+            .delim(",")
+            .standardQuotes()
+            .tokenize(line);
 
         if (parts.size() >= 3)
         {

@@ -1,30 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/ImageOverlayEditor>
-#include <osg/Geode>
-#include <osg/io_utils>
-#include <osg/AutoTransform>
-#include <osg/ShapeDrawable>
-#include <osgViewer/Viewer>
 
 using namespace osgEarth;
 using namespace osgEarth::Contrib;
@@ -33,28 +11,6 @@ using namespace osgEarth::Contrib;
 
 namespace
 {
-    class ImageOverlayDraggerCallback : public Dragger::PositionChangedCallback
-    {
-    public:
-        ImageOverlayDraggerCallback(ImageOverlay* overlay, ImageOverlay::ControlPoint controlPoint, bool singleVert):
-          _overlay(overlay),
-          _controlPoint(controlPoint),
-          _singleVert( singleVert )
-          {}
-
-          virtual void onPositionChanged(const Dragger* sender, const osgEarth::GeoPoint& position)
-          {
-              //Convert to lat/lon
-              GeoPoint p;
-              position.transform(SpatialReference::create( "epsg:4326"), p);
-              _overlay->setControlPoint(_controlPoint, p.x(), p.y(), _singleVert);
-          }
-
-          osg::ref_ptr<ImageOverlay>           _overlay;
-          ImageOverlay::ControlPoint _controlPoint;
-          bool _singleVert;
-    };
-
     struct OverlayCallback : public ImageOverlay::ImageOverlayCallback
     {
         OverlayCallback(ImageOverlayEditor *editor)
@@ -103,7 +59,15 @@ ImageOverlayEditor::addDragger( ImageOverlay::ControlPoint controlPoint )
     SphereDragger* dragger = new SphereDragger(_overlay->getMapNode());
     GeoPoint point( SpatialReference::get("epsg:4326"), location.x(), location.y() );
     dragger->setPosition( point );
-    dragger->addPositionChangedCallback( new ImageOverlayDraggerCallback(_overlay.get(), controlPoint, _singleVert));
+
+    dragger->onPositionChanged([this, controlPoint](auto* sender, const osgEarth::GeoPoint& position)
+        {
+            //Convert to lat/lon
+            GeoPoint p;
+            position.transform(SpatialReference::create("epsg:4326"), p);
+            _overlay->setControlPoint(controlPoint, p.x(), p.y(), _singleVert);
+        });
+
     addChild(dragger);
     _draggers[ controlPoint ] = dragger;
 }

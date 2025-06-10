@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2014 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include "RexTerrainEngineNode"
 #include "Shaders"
@@ -24,25 +10,19 @@
 
 #include <osgEarth/ImageUtils>
 #include <osgEarth/Registry>
-#include <osgEarth/Capabilities>
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/MapModelChange>
 #include <osgEarth/Threading>
-#include <osgEarth/Progress>
 #include <osgEarth/ShaderLoader>
-#include <osgEarth/Utils>
 #include <osgEarth/ObjectIndex>
 #include <osgEarth/Metrics>
 #include <osgEarth/Elevation>
 #include <osgEarth/LandCover>
-#include <osgEarth/CameraUtils>
 #include <osgEarth/ShaderFactory>
 
-#include <osg/Version>
 #include <osg/BlendFunc>
 #include <osg/Depth>
 #include <osg/CullFace>
-#include <osg/ValueObject>
 
 #include <cstdlib> // for getenv
 
@@ -349,7 +329,7 @@ RexTerrainEngineNode::onSetMap()
         maxLOD,
         _map->getProfile(),
         options.getMinTileRangeFactor(),
-        true); // restrict polar subdivision for geographic maps
+        options.getRestrictPolarSubdivision());
 
     TerrainResources* res = getResources();
     for (unsigned lod = 0; lod <= maxLOD; ++lod)

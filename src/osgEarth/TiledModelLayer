@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 #include <osgEarth/Common>
@@ -40,12 +26,13 @@ namespace osgEarth
         struct OSGEARTH_EXPORT Options : public VisibleLayer::Options
         {
             META_LayerOptions(osgEarth, Options, VisibleLayer::Options);
-            OE_OPTION(bool, additive);
-            OE_OPTION(float, rangeFactor);
+            OE_OPTION(bool, additive, false);
+            OE_OPTION(float, rangeFactor, 6.0);
             OE_OPTION(unsigned, minLevel, 0u);
-            OE_OPTION(unsigned, maxLevel, 99u);
+            OE_OPTION(unsigned, maxLevel, 20u);
             OE_OPTION(bool, nvgl, false);
-            virtual Config getConfig() const;
+
+            Config getConfig() const override;
             void fromConfig(const Config& conf);
         };
 
@@ -77,7 +64,7 @@ namespace osgEarth
         const float& getRangeFactor() const;
 
         //! Forces a rebuild on this layer.
-        void dirty();
+        void dirty() override;
 
     public: // Layer
 
@@ -93,6 +80,9 @@ namespace osgEarth
         // post-ctor initialization
         void init() override;
 
+        // close
+        Status closeImplementation() override;
+
     protected:
         //! Subclasses must implement this to create a tile.
         //! @param key The tile key, in the underlying tiled data source's profile.
@@ -105,12 +95,15 @@ namespace osgEarth
         mutable std::vector<Texture::WeakPtr> _texturesCache;
         mutable std::mutex _texturesCacheMutex;
 
+        virtual void create();
+        osg::ref_ptr<osg::Group> _root;
+
+        osg::ref_ptr<const Map> getMap() const;
+
     private:
-        osg::observer_ptr< const Map > _map;
-        osg::ref_ptr< osg::Group > _root;
+        osg::observer_ptr<const Map> _map;
         bool _graphDirty;
         osg::ref_ptr<StateSetCache> _statesetCache;
-        void create();
 
         using L2Cache = LRUCache<TileKey, osg::ref_ptr<osg::Node>>;
         mutable L2Cache _localcache;

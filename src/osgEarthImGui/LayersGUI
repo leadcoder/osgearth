@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -24,13 +10,17 @@
 #include <osgEarth/ViewFitter>
 #include <osgEarth/ThreeDTilesLayer>
 #include <osgEarth/ImageLayer>
+#include <osgEarth/CoverageLayer>
 #include <osgEarth/MapboxGLImageLayer>
 #include <osgEarth/FeatureModelLayer>
+#include <osgEarth/TiledFeatureModelLayer>
 #include <osgEarth/ModelLayer>
 #include <osgEarth/TerrainConstraintLayer>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/TerrainEngineNode>
 #include <osgEarth/ExampleResources>
+#include <osgEarth/ContourMap>
+#include <osgEarth/GDALDEM>
 #include <osgEarth/Sky>
 #include <osg/Camera>
 
@@ -65,6 +55,7 @@
 #include <osgEarthProcedural/TextureSplattingLayer>
 #include <osgEarthProcedural/VegetationLayer>
 #include <osgEarthProcedural/BiomeLayer>
+#include <osgEarthProcedural/BridgeLayer>
 #endif
 
 namespace osgEarth
@@ -159,9 +150,9 @@ namespace osgEarth
                 {
                     bool open = ImGui::TreeNodeEx(layer->getName().c_str(), ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_DefaultOpen);
                     ImGui::TableNextColumn();
-                    ImGui::TextDisabled(layer->getTitle().c_str());
+                    ImGui::TextDisabled("%s", layer->getTitle().c_str());
                     ImGui::TableNextColumn();
-                    ImGui::Text(layer->getAbstract().c_str());
+                    ImGui::Text("%s", layer->getAbstract().c_str());
                     if (open)
                     {
                         for (auto& l : layer->getLayers())
@@ -185,9 +176,9 @@ namespace osgEarth
                         strcpy(name, selectedWMSLayer->getTitle().c_str());
                     }
                     ImGui::TableNextColumn();
-                    ImGui::Text(layer->getTitle().c_str());
+                    ImGui::Text("%s", layer->getTitle().c_str());
                     ImGui::TableNextColumn();
-                    ImGui::Text(layer->getAbstract().c_str());
+                    ImGui::Text("%s", layer->getAbstract().c_str());
                 }
             }
 
@@ -264,8 +255,8 @@ namespace osgEarth
                         XYZElevationLayer* xyz = new XYZElevationLayer;
                         xyz->setName(name);
                         xyz->setURL(url);
-                        if (profile == 0)      xyz->setProfile(osgEarth::Registry::instance()->getGlobalGeodeticProfile());
-                        else if (profile == 1) xyz->setProfile(osgEarth::Registry::instance()->getSphericalMercatorProfile());
+                        if (profile == 0) xyz->setProfile(Profile::create(Profile::GLOBAL_GEODETIC));
+                        else if (profile == 1) xyz->setProfile(Profile::create(Profile::SPHERICAL_MERCATOR));
                         mapNode->getMap()->addLayer(xyz);
                     }
                     else
@@ -273,9 +264,9 @@ namespace osgEarth
                         XYZImageLayer* xyz = new XYZImageLayer;
                         xyz->setName(name);
                         xyz->setURL(url);
-                        if (profile == 0)      xyz->setProfile(osgEarth::Registry::instance()->getGlobalGeodeticProfile());
-                        else if (profile == 1) xyz->setProfile(osgEarth::Registry::instance()->getSphericalMercatorProfile());
-                        xyz->setProfile(osgEarth::Registry::instance()->getSphericalMercatorProfile());
+                        if (profile == 0) xyz->setProfile(Profile::create(Profile::GLOBAL_GEODETIC));
+                        else if (profile == 1) xyz->setProfile(Profile::create(Profile::SPHERICAL_MERCATOR));
+                        xyz->setProfile(Profile::create(Profile::SPHERICAL_MERCATOR));
                         mapNode->getMap()->addLayer(xyz);
                     }
                     visible = false;
@@ -293,14 +284,105 @@ namespace osgEarth
             char name[64] = "New Layer";
             bool isElevation = false;
         };
+
+        struct EditContoursDialog
+        {
+            bool visible = false;
+            osg::TransferFunction1D::ColorMap ramp;
+
+            void draw(ContourMapLayer* layer)
+            {
+                bool dirty = false;
+                if (!visible) return;
+                ImGui::Begin("Edit Contours", &visible);
+                auto xfer = layer->getTransferFunction();
+                if (ramp.empty())
+                    ramp = xfer->getColorMap();
+
+                ImGui::BeginTable("contours", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersV | 
+                    ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoBordersInBody);
+                float to_remove = FLT_MAX;
+                float to_add = FLT_MAX;
+                osg::Vec4f to_add_color;
+
+                ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
+                ImGui::TableSetupColumn("Elevation", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                ImGui::TableSetupColumn("Color", ImGuiTableColumnFlags_WidthFixed, 400.0f);
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 20.0f);
+                ImGui::TableHeadersRow();
+
+                for (auto& item : ramp)
+                {
+                    ImGui::TableNextColumn();
+                    float elev = item.first;
+                    ImGui::PushID((std::uintptr_t)&item);
+                    std::string label = "##" + std::to_string(elev);
+                    if (ImGui::InputFloat(label.c_str(), &elev, 0.0f, 0.0f, "%.0f", ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        to_remove = item.first;
+                        to_add = elev;
+                        to_add_color = item.second;
+                    }
+                    ImGui::TableNextColumn();
+                    std::string label2 = "##c" + std::to_string(elev);
+                    if (ImGui::ColorEdit3(label2.c_str(), item.second.ptr())) {
+                        to_add = item.first;
+                        to_add_color = item.second;
+                    }
+                    ImGui::TableNextColumn();
+                    std::string label3 = "##t" + std::to_string(elev);
+                    if (ImGui::Button("x")) {
+                        to_remove = item.first;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+
+                if (ImGui::Button("Add stop"))
+                {
+                    if (ramp.empty())
+                        to_add = 0.0f;
+                    else
+                        to_add = ramp.rbegin()->first + 1.0f;
+                    to_add_color = Color::White;
+                }
+
+                if (to_remove != FLT_MAX)
+                    ramp.erase(to_remove);
+                if (to_add != FLT_MAX)
+                    ramp.emplace(to_add, to_add_color);
+                if (to_remove != FLT_MAX || to_add != FLT_MAX)
+                {
+                    xfer->setColorMap(ramp);
+                    layer->setTransferFunction(xfer);
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Export XML"))
+                {
+                    std::ostringstream buf;
+                    buf << "<stops>\n";
+                    for (auto& item : ramp)
+                    {
+                        buf << "    <stop elevation=\"" << item.first << "\" color=\"" << Color(item.second).toHTML() << "\"/>\n";
+                    }
+                    buf << "</stops>\n";
+                    std::cout << buf.str();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Done"))
+                {
+                    ramp.clear();
+                    visible = false;
+                }
+                ImGui::End();
+            }
+        };
     }
 
     class LayersGUI : public ImGuiPanel
     {
     private:
         osg::observer_ptr<MapNode> _mapNode;
-        bool _showDisabled = false;
-        bool _sortByCat = false;
         LayerVector _layers;
         std::unordered_map<Layer*, bool> _layerExpanded;
         int _mapRevision = -1;
@@ -310,18 +392,26 @@ namespace osgEarth
         std::unordered_map<Layer*, float> _maxAttenRanges;
         bool _addXYZ = false;
         ImageLayer* _mouseOverImageLayer = nullptr;
+        CoverageLayer* _mouseOverCoverageLayer = nullptr;
+        bool _viewOptions[3] = { false, false, false };
+
+        enum ViewOptions {
+            VIEW_SORT = 0,
+            VIEW_DATA = 1,
+            VIEW_CLOSED = 2
+        };
 
         static const int NUM_CATS = 8;
 
         enum LayerCat {
-            IMAGE = 0,
-            ELEVATION,
-            FEATURE,
-            MODEL,
-            PROCEDURAL,
-            CONSTRAINT,
-            DATA,
-            OTHER
+            CAT_IMAGE = 0,
+            CAT_ELEVATION,
+            CAT_FEATURE,
+            CAT_MODEL,
+            CAT_PROCEDURAL,
+            CAT_CONSTRAINT,
+            CAT_DATA,
+            CAT_OTHER
         };
         const std::string _layerCatName[NUM_CATS] = {
             "Image",
@@ -339,6 +429,7 @@ namespace osgEarth
         detail::AddWMSDialog _addWMSDialog;
         detail::AddTMSDialog _addTMSDialog;
         detail::AddXYZDialog _addXYZDialog;
+        detail::EditContoursDialog _editContoursDialog;
 
         using ValueUnderMouse = struct {
             osg::Vec4 pixel;
@@ -346,6 +437,10 @@ namespace osgEarth
             GLenum dataType;
         };
         Future<Result<ValueUnderMouse>> _imageLayerValueUnderMouse;
+
+#ifdef OSGEARTH_HAVE_PROCEDURAL_NODEKIT
+        Future<Result<osgEarth::Procedural::LandCoverSample>> _coverageLayerValueUnderMouse;
+#endif
 
         std::function<bool(const Layer*)>
             _showPred,
@@ -394,7 +489,10 @@ namespace osgEarth
                         layer->getUserProperty("show_in_ui", true);
                 };
 
-            _showPred = _showVisibleLayers;
+            _showPred = [this](const Layer* layer)
+                {
+                    return layer->getUserProperty("show_in_ui", true);
+                };
         }
 
         //! Sets a predicate that decides whether to include a layer in the GUI
@@ -405,14 +503,16 @@ namespace osgEarth
 
         void load(const Config& conf) override
         {
-            conf.get("ShowDisabled", _showDisabled);
-            conf.get("SortByCategory", _sortByCat);
+            conf.get("View:Sort", _viewOptions[VIEW_SORT]);
+            conf.get("View:Data", _viewOptions[VIEW_DATA]);
+            conf.get("View:Closed", _viewOptions[VIEW_CLOSED]);
         }
 
         void save(Config& conf) override
         {
-            conf.set("ShowDisabled", _showDisabled);
-            conf.set("SortByCategory", _sortByCat);
+            conf.set("View:Sort", _viewOptions[VIEW_SORT]);
+            conf.set("View:Data", _viewOptions[VIEW_DATA]);
+            conf.set("View:Closed", _viewOptions[VIEW_CLOSED]);
         }
 
         void draw(osg::RenderInfo& ri) override
@@ -441,24 +541,17 @@ namespace osgEarth
                 // Map name:
                 if (_mapNode->getMap()->getName().empty() == false)
                 {
-                    ImGui::TextColored(ImVec4(1, 1, 0, 1), _mapNode->getMap()->getName().c_str());
+                    ImGui::TextColored(ImVec4(1, 1, 0, 1), "%s", _mapNode->getMap()->getName().c_str());
                 }
 
                 ImGui::SameLine();
 
-                ImGui::Text("(%d)", _layers.size());
+                ImGui::Text("(%d)", (int)_layers.size());
                 ImGui::SameLine();
-
-                if (ImGui::Checkbox("Sort", &_sortByCat))
-                    dirtySettings();
-
-                ImGui::SameLine();
-                if (ImGui::Checkbox("Closed", &_showDisabled))
-                    dirtySettings();
 
                 ImGui::Separator();
 
-                if (_sortByCat)
+                if (_viewOptions[VIEW_SORT])
                 {
                     for (int cat = 0; cat < NUM_CATS; ++cat)
                     {
@@ -466,7 +559,10 @@ namespace osgEarth
                         if (layers.empty())
                             continue;
 
-                        if (ImGui::TreeNode(std::string(_layerCatName[cat] + " Layers").c_str()))
+                        if (cat == CAT_DATA && !_viewOptions[VIEW_DATA])
+                            continue;                    
+
+                        if (ImGui::TreeNode(std::string(_layerCatName[cat]).c_str()))
                         {
                             drawLayers(layers, ri);
                             ImGui::TreePop();
@@ -524,23 +620,25 @@ namespace osgEarth
                         dynamic_cast<osgEarth::Procedural::VegetationLayer*>(layer.get()) ||
                         dynamic_cast<osgEarth::Procedural::TextureSplattingLayer*>(layer.get()) ||
                         dynamic_cast<osgEarth::Procedural::BiomeLayer*>(layer.get()))
-                        _layersByCat[PROCEDURAL].push_back(layer);
+                        _layersByCat[CAT_PROCEDURAL].push_back(layer);
+                    else if (dynamic_cast<osgEarth::Procedural::BridgeLayer*>(layer.get()))
+                        _layersByCat[CAT_FEATURE].push_back(layer);
                     else
 #endif
-                        if (dynamic_cast<ImageLayer*>(layer.get()))
-                            _layersByCat[IMAGE].push_back(layer);
+                        if (dynamic_cast<ImageLayer*>(layer.get()) || dynamic_cast<ContourMapLayer*>(layer.get()))
+                            _layersByCat[CAT_IMAGE].push_back(layer);
                         else if (dynamic_cast<ElevationLayer*>(layer.get()))
-                            _layersByCat[ELEVATION].push_back(layer);
-                        else if (dynamic_cast<FeatureModelLayer*>(layer.get()))
-                            _layersByCat[FEATURE].push_back(layer);
+                            _layersByCat[CAT_ELEVATION].push_back(layer);
+                        else if (dynamic_cast<FeatureModelLayer*>(layer.get()) || dynamic_cast<TiledFeatureModelLayer*>(layer.get()))
+                            _layersByCat[CAT_FEATURE].push_back(layer);
                         else if (dynamic_cast<ModelLayer*>(layer.get()))
-                            _layersByCat[MODEL].push_back(layer);
+                            _layersByCat[CAT_MODEL].push_back(layer);
                         else if (dynamic_cast<TerrainConstraintLayer*>(layer.get()))
-                            _layersByCat[CONSTRAINT].push_back(layer);
+                            _layersByCat[CAT_CONSTRAINT].push_back(layer);
                         else if (dynamic_cast<FeatureSource*>(layer.get()))
-                            _layersByCat[DATA].push_back(layer);
+                            _layersByCat[CAT_DATA].push_back(layer);
                         else
-                            _layersByCat[OTHER].push_back(layer);
+                            _layersByCat[CAT_OTHER].push_back(layer);
                 }
             }
         }
@@ -554,7 +652,11 @@ namespace osgEarth
             {
                 osgEarth::Layer* layer = layers[i];
 
-                if (!_showDisabled && !layer->isOpen() && !layer->getOpenAutomatically())
+                if (!_viewOptions[VIEW_CLOSED] && !layer->isOpen() && !layer->getOpenAutomatically())
+                    continue;
+
+                auto featureSource = dynamic_cast<osgEarth::FeatureSource*>(layer);
+                if (featureSource && !_viewOptions[VIEW_DATA])
                     continue;
 
                 ImGui::PushID(layer);
@@ -614,7 +716,7 @@ namespace osgEarth
                 }
                 else
                 {
-                    ImGui::Text(layer->getName().c_str());
+                    ImGui::Text("%s", layer->getName().c_str());
                 }
 
                 if (_layerExpanded[layer])
@@ -629,6 +731,7 @@ namespace osgEarth
                         auto tileLayer = dynamic_cast<osgEarth::TileLayer*>(layer);
                         auto imageLayer = dynamic_cast<osgEarth::ImageLayer*>(layer);
                         auto elevationLayer = dynamic_cast<osgEarth::ElevationLayer*>(layer);
+                        auto featureSource = dynamic_cast<osgEarth::FeatureSource*>(layer);
 
                         if (tileLayer)
                         {
@@ -701,6 +804,15 @@ namespace osgEarth
                             bool debugView = visibleLayer->getEnableDebugView();
                             if (ImGuiLTable::Checkbox("Highlight", &debugView)) {
                                 visibleLayer->setEnableDebugView(debugView);
+                            }
+                        }
+
+                        if (imageLayer)
+                        {
+                            bool modulate = imageLayer->getColorBlending() == BLEND_MODULATE;
+                            if (ImGuiLTable::Checkbox("Modulate", &modulate))
+                            {
+                                imageLayer->setColorBlending(modulate ? BLEND_MODULATE : BLEND_INTERPOLATE);
                             }
                         }
 
@@ -792,6 +904,59 @@ namespace osgEarth
 
                         ImGuiLTable::End();
 
+
+                        auto contourmap = dynamic_cast<osgEarth::ContourMapLayer*>(layer);
+                        if (contourmap)
+                        {
+                            if (ImGui::Button("Edit contours"))
+                            {
+                                _editContoursDialog.visible = true;
+                            }
+                            _editContoursDialog.draw(contourmap);
+                        }
+
+#ifdef OSGEARTH_HAVE_PROCEDURAL_NODEKIT
+                        auto coverage = dynamic_cast<osgEarth::CoverageLayer*>(layer);
+                        if (coverage)
+                        {
+                            bool queryOn = (_mouseOverCoverageLayer == coverage);
+
+                            if (ImGui::Checkbox("Show value under mouse", &queryOn))
+                            {
+                                _mouseOverCoverageLayer = queryOn ? coverage : nullptr;
+                            }
+
+                            if (_mouseOverCoverageLayer == coverage)
+                            {
+                                if (_coverageLayerValueUnderMouse.available())
+                                {
+                                    if (_coverageLayerValueUnderMouse->isOK())
+                                    {
+                                        auto& value = _coverageLayerValueUnderMouse->value();
+                                        if (value.biomeid().isSet())
+                                            ImGui::Text("Biome ID: %s", value.biomeid()->c_str());
+                                        if (value.dense().isSet())
+                                            ImGui::Text("Dense: %.2f", value.dense().value());
+                                        if (value.lush().isSet())
+                                            ImGui::Text("Lush: %.2f", value.lush().value());
+                                        if (value.rugged().isSet())
+                                            ImGui::Text("Rugged: %.2f", value.rugged().value());    
+                                        if (value.soiltype().isSet())
+                                            ImGui::Text("Soil Type: %s", value.soiltype()->c_str());
+                                    }
+                                    else
+                                    {
+                                        ImGui::Text("%s", _coverageLayerValueUnderMouse->message().c_str());
+                                    }
+                                }
+                                else
+                                {
+                                    ImGui::Text("  (searching...)");                                
+                                }
+                            }
+                        }
+#endif
+
                         if (imageLayer)
                         {
                             bool queryOn = (_mouseOverImageLayer == imageLayer);
@@ -851,7 +1016,7 @@ namespace osgEarth
                                 else
                                 {
                                     ImGui::Text("  (searching)");
-                                    ImGui::Text("");
+                                    ImGui::Text(" ");
                                 }
                             }
                         }
@@ -933,7 +1098,7 @@ namespace osgEarth
 
                     else if (layer->getStatus().isError() && layer->getStatus().message() != "Layer closed")
                     {
-                        ImGui::TextWrapped(layer->getStatus().message().c_str());
+                        ImGui::TextWrapped("%s", layer->getStatus().message().c_str());
                     }
 
                     ImGui::Unindent();
@@ -952,7 +1117,7 @@ namespace osgEarth
         {
             if (ImGui::BeginMenuBar())
             {
-                if (ImGui::BeginMenu("Add Layer"))
+                if (ImGui::BeginMenu("Add "))
                 {
 #ifdef HAS_PFD
                     if (ImGui::MenuItem("Local File"))
@@ -1034,6 +1199,19 @@ namespace osgEarth
 
                     ImGui::EndMenu();
                 }
+
+                static std::string view_strings[3] = { "Sort", "Data", "Closed" };
+                if (ImGui::BeginMenu("View"))
+                {
+                    for (int i = 0; i < 3; ++i) {
+                        if (ImGui::Checkbox(view_strings[i].c_str(), &_viewOptions[i])) {
+                            dirtySettings();
+                        }
+                    }
+
+                    ImGui::EndMenu();
+                }
+
                 ImGui::EndMenuBar();
             }
 
@@ -1052,7 +1230,7 @@ namespace osgEarth
                 // ReadyMap Imagery
                 if (_mapNode->getMap()->getLayerByName("ReadyMap Imagery") == nullptr)
                 {
-                    if (ImGui::MenuItem("ReadyMap Imagery"))
+                    if (ImGui::MenuItem("ReadyMap imagery"))
                     {
                         TMSImageLayer* readymap = new TMSImageLayer();
                         readymap->setName("ReadyMap Imagery");
@@ -1064,7 +1242,7 @@ namespace osgEarth
                 // ReadyMap Elevation
                 if (_mapNode->getMap()->getLayerByName("ReadyMap Elevation") == nullptr)
                 {
-                    if (ImGui::MenuItem("ReadyMap Elevation"))
+                    if (ImGui::MenuItem("ReadyMap elevation"))
                     {
                         TMSElevationLayer* readymap = new TMSElevationLayer();
                         readymap->setName("ReadyMap Elevation");
@@ -1081,21 +1259,51 @@ namespace osgEarth
                         XYZImageLayer* osm = new XYZImageLayer();
                         osm->setName("OpenStreetMap");
                         osm->setURL("https://[abc].tile.openstreetmap.org/{z}/{x}/{y}.png");
-                        osm->setProfile(osgEarth::Registry::instance()->getSphericalMercatorProfile());
+                        osm->setProfile(osgEarth::Profile::create(osgEarth::Profile::SPHERICAL_MERCATOR));
                         osm->setAttribution("&#169;OpenStreetMap contributors");
                         _mapNode->getMap()->addLayer(osm);
                     }
                 }
 
-                if (_mapNode->getMap()->getLayer<DebugImageLayer>() == nullptr)
+                // Contourmap
+                if (_mapNode->getMap()->getLayer<ContourMapLayer>() == nullptr)
                 {
-                    if (ImGui::MenuItem("Debug"))
+                    if (ImGui::MenuItem("Contour map"))
                     {
-                        DebugImageLayer* debugImage = new DebugImageLayer;
-                        debugImage->setName("Debug");
-                        _mapNode->getMap()->addLayer(debugImage);
+                        auto* layer = new ContourMapLayer();
+                        layer->setName("Contour Map");
+                        _mapNode->getMap()->addLayer(layer);
                     }
                 }
+
+                // Hillshade Shading
+                if (_mapNode->getMap()->getLayer<GDALDEMLayer>() == nullptr)
+                {
+                    if (ImGui::MenuItem("Hill shading"))
+                    {
+                        auto* layer = new GDALDEMLayer();
+                        layer->setName("Hill shading");
+                        layer->setOpacity(0.25);
+                        _mapNode->getMap()->addLayer(layer);
+                    }
+                }
+
+                // Debug tiles
+                if (ImGui::MenuItem("Debug tiles (map profile)"))
+                {
+                    DebugImageLayer* debugImage = new DebugImageLayer();
+                    debugImage->setName("Debug tiles (Map profile)");
+                    _mapNode->getMap()->addLayer(debugImage);
+                }
+
+                if (ImGui::MenuItem("Debug tiles (Mercator)"))
+                {
+                    DebugImageLayer* debugImage = new DebugImageLayer();
+                    debugImage->setProfile(Profile::create(Profile::SPHERICAL_MERCATOR));
+                    debugImage->setName("Debug tiles (Mercator)");
+                    _mapNode->getMap()->addLayer(debugImage);
+                }
+
 
                 //ImGui::EndMenu();
             }
@@ -1138,6 +1346,44 @@ namespace osgEarth
                     }
                 }
             }
+
+#ifdef OSGEARTH_HAVE_PROCEDURAL_NODEKIT
+            if (_mouseOverCoverageLayer)
+            {
+                _coverageLayerValueUnderMouse.reset();
+
+                TerrainTile* tile = _mapNode->getTerrain()->getTerrainTileUnderMouse(view, x, y);
+                if (tile)
+                {
+                    GeoPoint p = _mapNode->getGeoPointUnderMouse(view, x, y);
+                    TileKey key = _mouseOverCoverageLayer->getProfile()->createTileKey(p, tile->getKey().getLOD());
+                    key = _mouseOverCoverageLayer->getBestAvailableTileKey(key);
+
+                    if (key.valid())
+                    {
+                        auto task = [this, key, p](Cancelable& c)
+                            {
+                                osg::ref_ptr<ProgressCallback> prog = new ProgressCallback(&c);
+
+                                auto factory = osgEarth::Procedural::LandCoverSample::Factory::create(_mouseOverCoverageLayer);
+                                auto coverage = factory->createCoverage(key, prog.get());
+                                const osgEarth::Procedural::LandCoverSample* value = nullptr;
+                                TileKey key2 = key;
+                                for(TileKey key2 = key; !value && key2.valid(); key2.makeParent()) {
+                                    value = coverage.readAtCoords(p.x(), p.y());
+                                }
+                                if (value)
+                                {
+                                    return Result<osgEarth::Procedural::LandCoverSample>(*value);
+                                }
+                                return Result<osgEarth::Procedural::LandCoverSample>(Status::Error("No value"));
+                            };
+
+                        _coverageLayerValueUnderMouse = jobs::dispatch(task);
+                    }
+                }
+            }
+#endif
         }
     };
 }

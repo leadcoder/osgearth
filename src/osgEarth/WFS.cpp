@@ -1,37 +1,15 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/WFS>
-
-#include <osgEarth/Registry>
 #include <osgEarth/FileUtils>
 #include <osgEarth/URI>
 #include <osgEarth/XmlUtils>
-
 #include <osgEarth/Filter>
 #include <osgEarth/OgrUtils>
-
 #include <osg/Notify>
 #include <osgDB/FileNameUtils>
-#include <osgDB/FileUtils>
-#include <list>
-#include <stdio.h>
-#include <stdlib.h>
 
 #include <ogr_api.h>
 
@@ -380,14 +358,18 @@ WFSFeatureSource::getFeatures(const std::string& buffer, const std::string& mime
     OGRLayerH layer = OGR_DS_GetLayer(ds, 0);
     if (layer)
     {
+        OgrUtils::OGRFeatureFactory factory;
+        factory.srs = feature_srs;
+        factory.interp = getFeatureProfile()->geoInterp();
+        factory.rewindPolygons = _options->rewindPolygons().value();
+
         OGR_L_ResetReading(layer);
         OGRFeatureH feat_handle;
         while ((feat_handle = OGR_L_GetNextFeature(layer)) != NULL)
         {
             if (feat_handle)
             {
-                osg::ref_ptr<Feature> f = OgrUtils::createFeature(feat_handle, feature_srs,
-                    getFeatureProfile()->geoInterp(), *_options->rewindPolygons());
+                osg::ref_ptr<Feature> f = factory.createFeature(feat_handle);
 
                 if (f.valid() && !isBlacklisted(f->getFID()))
                 {

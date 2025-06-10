@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #pragma once
 
@@ -74,6 +57,7 @@ namespace osgEarth
         OE_OPTION(bool, visible, true);
         OE_OPTION(bool, createTilesAsync, true);
         OE_OPTION(bool, createTilesGrouped, true);
+        OE_OPTION(bool, restrictPolarSubdivision, true);
 
         virtual Config getConfig() const;
     private:
@@ -254,20 +238,27 @@ namespace osgEarth
         void setCreateTilesGrouped(const bool& value);
         const bool& getCreateTilesGrouped() const;
 
+        //! Whether to stop a geocentric mesh from subdividing all the way at the poles.
+        void setRestrictPolarSubdivision(const bool& value);
+        const bool& getRestrictPolarSubdivision() const;
+
         //! @deprecated
         //! Scale factor for background loading priority of terrain tiles.
         //! Default = 1.0. Make it higher to prioritize terrain loading over
         //! other modules.
+        OE_DEPRECATED("NO OP")
         void setPriorityScale(const float& value);
         const float& getPriorityScale() const;
 
         //! @deprecated
         //! Whether to activate debugging mode
+        OE_DEPRECATED("NO OP")
         void setDebug(const bool& value);
         const bool& getDebug() const;
 
         //! @deprecated
         //! Whether to compress the normal maps before sending to the GPU
+        OE_DEPRECATED("NO OP")
         void setCompressNormalMaps(const bool& value);
         const bool& getCompressNormalMaps() const;
 
@@ -277,6 +268,7 @@ namespace osgEarth
         //! stop providing data (default behavior). If you set a value, the terrain will subdivide
         //! to the specified LOD no matter what (and may continue farther if higher-resolution
         //! data is available).
+        OE_DEPRECATED("NO OP")
         void setMinLOD(const unsigned& value);
         const unsigned& getMinLOD() const;
 

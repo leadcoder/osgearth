@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -155,8 +141,8 @@ namespace osgEarth
                 GeoImage nnf;
                 sdfgen.createNearestNeighborField(features, 256, out_extent, false, nnf, nullptr);
 
-                const float min_dist = 0.25f * width;
-                const float max_dist = 0.5f * width;
+                const float min_dist = 0.25f * width.as(Units::METERS);
+                const float max_dist = 0.5f * width.as(Units::METERS);
                 GeoImage sdf = sdfgen.allocateSDF(256, out_extent);
                 sdfgen.createDistanceField(nnf, sdf, out_extent.height(), min_dist, max_dist, nullptr);
 
@@ -392,8 +378,7 @@ namespace osgEarth
                     {
                         Style& style = _ditchFeature->style().mutable_value();
                         auto line = style.getOrCreate<LineSymbol>();
-                        line->stroke()->width() = _width;
-                        line->stroke()->widthUnits() = Units::METERS;
+                        line->stroke()->width() = Distance(_width, Units::METERS);
                         line->tessellationSize()->set(_width, Units::METERS);
                     }
                     _ditchCursor->setNodeMask(~0);

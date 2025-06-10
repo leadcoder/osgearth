@@ -1,29 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
+/* osgEarth
  * Copyright 2008-2012 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * MIT License
  */
-
-#ifndef OSGEARTH_MATH_H
-#define OSGEARTH_MATH_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/Geometry>
 #include <osg/Quat>
 #include <osg/Vec3>
+#include <osg/Vec4>
 #include <osg/BoundingBox>
 #include <osg/Array>
 #include <osg/Geometry>
@@ -370,16 +355,16 @@ namespace osgEarth
         return a.x()*b.x() + a.y()*b.y() + a.z()*b.z();
     }
 
-    template<typename T>
-    inline double distanceSquared2D(const T& a, const T& b)
+    template<typename A, typename B>
+    inline double distanceSquared2D(const A& a, const B& b)
     {
         return 
             (b.x() - a.x())*(b.x() - a.x()) + 
             (b.y() - a.y())*(b.y() - a.y());
     }
 
-    template<typename T>
-    inline double distanceSquared3D(const T& a, const T& b)
+    template<typename A, typename B>
+    inline double distanceSquared3D(const A& a, const B& b)
     {
         return
             (b.x() - a.x())*(b.x() - a.x()) +
@@ -387,14 +372,14 @@ namespace osgEarth
             (b.z() - a.z())*(b.z() - a.z());
     }
 
-    template<typename T>
-    inline double distance2D(const T& a, const T& b)
+    template<typename A, typename B>
+    inline double distance2D(const A& a, const B& b)
     {
         return sqrt(distanceSquared2D(a, b));
     }
 
-    template<typename T>
-    inline double distance3D(const T& a, const T& b)
+    template<typename A, typename B>
+    inline double distance3D(const A& a, const B& b)
     {
         return sqrt(distanceSquared3D(a, b));
     }
@@ -510,6 +495,12 @@ namespace osgEarth
         x |= x >> 8;
         x |= x >> 16;
         return x + 1;
+    }
+
+    template<typename T>
+    inline osg::Vec4f mult(const osg::Vec4f& in, T scalar)
+    {
+        return osg::Vec4f(in.x()*scalar, in.y()*scalar, in.z()*scalar, in.w()*scalar);
     }
 
     // Adapted from Boost - see boost license
@@ -631,7 +622,4 @@ namespace osgEarth
             const osg::Matrix& m,
             double& L, double& R, double& B, double& T, double& N, double& F);
     };
-
 }
-#endif
-

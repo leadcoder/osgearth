@@ -5,12 +5,11 @@
  */
 #pragma once
 
-#include <osgEarth/Common>
-
 #include <atomic>
 #include <mutex>
 #include <functional>
 #include <vector>
+#include <osg/observer_ptr>
 
 namespace osgEarth
 {
@@ -21,10 +20,13 @@ namespace osgEarth
      *   Callback<void(int)> onClick;
      *
      * User adds a callback:
-     *   instance->onClick([](int a) { ... });
+     *   uid = instance->onClick([](int a) { ... });
      *
      * Class fires a callback:
-     *   onClick(a);
+     *   onClick.fire(42);
+     *
+     * User removes a callback:
+     *   instance->onClick.remove(uid);
      */
     template<typename F>
     class Callback
@@ -37,8 +39,16 @@ namespace osgEarth
         mutable std::atomic_bool firing = { false };
 
     public:
-        //! Adds a callback function
+        //! Adds a callback function (by stealable rvalue)
         int operator()(std::function<F>&& func) const {
+            std::lock_guard<std::mutex> lock(mutex);
+            auto uid = ++uidgen;
+            entries.emplace_back(uid, std::move(func));
+            return uid;
+        }
+
+        //! Adds a callback function
+        int operator()(std::function<F>& func) const {
             std::lock_guard<std::mutex> lock(mutex);
             auto uid = ++uidgen;
             entries.emplace_back(uid, func);
@@ -65,6 +75,12 @@ namespace osgEarth
                     e.second(args...);
                 firing = false;
             }
+        }
+
+        //! Whether there are any callbacks registered
+        operator bool() const {
+            std::lock_guard<std::mutex> lock(mutex);
+            return !entries.empty();
         }
     };
 }

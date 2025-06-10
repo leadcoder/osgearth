@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/Sky>
 #include <osgEarth/MapNode>
@@ -48,19 +31,14 @@ void
 SkyNode::baseInit(const SkyOptions& options)
 {
     _ephemeris = new Ephemeris();
-    _sunVisible = true;
-    _moonVisible = true;
-    _starsVisible = true;
-    _atmosphereVisible = true;
-    _simTimeTracksDateTime = false;
 
     setLighting( osg::StateAttribute::ON );
 
     if ( options.hours().isSet() )
     {
         float hours = osg::clampBetween(options.hours().get(), 0.0f, 24.0f);
-        _dateTime = DateTime(_dateTime.year(), _dateTime.month(), _dateTime.day(), (double)hours);
-        // (don't call setDateTime since we are called from the CTOR)
+        DateTime now = Registry::instance()->getDateTime();
+        Registry::instance()->setDateTime(DateTime(now.year(), now.month(), now.day(), (double)hours));
     }
 
     this->getOrCreateStateSet()->setDefine("OE_NUM_LIGHTS", "1");
@@ -83,9 +61,17 @@ SkyNode::getEphemeris() const
 void
 SkyNode::setDateTime(const DateTime& dt)
 {
-    _dateTime = dt;
+    // just sets the global date time now.
+    Registry::instance()->setDateTime(dt);
+    //_dateTime = dt;
     //OE_INFO << LC << "Time = " << dt.asRFC1123() << std::endl;
-    onSetDateTime();
+    //onSetDateTime();
+}
+
+DateTime
+SkyNode::getDateTime() const
+{
+    return Registry::instance()->getDateTime();
 }
 
 void
@@ -149,6 +135,16 @@ SkyNode::getSimulationTimeTracksDateTime() const
 void
 SkyNode::traverse(osg::NodeVisitor& nv)
 {
+    // install the date time callback (once this node is in the scene graph)
+    if (!_callbackInstalled.exchange(true))
+    {
+        Registry::instance()->onDateTimeChanged([weak = osg::observer_ptr<SkyNode>(this)](auto dt) {
+            osg::ref_ptr<SkyNode> strong;
+            if (weak.lock(strong))
+                strong->onSetDateTime();
+        });
+    }
+
     osg::ref_ptr<const osg::FrameStamp> fs;
     double old_simtime;
 
@@ -192,7 +188,7 @@ SkyNode::create(const SkyOptions& options)
         return 0L;
     }
 
-    SkyNodeFactory* factory = extension->as<SkyNodeFactory>();
+    auto* factory = extension->as<Util::SkyNodeFactory>();
     if ( !factory ) {
         OE_WARN << LC << "Internal error; extension \"" << extensionName << "\" does not implement SkyNodeFactory\n";
         return 0L;
@@ -221,7 +217,7 @@ SkyNode::create(const std::string& driver)
 //------------------------------------------------------------------------
 
 const SkyOptions&
-SkyDriver::getSkyOptions(const osgDB::Options* options) const
+Util::SkyDriver::getSkyOptions(const osgDB::Options* options) const
 {
     static SkyOptions s_default;
     const void* data = options->getPluginData(SKY_OPTIONS_TAG);

@@ -1,30 +1,11 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
-
-#ifndef OSGEARTH_IMAGE_TO_HEIGHTFIELD_CONVERTER
-#define OSGEARTH_IMAGE_TO_HEIGHTFIELD_CONVERTER 1
+#pragma once
 
 #include <osgEarth/Export>
-
+#include <osgEarth/GeoCommon>
 #include <osg/Image>
 #include <osg/Shape>
 
@@ -36,10 +17,7 @@ namespace osgEarth { namespace Util
     class OSGEARTH_EXPORT ImageToHeightFieldConverter
     {
     public:
-        ImageToHeightFieldConverter();
-
-        /** dtor */
-        virtual ~ImageToHeightFieldConverter() { }
+        ImageToHeightFieldConverter() = default;
 
         /**
         * Instruct the converter to detect and replace "no data" values. It will
@@ -71,9 +49,7 @@ namespace osgEarth { namespace Util
         osg::Image* convert16(const osg::HeightField* hf ) const;
         osg::Image* convert32(const osg::HeightField* hf ) const;
 
-        bool  _replace_nodata;
-        float _nodata_value;
+        bool _replace_nodata = false;
+        float _nodata_value = NO_DATA_VALUE;
     };
 } }
-
-#endif //OSGEARTH_IMAGE_TO_HEIGHTFIELD_CONVERTER

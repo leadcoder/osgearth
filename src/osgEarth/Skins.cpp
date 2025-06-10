@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Skins>
 #include <osgEarth/Style>
@@ -25,6 +11,8 @@
 #include <osg/BlendFunc>
 #include <osg/Texture2D>
 #include <osg/Texture2DArray>
+
+#include <osgEarth/ResourceLibrary>
 
 #define LC "[SkinResource] "
 
@@ -117,20 +105,14 @@ SkinResource::createStateAttribute(const osgDB::Options* readOptions) const
         auto status = pbr_texture->load(material().value(), readOptions);
         if (!status.isOK())
         {
-            OE_WARN << LC << "One or more errors loading material for skin " << name().value() << std::endl;
+            OE_WARN << LC << "One or more errors loading material for skin " << name() << std::endl;
             return nullptr;
         }
 
         if (isTiled() == true)
         {
-            for (auto& tex : { pbr_texture->albedo, pbr_texture->normal, pbr_texture->pbr })
-            {
-                if (tex.valid())
-                {
-                    tex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
-                    tex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
-                }
-            }
+            pbr_texture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+            pbr_texture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
         }
 
         return pbr_texture.release();
@@ -294,7 +276,6 @@ SkinSymbol::SkinSymbol(const Config& conf) :
 void
 SkinSymbol::mergeConfig( const Config& conf )
 {
-    conf.get( "library",             _library );
     conf.get( "object_height",       _objHeight );
     conf.get( "min_object_height",   _minObjHeight );
     conf.get( "max_object_height",   _maxObjHeight );
@@ -311,7 +292,6 @@ SkinSymbol::getConfig() const
     Config conf = Symbol::getConfig();
     conf.key() = "skin";
 
-    conf.set( "library",             _library );
     conf.set( "object_height",       _objHeight );
     conf.set( "min_object_height",   _minObjHeight );
     conf.set( "max_object_height",   _maxObjHeight );
@@ -330,9 +310,14 @@ SkinSymbol::getConfig() const
 void
 SkinSymbol::parseSLD(const Config& c, Style& style)
 {
-    if ( match(c.key(), "skin-library") ) {
+    if (match(c.key(), "library")) {
+        if (!c.value().empty())
+            style.getOrCreate<SkinSymbol>()->library() = Strings::unquote(c.value());
+    }
+    else
+    if ( match(c.key(), "skin-library")) {
         if ( !c.value().empty() ) 
-            style.getOrCreate<SkinSymbol>()->library() = c.value();
+            style.getOrCreate<SkinSymbol>()->library() = Strings::unquote(c.value());
     }
     else if ( match(c.key(), "skin-tags") ) {
         style.getOrCreate<SkinSymbol>()->addTags( c.value() );
@@ -355,4 +340,23 @@ SkinSymbol::parseSLD(const Config& c, Style& style)
     else if (match(c.key(), "skin") || match(c.key(), "skin-name")) {
         style.getOrCreate<SkinSymbol>()->name() = StringExpression(c.value());
     }
+}
+
+SkinResource*
+SkinSymbol::getResource(ResourceLibrary* lib, unsigned rnd, const osgDB::Options* readOptions) const
+{
+    SkinResource* result = nullptr;
+
+    if (lib)
+    {
+        result = lib->getSkin(this, rnd, readOptions);
+    }
+
+    if (!result && name().isSet())
+    {
+        result = new SkinResource();
+        result->imageURI() = URI(name()->eval(), uriContext());
+    }
+
+    return result;
 }

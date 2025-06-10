@@ -1,30 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Color>
 #include <osgEarth/Math>
 #include "Random"
-#include <algorithm>
 #include <osg/Vec4ub>
 #include <osgEarth/StringUtils>
 #include <sstream>
 #include <iomanip>
-#include <ctype.h>
 
 using namespace osgEarth;
 
@@ -176,9 +160,12 @@ Color::Color( const std::string& input, Format format )
     if (osgEarth::startsWith(t, "rgb("))
     {
         std::string sub = t.substr(4, t.size() - 5);
-        StringTokenizer tok(",");
-        StringVector components;
-        tok.tokenize(sub, components);
+
+        auto components = StringTokenizer()
+            .delim(",")
+            .quote('\'', false).quote('\"', false)
+            .tokenize(sub);
+
         if (components.size() == 3)
         {
             unsigned int r = osgEarth::as<unsigned int>(components[0], 0u);
@@ -190,9 +177,12 @@ Color::Color( const std::string& input, Format format )
     else if (osgEarth::startsWith(t, "rgba("))
     {
         std::string sub = t.substr(5, t.size() - 6);
-        StringTokenizer tok(",");
-        StringVector components;
-        tok.tokenize(sub, components);
+
+        auto components = StringTokenizer()
+            .delim(",")
+            .quote('\'', false).quote('\"', false)
+            .tokenize(sub);
+
         if (components.size() == 4)
         {
             unsigned int r = osgEarth::as<unsigned int>(components[0], 0u);
@@ -205,9 +195,12 @@ Color::Color( const std::string& input, Format format )
     else if (osgEarth::startsWith(t, "hsl("))
     {
         std::string sub = t.substr(4, t.size() - 5);
-        StringTokenizer tok(",");
-        StringVector components;
-        tok.tokenize(sub, components);
+
+        auto components = StringTokenizer()
+            .delim(",")
+            .quote('\'', false).quote('\"', false)
+            .tokenize(sub);
+
         if (components.size() == 3)
         {
             float H = osgEarth::as<float>(components[0], 0.0f);
@@ -239,9 +232,12 @@ Color::Color( const std::string& input, Format format )
     else if (osgEarth::startsWith(t, "hsla("))
     {
         std::string sub = t.substr(5, t.size() - 6);
-        StringTokenizer tok(",");
-        StringVector components;
-        tok.tokenize(sub, components);
+
+        auto components = StringTokenizer()
+            .delim(",")
+            .quote('\'', false).quote('\"', false)
+            .tokenize(sub);
+
         if (components.size() == 4)
         {
             float H = osgEarth::as<float>(components[0], 0.0f);

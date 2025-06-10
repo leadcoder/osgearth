@@ -1,28 +1,12 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "DuktapeEngine"
 #include "JSGeometry"
-#include <osgEarth/JsonUtils>
 #include <osgEarth/StringUtils>
 #include <osgEarth/GeometryUtils>
 #include <osgEarth/Metrics>
-#include <sstream>
 
 #undef  LC
 #define LC "[JavaScript] "
@@ -214,11 +198,52 @@ namespace
 
 //............................................................................
 
-DuktapeEngine::Context::Context()
+namespace
 {
-    _ctx = nullptr;
-    _bytecode = nullptr;
-    _errorCount = 0u;
+    std::string prepareScript(const std::string& input)
+    {
+        // There is an apparent bug(?) in duktape with respect to newlines.
+        // Where this would return true:
+        // 
+        //    return feature.properties.landuse === 'forest';
+        // 
+        // ..this returns false:
+        // 
+        //    return
+        //        feature.properties.landuse === 'forest';
+        //
+        // The workaround here is to remove newlines (that are not inside quotes);
+        // we also have to remove inline comments along the way.
+
+        // split the script into lines
+        auto lines = StringTokenizer()
+            .delim("\n")
+            .keepEmpties(false)
+            .tokenize(input);
+
+        StringTokenizer stripInlineComment;
+        stripInlineComment
+            .delim("//")
+            .standardQuotes()
+            .ignoreDanglingQuotes();
+
+        for (auto& line : lines)
+        {
+            auto tokens = stripInlineComment(line);
+            if (tokens.size() > 0)
+                line = tokens[0];
+            else
+                line = {};
+        }
+
+        // reassemble the script into a single line string
+        std::string output;
+        output.reserve(input.size());
+        for (auto& line : lines)
+            output.append(line).append(" ");
+
+        return output;
+    }
 }
 
 void
@@ -233,12 +258,14 @@ DuktapeEngine::Context::initialize(const ScriptEngineOptions& options, bool comp
         // any functions or objects with the EcmaScript global object.
         if ( options.script().isSet() )
         {
-            std::string temp(options.script()->getCode());
+            auto temp = prepareScript(options.script()->getCode());
+
             bool ok = (duk_peval_string(_ctx, temp.c_str()) == 0); // [ "result" ]
             if ( !ok )
             {
                 const char* err = duk_safe_to_string(_ctx, -1);
                 OE_WARN << LC << err << std::endl;
+                OE_WARN << LC << "Code:" << std::endl << options.script()->getCode() << std::endl;
             }
             duk_pop(_ctx); // []
         }
@@ -286,13 +313,8 @@ DuktapeEngine::~DuktapeEngine()
 }
 
 bool
-DuktapeEngine::compile(
-    Context& c,
-    const std::string& code,
-    ScriptResult& result)
+DuktapeEngine::compile(Context& c, const std::string& code, ScriptResult& result)
 {
-    //OE_PROFILING_ZONE;
-
     duk_context* ctx = c._ctx;
 
     if (code != c._bytecodeSource)

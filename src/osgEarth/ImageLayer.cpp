@@ -1,35 +1,18 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/ImageLayer>
-#include <osgEarth/ImageMosaic>
-#include <osgEarth/Registry>
 #include <osgEarth/Progress>
-#include <osgEarth/Capabilities>
 #include <osgEarth/Metrics>
 #include <osgEarth/NetworkMonitor>
-#include <osgEarth/TimeSeriesImage>
 #include <osgEarth/Random>
-#include <osgEarth/MetaTile>
-#include <osgEarth/Utils>
 #include <osgEarth/Math>
-#include <osg/ImageStream>
-#include <cinttypes>
+#include <osgEarth/MetaTile>
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+#include <Superluminal/PerformanceAPI.h>
+#endif
 
 using namespace osgEarth;
 
@@ -278,7 +261,7 @@ ImageLayer::setAltitude(const Distance& value)
 {
     options().altitude() = value;
 
-    if (value != 0.0)
+    if (value.getValue() != 0.0)
     {
         osg::StateSet* stateSet = getOrCreateStateSet();
 
@@ -317,27 +300,6 @@ bool
 ImageLayer::getAcceptDraping() const
 {
     return options().acceptDraping().get();
-}
-
-void
-ImageLayer::invoke_onCreate(const TileKey& key, GeoImage& data)
-{
-    if (_callbacks.empty() == false) // not thread-safe but that's ok
-    {
-        // Copy the vector to prevent thread lockup
-        Callbacks temp;
-
-        _callbacks.lock();
-        temp = _callbacks;
-        _callbacks.unlock();
-
-        for(Callbacks::const_iterator i = temp.begin();
-            i != temp.end();
-            ++i)
-        {
-            i->get()->onCreate(key, data);
-        }
-    }
 }
 
 void
@@ -380,6 +342,12 @@ ImageLayer::createImage(const TileKey& key, ProgressCallback* progress)
 {
     OE_PROFILING_ZONE;
     OE_PROFILING_ZONE_TEXT(getName() + " " + key.str());
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+    PERFORMANCEAPI_INSTRUMENT_FUNCTION();
+    PERFORMANCEAPI_INSTRUMENT_DATA("key", key.str().c_str());
+    PERFORMANCEAPI_INSTRUMENT_DATA("layer", getName().c_str());
+#endif
 
     if (!isOpen())
     {
@@ -576,7 +544,7 @@ ImageLayer::createImageInKeyProfile(const TileKey& key, ProgressCallback* progre
     if (result.valid())
     {        
         // invoke user callbacks
-        invoke_onCreate(key, result);
+        onCreate.fire(key, result);
 
 #if HOOKS
         if (hooks)
@@ -696,7 +664,7 @@ ImageLayer::assembleImage(const TileKey& key, ProgressCallback* progress)
 
             // Working set of points. it's much faster to xform an entire vector all at once.
             std::vector<osg::Vec3d> points;
-            points.assign(cols * rows, { 0, 0, 0 });
+            points.resize(cols * rows);
 
             double minx, miny, maxx, maxy;
             key.getExtent().getBounds(minx, miny, maxx, maxy);
@@ -704,14 +672,21 @@ ImageLayer::assembleImage(const TileKey& key, ProgressCallback* progress)
             double dy = (maxy - miny) / (double)(rows);
 
             Bounds sourceBounds;
-            sources[0].second.getSRS()->getBounds(sourceBounds);
-            // shrink the sourceBounds by our pixel-centering value:
+            auto sourceSRS = sources[0].second.getSRS();
+            sourceSRS->getBounds(sourceBounds);
+
+            // Transform the source bounds and shrink it by our pixel-centering value:
             if (sourceBounds.valid())
             {
-                sourceBounds.xMin() += 0.5 * dx;
-                sourceBounds.yMin() += 0.5 * dy;
-                sourceBounds.xMax() -= 0.5 * dx;
-                sourceBounds.yMax() -= 0.5 * dy;
+                sourceSRS->clampExtentToLegalBounds(key.getProfile()->getSRS(),
+                    sourceBounds.xMin(), sourceBounds.yMin(),
+                    sourceBounds.xMax(), sourceBounds.yMax());
+
+                // revisit this if necessary - it was being applied in the wrong SRS
+                //sourceBounds.xMin() += 0.5 * dx;
+                //sourceBounds.yMin() += 0.5 * dy;
+                //sourceBounds.xMax() -= 0.5 * dx;
+                //sourceBounds.yMax() -= 0.5 * dy;
             }
 
             // build a grid of sample points:
@@ -789,6 +764,22 @@ ImageLayer::writeImageImplementation(const TileKey& key, const osg::Image* image
     return Status(Status::ServiceUnavailable);
 }
 
+Result<osg::ref_ptr<osg::Image>>
+ImageLayer::encodeImage(const TileKey& key, const osg::Image* image, ProgressCallback* progress)
+{
+    if (getStatus().isError())
+        return getStatus();
+
+    Threading::ScopedReadLock lock(inUseMutex());
+    return encodeImageImplementation(key, image, progress);
+}
+
+Result<osg::ref_ptr<osg::Image>>
+ImageLayer::encodeImageImplementation(const TileKey& key, const osg::Image* image, ProgressCallback* progress) const
+{
+    return Status(Status::ServiceUnavailable);
+}
+
 const std::string
 ImageLayer::getCompressionMethod() const
 {
@@ -809,24 +800,6 @@ ImageLayer::modifyTileBoundingBox(const TileKey& key, osg::BoundingBox& box) con
         }
     }
     TileLayer::modifyTileBoundingBox(key, box);
-}
-
-void
-ImageLayer::addCallback(ImageLayer::Callback* c)
-{
-    _callbacks.lock();
-    _callbacks.push_back(c);
-    _callbacks.unlock();
-}
-
-void
-ImageLayer::removeCallback(ImageLayer::Callback* c)
-{
-    _callbacks.lock();
-    Callbacks::iterator i = std::find(_callbacks.begin(), _callbacks.end(), c);
-    if (i != _callbacks.end())
-        _callbacks.erase(i);
-    _callbacks.unlock();
 }
 
 void

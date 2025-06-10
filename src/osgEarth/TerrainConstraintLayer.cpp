@@ -1,27 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
-#include <osgEarth/TerrainConstraintLayer>
-#include <osgEarth/Map>
-#include <osgEarth/Progress>
-#include <osgEarth/Utils>
-#include <osgEarth/SimplePager>
+#include "TerrainConstraintLayer"
+#include "Map"
+#include "Progress"
+#include "Utils"
+#include "NetworkMonitor"
 
 using namespace osgEarth;
 
@@ -198,9 +184,9 @@ TerrainConstraintLayer::openImplementation()
     if (parent.isError())
         return parent;
 
-    if (!options().featureSource().isSet() && !options().model().isSet())
+    if (!options().featureSource().isSet() && !options().model().isSet() && !constraintCallback)
     {
-        return Status(Status::ConfigurationError, "Missing either features or model constraint source");
+        return Status(Status::ConfigurationError, "Missing either features, model, or callback constraint source");
     }
 
     if (options().featureSource().isSet())
@@ -271,6 +257,12 @@ TerrainConstraintLayer::create()
         return;
     }
 
+    if (constraintCallback)
+    {
+        // fine
+        return;
+    }
+
     setStatus(Status(Status::ConfigurationError, "No data source available"));
 }
 
@@ -319,7 +311,7 @@ TerrainConstraintLayer::getFeatureConstraint(const TileKey& key, FilterContext* 
                 f->transform(keyExtent.getSRS());
                 constraint.features.emplace_back(f);
             }
-        }
+        }            
     }
 }
 
@@ -360,13 +352,14 @@ TerrainConstraintLayer::getModelConstraint(const TileKey& key, MeshConstraint& c
 MeshConstraint
 TerrainConstraintLayer::getConstraint(const TileKey& key, FilterContext* context, ProgressCallback* progress) const
 {
-
     if (!isOpen() || !getVisible() || getMinLevel() > key.getLOD())
         return {};
 
     const GeoExtent& keyExtent = key.getExtent();
     if (getExtent().isValid() && !getExtent().intersects(keyExtent))
         return {};
+
+    NetworkMonitor::ScopedRequestLayer layerRequest(getName());
 
     MeshConstraint result;
     result.hasElevation = getHasElevation();
@@ -392,7 +385,12 @@ TerrainConstraintLayer::getConstraint(const TileKey& key, FilterContext* context
         getFeatureConstraint(key, context, result, progress);
     }
 
-    return result;
+    if (constraintCallback)
+    {
+        constraintCallback.fire(key, result, context, progress);
+    }
+
+    return result.features.empty() ? MeshConstraint() : result;
 }
 
 
@@ -418,6 +416,7 @@ TerrainConstraintQuery::getConstraints(const TileKey& key, MeshConstraints& outp
         const GeoExtent& keyExtent = key.getExtent();
 
         FilterContext context(session.get());
+        context.extent() = keyExtent;
 
         for (auto& layer : layers)
         {

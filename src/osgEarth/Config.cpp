@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/Config>
 #include <osgEarth/XmlUtils>
@@ -26,7 +9,6 @@
 #include <osgEarth/URI>
 #include <osgDB/FileNameUtils>
 #include <osgEarth/Notify>
-#include <osgDB/Options>
 
 using namespace osgEarth;
 
@@ -113,103 +95,92 @@ Config::fromURI(const URI& uri)
     return true;
 }
 
-#if 1
 const Config&
-Config::child( const std::string& childName ) const
+Config::child(const std::string& childName) const
 {
-    for( ConfigSet::const_iterator i = _children.begin(); i != _children.end(); i++ ) {
-        if ( i->key() == childName )
-            return *i;
+    for (auto& c : _children) {
+        if (keys_equal(c.key(), childName))
+            return c;
     }
+
     static Config s_emptyConf;
     return s_emptyConf;
-    //Config emptyConf;
-    //emptyConf.setReferrer( _referrer );
-    //return emptyConf;
 }
-#else
-Config
-Config::child( const std::string& childName ) const
-{
-    for( ConfigSet::const_iterator i = _children.begin(); i != _children.end(); i++ ) {
-        if ( i->key() == childName )
-            return *i;
-    }
-    Config emptyConf;
-    emptyConf.setReferrer( _referrer );
-    return emptyConf;
-}
-#endif
 
 const Config*
-Config::child_ptr( const std::string& childName ) const
+Config::child_ptr(const std::string& childName) const
 {
-    for( ConfigSet::const_iterator i = _children.begin(); i != _children.end(); i++ ) {
-        if ( i->key() == childName )
-            return &(*i);
+    for (auto& c : _children)
+    {
+        if (keys_equal(c.key(), childName))
+            return &c;
     }
-    return 0L;
+
+    return nullptr;
 }
 
 Config*
 Config::mutable_child( const std::string& childName )
 {
-    for( ConfigSet::iterator i = _children.begin(); i != _children.end(); i++ ) {
-        if ( i->key() == childName )
-            return &(*i);
+    for (auto& c : _children)
+    {
+        if (keys_equal(c.key(), childName))
+            return &c;
     }
 
-    return 0L;
+    return nullptr;
 }
 
 void
-Config::merge( const Config& rhs ) 
+Config::merge(const Config& rhs)
 {
     // remove any matching keys first; this will allow the addition of multi-key values
-    for( ConfigSet::const_iterator c = rhs._children.begin(); c != rhs._children.end(); ++c )
-        remove( c->key() );
+    for (auto& c : rhs._children)
+        remove(c.key());
 
     // add in the new values.
-    for( ConfigSet::const_iterator c = rhs._children.begin(); c != rhs._children.end(); ++c )
-        add( *c );
+    for (auto& c : rhs._children)
+        add(c);
 }
 
 const Config*
-Config::find( const std::string& key, bool checkMe ) const
+Config::find(const std::string& key, bool checkMe) const
 {
-    if ( checkMe && key == this->key() )
+    if (checkMe && keys_equal(key, this->key()))
         return this;
 
-    for( ConfigSet::const_iterator c = _children.begin(); c != _children.end(); ++c )
-        if ( key == c->key() )
-            return &(*c);
-
-    for( ConfigSet::const_iterator c = _children.begin(); c != _children.end(); ++c )
+    for (auto& c : _children)
     {
-        const Config* r = c->find(key, false);
-        if ( r ) return r;
+        if (keys_equal(key, c.key()))
+            return &c;
     }
 
-    return 0L;
+    for (auto& c : _children)
+    {
+        const Config* r = c.find(key, false);
+        if (r) return r;
+    }
+
+    return nullptr;
 }
 
 Config*
-Config::find( const std::string& key, bool checkMe )
+Config::find(const std::string& key, bool checkMe)
 {
-    if ( checkMe && key == this->key() )
+    if (checkMe && keys_equal(key, this->key()))
         return this;
 
-    for( ConfigSet::iterator c = _children.begin(); c != _children.end(); ++c )
-        if ( key == c->key() )
-            return &(*c);
+    for (auto& c : _children)
+        if (keys_equal(key, c.key()))
+            return &c;
 
-    for( ConfigSet::iterator c = _children.begin(); c != _children.end(); ++c )
+    for (auto& c : _children)
     {
-        Config* r = c->find(key, false);
-        if ( r ) return r;
+        Config* r = c.find(key, false);
+        if (r) return r;
     }
 
-    return 0L;
+    return nullptr;
 }
 
 
@@ -248,42 +219,54 @@ namespace
                     std::map< std::string, std::vector<Config> > sets; // sorted
 
                     // sort into bins by name:
-                    for( ConfigSet::const_iterator c = conf.children().begin(); c != conf.children().end(); ++c )
+                    for(auto& child : conf.children())
                     {
-                        sets[c->key()].push_back( *c );
+                        sets[child.key()].push_back(child);
                     }
 
-                    for( std::map<std::string,std::vector<Config> >::iterator i = sets.begin(); i != sets.end(); ++i )
+                    if (sets.size() == 1 && sets.begin()->second.size() > 1)
                     {
-                        if ( i->second.size() == 1 )
+                        // if there's only one set, and it has more than one member, it's a JSON array.
+                        auto& only_set = *sets.begin();
+                        auto& members = only_set.second;
+                        Json::Value array_value(Json::arrayValue);
+                        for (auto& member : members)
                         {
-                            Config& c = i->second[0];
-                            if ( c.isSimple() )
+                            array_value.append(conf2json(member, nicer, depth + 1));
+                        }
+                        value = array_value;
+                    }
+
+                    else
+                    {
+                        for (auto i : sets)
+                        {
+                            if (i.second.size() == 1)
                             {
-                                if (c.isNumber())
-                                    value[i->first] = c.valueAs<double>(0.0);
+                                auto& c = i.second[0];
+                                if (c.isSimple())
+                                {
+                                    if (c.isNumber())
+                                        value[i.first] = c.valueAs<double>(0.0);
+                                    else
+                                        value[i.first] = c.value();
+                                }
                                 else
-                                    value[i->first] = c.value();
+                                {
+                                    value[i.first] = conf2json(c, nicer, depth + 1);
+                                }
                             }
                             else
                             {
-                                Json::Value child = conf2json(c, nicer, depth+1);
-                                if (child.isObject())
+                                std::string array_key = Stringify() << i.first << "__array__";
+                                Json::Value array_value(Json::arrayValue);
+                                for (std::vector<Config>::iterator j = i.second.begin(); j != i.second.end(); ++j)
                                 {
-                                    value[i->first] = child;
-                                }   
+                                    array_value.append(conf2json(*j, nicer, depth + 1));
+                                }
+                                value[array_key] = array_value;
+                                //value = array_value;
                             }
-                        }
-                        else
-                        {
-                            std::string array_key = Stringify() << i->first << "__array__";
-                            Json::Value array_value( Json::arrayValue );
-                            for( std::vector<Config>::iterator j = i->second.begin(); j != i->second.end(); ++j )
-                            {
-                                array_value.append( conf2json(*j, nicer, depth+1) );
-                            }
-                            value[array_key] = array_value;
-                            //value = array_value;
                         }
                     }
                 }

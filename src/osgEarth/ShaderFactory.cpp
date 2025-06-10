@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "ShaderFactory"
 #include "ShaderLoader"
@@ -22,7 +8,6 @@
 #include "Capabilities"
 #include "GLUtils"
 #include "Threading"
-#include "Registry"
 
 #include <sstream>
 
@@ -271,11 +256,14 @@ ShaderFactory::createMains(
     Variables vars;
     for(VarDefs::iterator i = varDefs.begin(); i != varDefs.end(); ++i) 
     {
-        std::vector<std::string> tokens;        
-        StringTokenizer st;
-        st.addDelims( " \t", false );
-        st.addDelims( "[]", true );
-        st.tokenize( *i, tokens ); //(*i, tokens, " \t", "", false, true);
+        auto tokens = StringTokenizer()
+            .delim(" ", false)
+            .delim("\t", false)
+            .delim("[", true)
+            .delim("]", true)
+            .standardQuotes()
+            .tokenize(*i);
+
         if ( tokens.size() >= 2 )
         {
             int p=0;

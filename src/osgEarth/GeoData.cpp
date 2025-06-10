@@ -1,26 +1,11 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include "GeoData"
 #include "GeoMath"
 #include "HeightFieldUtils"
-#include "Registry"
 #include "Terrain"
 #include "GDAL"
 #include "Metrics"
@@ -355,7 +340,10 @@ GeoPoint::transformResolution(const Distance& resolution, const UnitsType& outUn
             refLatDegrees);
     }
 
-    double d = resolution.asDistance(outUnits, refLatDegrees);
+    double d = getSRS()->transformDistance(resolution, outUnits, refLatDegrees);
+
+    //double d = resolution.asDistance(outUnits, refLatDegrees);
+
     return Distance(d, outUnits);
 }
 
@@ -1656,6 +1644,9 @@ osg::BoundingSphered
 GeoExtent::createWorldBoundingSphere(double minElev, double maxElev) const
 {
     osg::BoundingSphered bs;
+
+    if (!getSRS())
+        return bs;
 
     if (getSRS()->isProjected())
     {

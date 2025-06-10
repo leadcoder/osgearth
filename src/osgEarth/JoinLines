@@ -1,0 +1,28 @@
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
+ */
+#pragma once
+
+#include <osgEarth/Common>
+#include <osgEarth/Feature>
+#include <osgEarth/Filter>
+
+namespace osgEarth 
+{
+    namespace Util
+    {
+        /**
+         * Feature filter that combines line features with matching endpoints.
+         */
+        class OSGEARTH_EXPORT JoinLinesFilter : public FeatureFilter
+        {
+        public:
+            //! Constructs a new joining filter
+            JoinLinesFilter() = default;
+
+            //! Process the feature list.
+            FilterContext push(FeatureList& input, FilterContext& cx) override;
+        };
+    }
+}

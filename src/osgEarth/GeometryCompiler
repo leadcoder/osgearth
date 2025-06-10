@@ -1,30 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-#ifndef OSGEARTH_FEATURES_GEOMETRY_COMPILER_H
-#define OSGEARTH_FEATURES_GEOMETRY_COMPILER_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/Feature>
 #include <osgEarth/FeatureCursor>
 #include <osgEarth/ResampleFilter>
 #include <osgEarth/Style>
-#include <osgEarth/GeoMath>
 #include <osgEarth/ShaderUtils>
 
 namespace osgEarth
@@ -110,6 +94,9 @@ namespace osgEarth
         optional<bool>& useOSGTessellator() { return _useOSGTessellator; }
         const optional<bool>& useOSGTessellator() const { return _useOSGTessellator; }
 
+        optional<bool>& buildKDTrees() { return _buildKDTrees; }
+        const optional<bool>& buildKDTrees() const { return _buildKDTrees; }
+
     public:
         Config getConfig() const;
 
@@ -133,6 +120,7 @@ namespace osgEarth
         optional<bool>                 _validate;
         optional<float>                _maxPolyTilingAngle;
         optional<bool>                 _useOSGTessellator;
+        optional<bool>                 _buildKDTrees;
 
 
         static GeometryCompilerOptions s_defaults;
@@ -202,5 +190,3 @@ namespace osgEarth
         GeometryCompilerOptions _options;
     };
 } // namespace osgEarth
-
-#endif // OSGEARTH_FEATURES_GEOMETRY_COMPILER_H

@@ -1,20 +1,7 @@
 
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2016 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include <osgEarth/Elevation>
 #include <osgEarth/Registry>
@@ -103,7 +90,7 @@ ElevationTexture::ElevationTexture(
         _read.setSampleAsTexture(false);
 
         _resolution = Distance(
-            getExtent().height() / ((double)(getImage(0)->s()-1)),
+            getExtent().height() / ((double)(getImage(0)->t()-1)),
             getExtent().getSRS()->getUnits());
     }
 }
@@ -325,7 +312,8 @@ NormalMapGenerator::createNormalMap(
         return NULL;
     }
 
-    Distance res(0.0, key.getProfile()->getSRS()->getUnits());
+    auto* srs = key.getProfile()->getSRS();
+    Distance res(0.0, srs->getUnits());
     double dx, dy;
     osg::Vec4 riPixel;
 
@@ -339,8 +327,10 @@ NormalMapGenerator::createNormalMap(
             int p = (4 * write.s() * t + 4 * s);
 
             res.set(points[p].w(), res.getUnits());
-            dx = res.asDistance(Units::METERS, y_or_lat);
-            dy = res.asDistance(Units::METERS, 0.0);
+            dx = srs->transformDistance(res, Units::METERS, y_or_lat);
+            dy = srs->transformDistance(res, Units::METERS, 0.0);
+            //dx = res.asDistance(Units::METERS, y_or_lat);
+            //dy = res.asDistance(Units::METERS, 0.0);
 
             riPixel.r() = 0.0f;
 

@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/PolygonizeLines>
 #include <osgEarth/FeatureSourceIndexNode>
@@ -85,25 +71,45 @@ namespace
 
     // Add two triangles to an EBO vector; [side] controls the winding
     // direction.
-    inline void addTris(std::vector<unsigned>& ebo, unsigned i, unsigned prev_i, unsigned current, float side)
+    inline void addTris(std::vector<unsigned>& ebo, unsigned i, unsigned prev_i, unsigned current, float side, bool double_sided)
     {
-        if ( side < 0.0f )
+        if (side < 0.0f)
         {
-            ebo.push_back( i-1 );
-            ebo.push_back( i );
-            ebo.push_back( prev_i );
-            ebo.push_back( prev_i );
-            ebo.push_back( i );
-            ebo.push_back( current );
+            ebo.push_back(i - 1);
+            ebo.push_back(i);
+            ebo.push_back(prev_i);
+            ebo.push_back(prev_i);
+            ebo.push_back(i);
+            ebo.push_back(current);
+
+            if (double_sided)
+            {
+                ebo.push_back(i - 1);
+                ebo.push_back(prev_i);
+                ebo.push_back(i);
+                ebo.push_back(prev_i);
+                ebo.push_back(current);
+                ebo.push_back(i);
+            }
         }
         else
         {
-            ebo.push_back( i-1 );
-            ebo.push_back( prev_i );
-            ebo.push_back( i );
-            ebo.push_back( prev_i );
-            ebo.push_back( current );
-            ebo.push_back( i );
+            ebo.push_back(i - 1);
+            ebo.push_back(prev_i);
+            ebo.push_back(i);
+            ebo.push_back(prev_i);
+            ebo.push_back(current);
+            ebo.push_back(i);
+
+            if (double_sided)
+            {
+                ebo.push_back(i - 1);
+                ebo.push_back(i);
+                ebo.push_back(prev_i);
+                ebo.push_back(prev_i);
+                ebo.push_back(i);
+                ebo.push_back(current);
+            }
         }
     }
 
@@ -129,10 +135,11 @@ PolygonizeLinesOperator::PolygonizeLinesOperator(
 
 osg::Geometry*
 PolygonizeLinesOperator::operator()(
-    osg::Vec3Array*  verts, 
-    osg::Vec3Array*  normals,
-    Callback*        callback,
-    bool             twosided) const
+    osg::Vec3Array* verts, 
+    osg::Vec3Array* normals,
+    float width,
+    Callback* callback,
+    bool twosided) const
 {
     // number of verts on the original line.
     unsigned lineSize = verts->size();
@@ -143,7 +150,6 @@ PolygonizeLinesOperator::operator()(
 
     const Stroke& stroke = _line->stroke().get();
 
-    float width            = Distance(stroke.width().get(), stroke.widthUnits().get()).as(Units::METERS);
     float halfWidth        = 0.5f * width;
     float maxRoundingAngle = asin( stroke.roundingRatio().get() );
     float minPixelSize     = stroke.minPixels().getOrUse( 0.0f );
@@ -357,7 +363,7 @@ PolygonizeLinesOperator::operator()(
                     // now that we have the current buffered point, build triangles
                     // for *previous* segment.
                     //if ( addedVertex )
-                    addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
+                    addTris( ebo, i, prevBufVertPtr, verts->size()-1, side, _copyToBackFace );
                     tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( (*normals)[i] );
 
@@ -371,7 +377,7 @@ PolygonizeLinesOperator::operator()(
                     osg::Vec3 start = (*verts)[i] + prevBufVec;
 
                     verts->push_back( start );
-                    addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
+                    addTris( ebo, i, prevBufVertPtr, verts->size()-1, side, _copyToBackFace);
                     tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( (*normals)[i] );
                     if ( spine ) spine->push_back( (*verts)[i] );
@@ -411,7 +417,7 @@ PolygonizeLinesOperator::operator()(
 
         // record the final point data.
         verts->push_back( (*verts)[i] + prevBufVec );
-        addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
+        addTris( ebo, i, prevBufVertPtr, verts->size()-1, side, _copyToBackFace);
         tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
         normals->push_back( (*normals)[i] );
         if ( spine ) spine->push_back( (*verts)[i] );
@@ -642,6 +648,13 @@ PolygonizeLinesFilter::push(FeatureList& input, FilterContext& cx)
     {
         Feature* f = i->get();
 
+        Distance lineWidth(1, Units::METERS);
+        if (line && line->stroke().isSet() && line->stroke()->width().isSet())
+        {
+            lineWidth = line->stroke()->width()->eval(f, cx);
+            //lineWidth = f->eval(line->stroke()->width().value(), &cx);
+        }
+
         // iterate over all the feature's geometry parts. We will treat
         // them as lines strings.
         GeometryIterator parts( f->getGeometry(), false );
@@ -660,7 +673,7 @@ PolygonizeLinesFilter::push(FeatureList& input, FilterContext& cx)
             transformAndLocalize( part->asVector(), featureSRS, verts, normals, mapSRS, _world2local, makeECEF );
 
             // turn the lines into polygons.
-            osg::Geometry* geom = polygonize( verts, normals );
+            osg::Geometry* geom = polygonize(verts, normals, lineWidth.as(Units::METERS));
 
             // install.
             geode->addDrawable( geom );

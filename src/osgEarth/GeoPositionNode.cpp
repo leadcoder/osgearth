@@ -1,41 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 
 #include <osgEarth/GeoPositionNode>
-#include <osgEarth/AnnotationUtils>
 #include <osgEarth/AnnotationSettings>
 #include <osgEarth/Color>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/MapNode>
-#include <osgEarth/TerrainEngineNode>
-#include <osgEarth/GLUtils>
-
-#include <osgText/Text>
-#include <osg/ComputeBoundsVisitor>
-#include <osgUtil/IntersectionVisitor>
-#include <osg/OcclusionQueryNode>
-#include <osg/Point>
-#include <osg/Depth>
-#include <osg/Switch>
 
 #define LC "[GeoPositionNode] "
 
@@ -43,6 +15,17 @@ using namespace osgEarth;
 
 #define DEFAULT_OCCLUSION_CULLING false
 #define DEFAULT_HORIZON_CULLING true
+
+namespace
+{
+    template<class T> bool hasCallback(osg::Node* node) {
+        if (!node) return false;
+        for (auto* cb = node->getCullCallback(); cb != nullptr; cb = cb->getNestedCallback()) {
+            if (dynamic_cast<T*>(cb)) return true;
+        }
+        return false;
+    }
+}
 
 GeoPositionNode::GeoPositionNode() :
 AnnotationNode()
@@ -163,6 +146,11 @@ GeoPositionNode::setOcclusionCulling( bool value )
 
         if ( _occlusionCullingRequested )
         {
+            if (_occlusionCuller.valid())
+            {
+                removeCullCallback( _occlusionCuller.get() );
+            }
+
             _occlusionCuller = new OcclusionCullingCallback( _geoxform );
             _occlusionCuller->setMaxAltitude( getOcclusionCullingMaxAltitude() );
             addCullCallback( _occlusionCuller.get()  );

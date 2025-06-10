@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -110,7 +96,7 @@ namespace osgEarth
                 {
                     node_flags |= ImGuiTreeNodeFlags_Selected;
                 }
-                ImGui::TreeNodeEx(path.c_str(), node_flags, shortName.c_str());
+                ImGui::TreeNodeEx(path.c_str(), node_flags, "%s", shortName.c_str());
                 if (ImGui::IsItemClicked())
                 {
                     setSelectedFilename(path);
@@ -179,7 +165,7 @@ namespace osgEarth
                 {
                     ImGuiEx::OSGTexture(_currentTexture.get(), ri, 250, 0);
                     osg::Image* image = _currentTexture->getImage();
-                    ImGui::Text(image->getFileName().c_str());
+                    ImGui::Text("%s", image->getFileName().c_str());
                     ImGui::Text("Dimensions: %d x %d", image->s(), image->t());
                     ImGui::Text("Compressed: %s", image->isCompressed() ? "Yes" : "No");
                     ImGui::Text("Data Type: %s", getGLString(image->getDataType()).c_str());

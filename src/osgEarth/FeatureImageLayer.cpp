@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/FeatureImageLayer>
 #include <osgEarth/Session>
@@ -22,7 +8,7 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Progress>
 #include <osgEarth/LandCover>
-#include <osgEarth/Metrics>
+#include <osgEarth/FeatureStyleSorter>
 
 using namespace osgEarth;
 
@@ -40,6 +26,7 @@ FeatureImageLayer::Options::getConfig() const
     Config conf = ImageLayer::Options::getConfig();
     featureSource().set(conf, "features");
     styleSheet().set(conf, "styles");
+    conf.set("buffer_width", bufferWidth());
     conf.set("gamma", gamma());
     conf.set("sdf", sdf());
     conf.set("sdf_invert", sdf_invert());
@@ -64,6 +51,7 @@ FeatureImageLayer::Options::fromConfig(const Config& conf)
 
     featureSource().get(conf, "features");
     styleSheet().get(conf, "styles");
+    conf.get("buffer_width", bufferWidth());
     conf.get("gamma", gamma());
     conf.get("sdf", sdf());
     conf.get("sdf_invert", sdf_invert());
@@ -304,21 +292,23 @@ FeatureImageLayer::createImageImplementation(const TileKey& key, ProgressCallbac
         rasterizer = new FeatureRasterizer(getTileSize(), getTileSize(), key.getExtent());
     }
 
-    FeatureStyleSorter::Function renderer = [&](
-        const Style& style,
-        FeatureList& features,
-        ProgressCallback* progress)
+    FilterContext context(local._session.get(), key.getExtent());
+
+    auto renderer = [&](const Style& style, FeatureList& features, ProgressCallback* progress) -> void
     {
-        rasterizer->render(features, style, featureProfile);
+        rasterizer->render(features, style, context);
     };
 
     FeatureStyleSorter sorter;
 
+    // a buffer will pull in data from nearby tiles to mitigate edge artifacts
+
     sorter.sort(
         key,
-        Distance(0, Units::METERS),
+        options().bufferWidth().value(),
         local._session.get(),
         local._filterChain,
+        nullptr,
         renderer,
         progress);
 

@@ -1,23 +1,11 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "Units"
 #include "Registry"
+#include "StringUtils"
+#include <string>
 
 using namespace osgEarth;
 
@@ -26,63 +14,38 @@ using namespace osgEarth;
 namespace
 {
     template<typename T>
-    bool parseValueAndUnits(const std::string& input,
-        T& out_value,
-        UnitsType& out_units,
-        const UnitsType& defaultUnits)
+    bool parseValueAndUnits(const std::string& input, T& out_value, UnitsType& out_units, const UnitsType& defaultUnits)
     {
-        if (input.empty())
+        // parse the numeric part into "value", and point "ptr" at the first
+        // non-numeric character in the string.
+        auto value_and_index = Strings::parseDoubleAndIndex(input);
+
+        if (std::isnan(value_and_index.first))
             return false;
 
-        std::string valueStr, unitsStr;
+        out_value = value_and_index.first;
 
-        std::string::const_iterator start = input.begin();
-        
-        // deal with scientific notation by moving the units search point
-        // past the "e+/-" if it exists:
-        std::string::size_type pos = input.find_first_of("eE");
-        if (pos != std::string::npos && 
-            input.length() > (pos+2) &&
-            (input[pos+1] == '-' || input[pos+1] == '+'))
-        {
-            start = input.begin() + pos + 2;
-        }
+        std::string unitsStr = trim(input.substr(value_and_index.second));
 
-        std::string::const_iterator i = std::find_if( start, input.end(), ::isalpha );
-        if ( i == input.end() )
+        if (unitsStr.empty())
         {
-            // to units found; use default
             out_units = defaultUnits;
-            out_value = as<T>(input, (T)0.0);
-            return true;
+            //return false;
         }
-
         else
         {
-            valueStr = std::string( input.begin(), i );
-            unitsStr = std::string( i, input.end() );
-
-            if ( !valueStr.empty() )
-            {
-                out_value = as<T>(valueStr, (T)0);
+            UnitsType units;
+            if (Units::parse(unitsStr, units))
+                out_units = units;
+            else if (unitsStr.back() != 's' && Units::parse(unitsStr + 's', units))
+                out_units = units;
+            else {
+                //error!
+                return false;
             }
-
-            if ( !unitsStr.empty() )
-            {
-                UnitsType units;
-                if ( Units::parse(unitsStr, units) )
-                    out_units = units;
-                else if (unitsStr.back() != 's' && Units::parse(unitsStr+'s', units))
-                    out_units = units;
-                    
-            }
-            else
-            {
-                out_units = defaultUnits;
-            }
-
-            return !valueStr.empty() && !unitsStr.empty();
         }
+
+        return true;
     }
 }
 
@@ -108,12 +71,6 @@ Units::parse(const std::string& input, float& out_value, UnitsType& out_units, c
 
 bool
 Units::parse(const std::string& input, double& out_value, UnitsType& out_units, const UnitsType& defaultUnits)
-{
-    return parseValueAndUnits(input, out_value, out_units, defaultUnits);
-}
-
-bool
-Units::parse(const std::string& input, int& out_value, UnitsType& out_units, const UnitsType& defaultUnits)
 {
     return parseValueAndUnits(input, out_value, out_units, defaultUnits);
 }

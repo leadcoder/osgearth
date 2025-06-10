@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 
 #include <string>
@@ -623,6 +606,7 @@ namespace
                 double bearing = GeoMath::bearing(_start.y(), _start.x(), p.y(), p.x());
 
                 float pitch = 0.0;
+                float roll = 0.0;
 
                 if (_varyAngles)
                 {
@@ -630,11 +614,13 @@ namespace
                     float b = 0.4 * cos(t0*0.5);
                     bearing += a;
                     pitch += b;
+                    roll += b * 0.5;
                 }
 
                 _geo->setPosition(p);
 
                 _geo->setLocalRotation(
+                    osg::Quat(roll, osg::Vec3d(0, 1, 0)) *
                     osg::Quat(pitch, osg::Vec3d(1, 0, 0)) *
                     osg::Quat(bearing, osg::Vec3d(0, 0, -1)));
             }
@@ -644,8 +630,8 @@ namespace
                 {
                     Viewpoint vp = _manip->getViewpoint();
                     vp.setNode(_label);
-                    vp.range() = Distance(25000.0, Units::METERS);
-                    vp.pitch() = Angle(-45.0, Units::DEGREES);
+                    vp.range() = Distance(_model->getBound().radius() * 15.0, Units::METERS);
+                    vp.pitch() = Angle(0.0, Units::DEGREES);
                     _manip->setViewpoint(vp, 2.0);
                 }
                 return true;
@@ -809,6 +795,8 @@ int main(int argc, char** argv)
     std::string modelFile;
     if (arguments.read("--model", modelFile))
         model = osgDB::readRefNodeFile(modelFile + ".osgearth_shadergen");
+    if (!model.valid())
+        model = osgDB::readRefNodeFile("../data/jet.osgb");
 
     osg::Group* sims = new osg::Group();
     root->addChild( sims );

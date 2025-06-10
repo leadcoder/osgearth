@@ -1,7 +1,6 @@
 #
 # osgEarth ImGui NodeKit
 #
-find_package(GLEW REQUIRED)
 
 set(OSGEARTH_HAVE_IMGUI_NODEKIT ON PARENT_SCOPE) # for BuildConfig
 
@@ -11,8 +10,8 @@ set(LIB_NAME osgEarthImGui)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 # embedded ImGui source code:
-set(IMGUI_HEADERS imgui.h imgui_internal.h imgui_impl_opengl3.h imconfig.h)
-set(IMGUI_SOURCES imgui.cpp imgui_demo.cpp imgui_draw.cpp imgui_tables.cpp imgui_widgets.cpp imgui_impl_opengl3.cpp)
+set(IMGUI_HEADERS imgui.h imgui_internal.h imgui_impl_opengl3.h imconfig.h imnodes.h)
+set(IMGUI_SOURCES imgui.cpp imgui_demo.cpp imgui_draw.cpp imgui_tables.cpp imgui_widgets.cpp imgui_impl_opengl3.cpp imnodes.cpp)
 
 set(STOCK_PANELS
     AnnotationsGUI
@@ -25,6 +24,7 @@ set(STOCK_PANELS
     NotifyGUI
     OpenEarthFileGUI
     LiveCamerasGUI
+    NodeGraphGUI
     PickerGUI
     RenderingGUI
     SceneGraphGUI
@@ -34,6 +34,7 @@ set(STOCK_PANELS
     TerrainGUI
     TextureInspectorGUI
     ViewpointsGUI
+    FeatureEditGUI
     
     # osgEarthProcedural
     LifeMapLayerGUI
@@ -59,5 +60,5 @@ add_osgearth_library(
     TARGET ${LIB_NAME}
     SOURCES ${LIB_SOURCES} ${IMGUI_SOURCES}
     PUBLIC_HEADERS ${LIB_HEADERS} ${IMGUI_HEADERS} ${STOCK_PANELS}
-    LIBRARIES PUBLIC GLEW::GLEW OpenGL::GL
+    LIBRARIES PUBLIC OpenGL::GL
     FOLDER "NodeKits")

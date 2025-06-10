@@ -1,23 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-#ifndef OSGEARTH_FEATURES_FEATURE_IMAGE_LAYER
-#define OSGEARTH_FEATURES_FEATURE_IMAGE_LAYER 1
+#pragma once
 
 #include <osgEarth/ImageLayer>
 #include <osgEarth/LayerReference>
@@ -29,6 +14,8 @@ namespace osgEarth
 {
     /**
      * Rasterizes feature data into an image layer.
+     * Styles will render in their order of appearance in the stylesheet;
+     * e.g. features matching the last style will render on top.
      */
     class OSGEARTH_EXPORT FeatureImageLayer : public osgEarth::ImageLayer
     {
@@ -39,6 +26,7 @@ namespace osgEarth
             OE_OPTION_LAYER(FeatureSource, featureSource);
             OE_OPTION_VECTOR(ConfigOptions, filters);
             OE_OPTION_LAYER(StyleSheet, styleSheet);
+            OE_OPTION(Distance, bufferWidth, {});
             OE_OPTION(double, gamma);
             OE_OPTION(bool, sdf);
             OE_OPTION(bool, sdf_invert);
@@ -105,5 +93,3 @@ namespace osgEarth
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::FeatureImageLayer::Options);
-
-#endif // OSGEARTH_FEATURES_FEATURE_IMAGE_LAYER

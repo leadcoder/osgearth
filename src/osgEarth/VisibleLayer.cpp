@@ -1,24 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "VisibleLayer"
 #include "VirtualProgram"
-#include "Utils"
 #include "NodeUtils"
 #include "ShaderLoader"
 #include "SimplePager"
@@ -98,11 +83,12 @@ namespace
 
     // Shader that calculates a modulation color based on the "opacity", i.e. intensity
     const char* opacityModulateFS = R"(
-        const float OE_MODULATION_EXPOSURE = 2.5;
+        //const float OE_MODULATION_EXPOSURE = 3.5;
         in float oe_layer_opacity;
         void oe_VisibleLayer_setOpacity(inout vec4 color)
         {
-            vec3 rgbHi = color.rgb * OE_MODULATION_EXPOSURE;
+            //vec3 rgbHi = 1.0 - exp(color.rgb * -OE_MODULATION_EXPOSURE);
+            vec3 rgbHi = color.rgb; //color.rgb * OE_MODULATION_EXPOSURE;
             color.rgb = clamp(mix(vec3(1), rgbHi, oe_layer_opacity), 0.0, 1.0);
             color.a = 1.0;
             oe_layer_opacity = 1.0;
@@ -193,6 +179,23 @@ VisibleLayer::openImplementation()
     return Status::NoError;
 }
 
+Status
+VisibleLayer::closeImplementation()
+{
+    if (_noDrawCallback.valid())
+    {
+        // remove the no-draw callback
+        auto* node = getNode();
+        if (node)
+        {
+            node->removeCullCallback(_noDrawCallback.get());
+        }
+    }
+
+    _noDrawCallback = nullptr;
+    return Layer::closeImplementation();
+}
+
 void
 VisibleLayer::prepareForRendering(TerrainEngine* engine)
 {
@@ -211,16 +214,17 @@ VisibleLayer::setVisible(bool value)
 {
     if (_canSetVisible)
     {
-        options().visible() = value;
-
-        updateNodeMasks();
-
         if (_visibleTiedToOpen)
         {
             if (value && !isOpen())
                 open();
             else if (!value && isOpen())
                 close();
+        }
+        else
+        {
+            options().visible() = value;
+            updateNodeMasks();
         }
 
         onVisibleChanged.fire(this);
@@ -234,15 +238,17 @@ VisibleLayer::updateNodeMasks()
     osg::Node* node = getNode();
     if (node)
     {
-        if (!_noDrawCallback.valid())
+        if (!_noDrawCallback.valid() || _noDrawCallbackNode != node)
         {
             auto cb = new ToggleVisibleCullCallback();
             node->addCullCallback(cb);
             _noDrawCallback = cb;
+            _noDrawCallbackNode = node;
         }
 
         auto cb = dynamic_cast<ToggleVisibleCullCallback*>(_noDrawCallback.get());
-        cb->setVisible(options().visible().value());
+
+        cb->setVisible(getVisible());
     }
 }
 

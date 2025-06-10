@@ -1,37 +1,20 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/CssUtils>
 #include <osgEarth/StringUtils>
-#include <iostream>
-#include <sstream>
-#include <iterator>
 
 using namespace osgEarth;
 
 void
 CssUtils::split( const std::string& input, std::vector<std::string>& output )
 {
-    StringTokenizer blockIzer( "{}", "" );
-    blockIzer.addQuotes( "'\"", true );
-
-    std::vector<std::string> blocks;
-    blockIzer.tokenize( input, blocks );
+    auto blocks = StringTokenizer()
+        .delim("{")
+        .delim("}")
+        .standardQuotes()
+        .tokenize(input);
 
     for( unsigned i=0; i<blocks.size(); ++i )
     {
@@ -66,17 +49,21 @@ CssUtils::readConfig( const std::string& css, const std::string& referrer, Confi
     // tokenize the CSS into a config object..
     Config conf( "css" );
 
-    StringTokenizer blockIzer( "{}", "" );
-    blockIzer.addQuotes( "'\"", true );
+    StringTokenizer tokenizePropertySet;
+    tokenizePropertySet
+        .delim(";")
+        .standardQuotes();
 
-    StringTokenizer propSetIzer( ";", "" );
-    propSetIzer.addQuotes( "'\"", true );
+    StringTokenizer tokenizeProperty;
+    tokenizeProperty
+        .delim(":")
+        .standardQuotes()
+        .quotePair('(', ')');
 
-    StringTokenizer propIzer( ":", "" );
-    propIzer.addQuotes( "()'\"", true );
-
-    StringVector blocks;
-    blockIzer.tokenize( temp, blocks );
+    StringVector blocks = StringTokenizer()
+        .delim("{").delim("}")
+        .standardQuotes()
+        .tokenize(temp);
 
     for( unsigned i=0; i<blocks.size(); )
     {
@@ -86,13 +73,11 @@ CssUtils::readConfig( const std::string& css, const std::string& referrer, Confi
             Config elementConf( name );
             elementConf.setReferrer( referrer );
 
-            StringVector propSet;
-            propSetIzer.tokenize( blocks[i++], propSet );
+            auto propSet = tokenizePropertySet(blocks[i++]);
             
             for( unsigned j=0; j<propSet.size(); ++j )
             {
-                StringVector prop;
-                propIzer.tokenize( propSet[j], prop );
+                auto prop = tokenizeProperty(propSet[j]);
 
                 if ( prop.size() == 2 )
                 {
