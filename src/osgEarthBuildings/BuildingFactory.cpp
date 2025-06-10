@@ -28,7 +28,6 @@
 #include <osgEarth/ResourceLibrary>
 #include <osgEarth/StyleSheet>
 
-
 using namespace osgEarth;
 using namespace osgEarth::Buildings;
 
@@ -168,9 +167,7 @@ BuildingFactory::create(Feature*               feature,
                             .standardQuotes()
                             .keepEmpties(false)
                             .tokenize(tagString);
-                        //StringTokenizer(tagString, tags, " ", "\"", false);
                     }
-                        
                 }
 
                 else

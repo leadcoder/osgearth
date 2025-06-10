@@ -23,11 +23,11 @@
 #include <osgEarth/Query>
 #include <osgEarth/MetadataNode>
 #include <osgEarth/StyleSheet>
-#include <osgEarth/Metrics>
 #include <osgEarth/Utils>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/Chonk>
 #include <osgEarth/Capabilities>
+#include <osgEarth/NetworkMonitor>
 
 #include <osgUtil/Optimizer>
 #include <osgUtil/Statistics>
@@ -351,7 +351,8 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
     if (!map.valid())
         return nullptr;
 
-    OE_PROFILING_ZONE;
+    NetworkMonitor::ScopedRequestLayer layerRequest(getName());
+
     unsigned numFeatures = 0;
     
     std::string activityName("Load building tile " + tileKey.str());
@@ -427,24 +428,20 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
             factory->setCatalog(_catalog.get());
             factory->setOutputSRS(map->getSRS());
 
-            // Envelope is a localized environment for optimized clamping performance:
-            ElevationPool::Envelope envelope;
-
-            Distance clampingResolution;
-            UnitsType units = tileKey.getProfile()->getSRS()->getUnits();
+            // Default clamping resolution for buildings is 5m.
+            // You can override this by providing an AltitudeSymbol.
+            Distance clampingResolution(5.0, Units::METERS);
 
             const AltitudeSymbol* alt = style ? style->getSymbol<AltitudeSymbol>() : nullptr;
             if (alt && alt->clampingResolution().isSet())
             {
                 // use the resolution in the symbology if available
-                clampingResolution.set(alt->clampingResolution()->getValue(), units);
+                clampingResolution = alt->clampingResolution().value();
             }
-            else
-            {
-                // otherwise use the tilekey's resolution
-                std::pair<double, double> resPair = tileKey.getResolution(osgEarth::ELEVATION_TILE_SIZE);
-                clampingResolution.set(resPair.second, tileKey.getProfile()->getSRS()->getUnits());
-            }
+
+            // Envelope is a localized environment for optimized clamping performance
+            // at a specific resolution.
+            ElevationPool::Envelope envelope;
 
             map->getElevationPool()->prepareEnvelope(
                 envelope,
@@ -542,7 +539,7 @@ BuildingPager::createNode(const TileKey& tileKey, ProgressCallback* progress)
 
         if (node.valid() && cacheWritesEnabled(readOptions.get()) && !canceled)
         {
-            //osg::CVSpan UpdateTick(series2, 4, "writeToCache");
+           // osg::CVSpan UpdateTick(series2, 4, "writeToCache");
 
             output.writeToCache(node.get(), readOptions.get(), progress);
         }
