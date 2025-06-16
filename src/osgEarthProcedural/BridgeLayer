@@ -1,0 +1,90 @@
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
+ */
+#pragma once
+
+#include <osgEarthProcedural/Export>
+#include <osgEarth/TiledFeatureModelLayer>
+#include <osgEarth/Style>
+#include <osgEarth/TerrainConstraintLayer>
+
+namespace osgEarth
+{
+    namespace Procedural
+    {
+        /**
+        * Symbology for styling bridges in the BridgeLayer.
+        */
+        class OSGEARTHPROCEDURAL_EXPORT BridgeSymbol : public Symbol
+        {
+        public:
+            META_Object(osgEarthProcedural, BridgeSymbol);
+
+            BridgeSymbol(const Config& conf = {});
+
+            OE_OPTION(URI, deckSkin, {});
+            OE_OPTION(URI, girderSkin, {});
+            OE_OPTION(URI, railingSkin, {});
+
+            OE_OPTION(Expression<Distance>, deckWidth, Distance(10, Units::METERS));
+            OE_OPTION(Distance, girderHeight, Distance(1.5, Units::METERS));
+            OE_OPTION(Distance, railingHeight, Distance(0.5, Units::METERS));
+
+            //! Artificial vertical offset to apply to the central bridge sections
+            //! @temporary
+            OE_OPTION(Distance, spanLift, Distance(0.5, Units::METERS));
+
+            Config getConfig() const override;
+            void mergeConfig(const Config& conf) override;
+            static void parseSLD(const Config& c, class Style& style);
+            BridgeSymbol(const BridgeSymbol& rhs, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+        };
+
+
+        /**
+        * Model layer that renders bridges.
+        */
+        class OSGEARTHPROCEDURAL_EXPORT BridgeLayer : public TiledFeatureModelLayer
+        {
+        public:
+
+            struct OSGEARTHPROCEDURAL_EXPORT Options : public TiledFeatureModelLayer::Options
+            {
+                META_LayerOptions(osgEarth, Options, TiledFeatureModelLayer::Options);
+                OE_OPTION(unsigned, constraintMinLevel, 18u);
+                Config getConfig() const override;
+                void fromConfig(const Config& conf);
+
+                //! Artifical extension of the bridge deck alongs its driving direction
+                //! on each end
+                //! @temporary
+                OE_OPTION(Distance, spanExtend);
+            };
+
+            META_Layer(osgEarth, BridgeLayer, Options, TiledFeatureModelLayer, Bridges);
+
+        protected: // Layer
+        
+            // called by the map when this layer is added
+            void addedToMap(const Map*) override;
+
+            // called by the map when this layer is removed
+            void removedFromMap(const Map*) override;
+
+            // post-ctor initialization
+            void init() override;
+
+        protected: // TiledModelLayer
+
+            //! Creates an OSG node from a tile key.
+            osg::ref_ptr<osg::Node> createTileImplementation(const TileKey&, ProgressCallback*) const override;
+
+            osg::ref_ptr<TerrainConstraintLayer> _constraintLayer;
+
+        public:
+
+            void addConstraint(const TileKey&, MeshConstraint&, ProgressCallback*) const;
+        };
+    }
+}

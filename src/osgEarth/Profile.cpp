@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/Profile>
@@ -212,6 +198,25 @@ Profile::create(const SpatialReference* srs)
 }
 
 const Profile*
+Profile::create(const GeoExtent& extent)
+{
+    OE_SOFT_ASSERT_AND_RETURN(extent.isValid(), nullptr);
+
+    unsigned tx = 1, ty = 1;
+    float ar = (float)extent.width() / (float)extent.height();
+    if (ar > 1.5f)
+    {
+        tx = (unsigned)::ceil(ar);
+    }
+    else if (ar < 0.5f)
+    {
+        ty = (unsigned)::ceil(1.0f / ar);
+    }
+
+    return create(extent.getSRS(), extent.xMin(), extent.yMin(), extent.xMax(), extent.yMax(), tx, ty);
+}
+
+const Profile*
 Profile::create(const SpatialReference* srs,
                 double xmin, double ymin, double xmax, double ymax,
                 double geoxmin, double geoymin, double geoxmax, double geoymax,
@@ -361,13 +366,11 @@ Profile::create_with_vdatum(const std::string& name, const std::string& vsrsStri
 {
     if ( ciEquals(name, PLATE_CARREE) || ciEquals(name, "plate-carre") || ciEquals(name, "eqc-wgs84") )
     {
-        // Yes I know this is not really Plate Carre but it will stand in for now.
         osg::Vec3d ex;
         const SpatialReference* plateCarre = SpatialReference::get("plate-carre", vsrsString);
         const SpatialReference* wgs84 = SpatialReference::get("wgs84", vsrsString);
-        wgs84->transform(osg::Vec3d(180,90,0), plateCarre, ex);
-
-        return Profile::create(PLATE_CARREE, plateCarre, -ex.x(), -ex.y(), ex.x(), ex.y(), 2u, 1u);
+        wgs84->transform(osg::Vec3d(-180,-90,0), plateCarre, ex);
+        return Profile::create(PLATE_CARREE, plateCarre, ex.x(), ex.y(), -ex.x(), -ex.y(), 2u, 1u);
     }
     else if (ciEquals(name, GLOBAL_GEODETIC))
     {

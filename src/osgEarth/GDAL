@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -69,7 +55,7 @@ namespace osgEarth
             OE_OPTION(URI, url);
             OE_OPTION(std::string, connection);
             OE_OPTION(unsigned, subDataSet, 0u);
-            OE_OPTION(RasterInterpolation, interpolation, INTERP_AVERAGE);
+            OE_OPTION(RasterInterpolation, interpolation, INTERP_BILINEAR);
             OE_OPTION(ProfileOptions, warpProfile);
             OE_OPTION(bool, useVRT, false);
             OE_OPTION(bool, coverageUsesPaletteIndex, true);
@@ -142,17 +128,17 @@ namespace osgEarth
             const Profile* getProfile() { return _profile.get(); }
 
         private:
-            void pixelToGeo(double, double, double&, double&);
-            void geoToPixel(double, double, double&, double&);
-
-            bool isValidValue(float, GDALRasterBand*);
+            bool isValidValue(float, GDALRasterBand*) const;
+            bool isValidValue(float value, float noDataValue) const;
             bool intersects(const TileKey&);
-            float getInterpolatedValue(GDALRasterBand* band, double x, double y, bool applyOffset = true);
+            float getInterpolatedDEMValue(GDALRasterBand* band, double x, double y, bool applyOffset = true);
+            float getInterpolatedDEMValueWorkspace(GDALRasterBand* band, double u, double v, float* data, int width, int height);
 
             optional<float> _noDataValue, _minValidValue, _maxValidValue;
             optional<unsigned> _maxDataLevel = 30;
             GDALDataset* _srcDS = nullptr;
             GDALDataset* _warpedDS = nullptr;
+            bool _pixelIsArea = true; // AREA_OR_POINT metadata if available
             double _linearUnits = 1.0;
             double _geotransform[6];
             double _invtransform[6];
@@ -177,6 +163,16 @@ namespace osgEarth
             int width = 0,
             int height = 0,
             bool useBilinearInterpolation = true);
+
+        /* Creates a tiff file from a heightfield.  
+        *  This writes a DEFLATE compressed tiff with predictor 3 which
+        *  compresses single band floating point data very well.
+        *  OpenSceneGraph's tiff writer doesn't support this compression
+        *  method so we use GDAL to write the tiff.
+        *  @returns The bytes of the tiff.
+        */
+        extern OSGEARTH_EXPORT std::string heightFieldToTiff(
+            const osg::HeightField* hf);
 
 
         struct LayerBase

@@ -1,23 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-#ifndef OSGEARTH_FEATURES_OGRFEATURESOURCE_LAYER
-#define OSGEARTH_FEATURES_OGRFEATURESOURCE_LAYER
+#pragma once
 
 #include <osgEarth/FeatureSource>
 #include <queue>
@@ -182,27 +167,27 @@ namespace osgEarth
 
         public: // FeatureCursor
 
-            bool hasMore() const;
-            Feature* nextFeature();
+            bool hasMore() const override;
+            Feature* nextFeature() override;
 
         protected:
             virtual ~OGRFeatureCursor();
 
         private:
-            void* _dsHandle;
-            void* _layerHandle;
-            void* _resultSetHandle;
-            void* _spatialFilter;
+            void* _dsHandle = nullptr;
+            void* _layerHandle = nullptr;
+            void* _resultSetHandle = nullptr;
+            void* _spatialFilter = nullptr;
+            unsigned _chunkSize = 500u;
+            void* _nextHandleToQueue = nullptr;
             Query _query;
-            unsigned _chunkSize;
-            void* _nextHandleToQueue;
             osg::ref_ptr<const FeatureSource> _source;
             osg::ref_ptr<const FeatureProfile> _profile;
             std::queue< osg::ref_ptr<Feature> > _queue;
             osg::ref_ptr<Feature> _lastFeatureReturned;
             const FeatureFilterChain _filters;
-            bool _resultSetEndReached;
-            bool _rewindPolygons;
+            bool _resultSetEndReached = false;
+            bool _rewindPolygons = true;
 
         private:
             void readChunk();
@@ -213,6 +198,3 @@ namespace osgEarth
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::OGRFeatureSource::Options);
-
-
-#endif // OSGEARTH_FEATURES_OGRFEATURESOURCE_LAYER

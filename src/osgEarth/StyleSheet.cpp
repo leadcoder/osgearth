@@ -1,27 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/StyleSheet>
 #include <osgEarth/CssUtils>
-#include <algorithm>
 
 #define LC "[StyleSheet] "
 
@@ -35,19 +17,18 @@ StyleSheet::Options::getConfig() const
     Config conf = Layer::Options::getConfig();
 
     conf.remove("selector");
-    for (StyleSelectors::const_iterator i = selectors().begin();
-        i != selectors().end();
-        ++i)
+    for(auto& selector_pair : selectors())
     {
-        conf.add("selector", i->second.getConfig());
+        if (selector_pair.first != "__oe_auto") // do not save the auto-gen one
+        {
+            conf.add("selector", selector_pair.second.getConfig());
+        }
     }
 
     conf.remove("style");
-    for (StyleMap::const_iterator i = styles().begin();
-        i != styles().end();
-        ++i)
+    for(auto& style_entry : styles())
     {
-        conf.add("style", i->second.getConfig());
+        conf.add("style", style_entry.second.getConfig());
     }
 
     conf.remove("library");
@@ -67,15 +48,30 @@ StyleSheet::Options::getConfig() const
         Config scriptConf("script");
 
         if (!_script->name.empty())
+        {
             scriptConf.set("name", _script->name);
+        }
         if (!_script->language.empty())
+        {
             scriptConf.set("language", _script->language);
+        }
         if (_script->uri.isSet())
+        {
             scriptConf.set("url", _script->uri->base());
-        //if (!_script->profile.empty())
-        //    scriptConf.set("profile", _script->profile);
+        }
         else if (!_script->code.empty())
-            scriptConf.setValue(_script->code);
+        {
+            auto code = _script->code;
+
+            // remove the auto-gen code
+            auto pos = code.find("// __oe_auto__");
+            if (pos != std::string::npos)
+            {
+                code = code.substr(0, pos);
+            }
+
+            scriptConf.setValue(code);
+        }
 
         conf.add(scriptConf);
     }
@@ -100,7 +96,7 @@ StyleSheet::Options::fromConfig(const Config& conf)
 
         _libraries[resLib->getName()] = resLib;
     }
-
+    
     // read in any scripts
     _script = NULL;
     const Config& scriptConf = conf.child("script");
@@ -183,6 +179,53 @@ StyleSheet::Options::fromConfig(const Config& conf)
             Style style(styleConf);
             _styles[style.getName()] = style;
         }
+    }
+
+    // finally, parse each style and see if it contains a "select" symbol. 
+    // if so, automatically add a selector and a script to support each one.
+    StyleSelector* auto_selector = nullptr;
+    std::stringstream auto_script;
+
+    for (auto& style_entry : _styles)
+    {
+        auto& style = style_entry.second;
+        auto* selector_symbol = style.get<SelectorSymbol>();
+        if (selector_symbol)
+        {
+            if (!auto_selector)
+            {
+                auto_selector = new StyleSelector();
+                auto_selector->name() = "__oe_auto";
+                auto_selector->styleExpression() = StringExpression("__oe_select_style()");
+                _selectors[auto_selector->name().get()] = *auto_selector;
+
+                auto_script << "// __oe_auto__\n";
+                auto_script << "function __oe_select_style() {\n";
+                auto_script << "    var combo = '';\n";
+            }
+
+            auto_script << "    if (" << selector_symbol->predicate().get() << ") combo = combo + '" << style.getName() << ",';\n";
+        }
+    }
+
+    if (auto_selector)
+    {
+        auto_script << "    if (combo.length > 0) return combo.substring(0, combo.length-1);\n";
+        auto_script << "    return 'default';\n}\n";
+        auto new_code = auto_script.str();
+
+        if (!_script)
+        {
+            _script = new ScriptDef();
+            _script->language = "javascript";
+            _script->code = new_code;
+        }
+        else
+        {
+            _script->code = _script->code + "\n\n" + new_code;
+        }
+
+        //OE_INFO << LC << "Generated script:\n" << new_code << std::endl;
     }
 }
 

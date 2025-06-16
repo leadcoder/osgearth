@@ -1,20 +1,7 @@
 /* --*-c++-*-- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/FeatureModelGraph>
@@ -22,10 +9,8 @@
 #include <osgEarth/FeatureSourceIndexNode>
 #include <osgEarth/FilterContext>
 
-#include <osgEarth/Capabilities>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/ElevationLOD>
-#include <osgEarth/ElevationQuery>
 #include <osgEarth/FadeEffect>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/Registry>
@@ -34,24 +19,19 @@
 #include <osgEarth/GLUtils>
 #include <osgEarth/Metrics>
 #include <osgEarth/ElevationRanges>
-#include <osgEarth/LineDrawable>
 #include <osgEarth/NetworkMonitor>
 #include <osgEarth/PagedNode>
 #include <osgEarth/Chonk>
 
-#include <osg/CullFace>
-#include <osg/PagedLOD>
-#include <osg/ProxyNode>
 #include <osg/PolygonOffset>
 #include <osg/Depth>
 #include <osg/ShapeDrawable>
-#include <osgDB/FileNameUtils>
-#include <osgDB/ReaderWriter>
-#include <osgDB/WriteFile>
-#include <osgUtil/Optimizer>
 
-#include <algorithm>
 #include <iterator>
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+#include <Superluminal/PerformanceAPI.h>
+#endif
 
 #define LC "[FeatureModelGraph] " << _ownerName << ": "
 
@@ -372,6 +352,12 @@ FeatureModelGraph::setUseNVGL(bool value)
                 return true;
             }));
     }
+}
+
+void
+FeatureModelGraph::setFeatureQueryBufferWidthAsPercentage(double value)
+{
+    _featureQueryBufferWidthAsPercentage = value;
 }
 
 void
@@ -904,6 +890,13 @@ FeatureModelGraph::load(
     OE_PROFILING_ZONE;
     OE_PROFILING_ZONE_TEXT(_ownerName);
 
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+    PERFORMANCEAPI_INSTRUMENT_FUNCTION();
+    PERFORMANCEAPI_INSTRUMENT_DATA("layer", _ownerName.c_str());
+    std::string tileStr = Stringify() << lod << "/" << tileX << "/" << tileY;
+    PERFORMANCEAPI_INSTRUMENT_DATA("key", tileStr.c_str());
+#endif
+
     OE_TEST << LC << "load " << lod << "_" << tileX << "_" << tileY << std::endl;
 
     osg::ref_ptr<osg::Group> result;
@@ -1323,6 +1316,30 @@ FeatureModelGraph::buildTile(
         // add a tile key to the query if there is one, to support TFS-style queries
         if (key)
             query.tileKey() = *key;
+
+        // buffer the query?
+        if (_featureQueryBufferWidthAsPercentage.isSet())
+        {
+            if (query.bounds().isSet())
+            {
+                auto* fp = featureSource->getFeatureProfile();
+                double w = width(query.bounds().value());
+                double h = height(query.bounds().value());
+                double buffer = sqrt(w * h) * _featureQueryBufferWidthAsPercentage.value();
+                query.buffer() = Distance(buffer, fp->getSRS()->getUnits());
+            }
+            else if (query.tileKey().isSet())
+            {
+                double w = query.tileKey()->getExtent().width();
+                double h = query.tileKey()->getExtent().height();
+                double buffer = sqrt(w * h) * _featureQueryBufferWidthAsPercentage.value();
+                query.buffer() = Distance(buffer, query.tileKey()->getProfile()->getSRS()->getUnits());
+            }
+            else
+            {
+                OE_WARN << LC << "Requested a buffer width as a percentage but no bounds or tilekey was set" << std::endl;
+            }
+        }
 
         // does the level have a style name set?
         if (level.styleName().isSet())
@@ -1790,26 +1807,29 @@ FeatureModelGraph::createStyleGroup(const Style&          style,
 
     FilterContext context(contextPrototype);
 
-    // First Crop the feature set to the working extent.
-    // Note: There is an obscure edge case that can happen is a feature's centroid
-    // falls exactly on the crop extent boundary. In that case the feature can
-    // show up in more than one tile. It's rare and not trivial to mitigate so for now
-    // we have decided to do nothing. :)
-    CropFilter crop(
-        _options.layout().isSet() && _options.layout()->cropFeatures() == true ?
-        CropFilter::METHOD_CROP_TO_EXTENT : CropFilter::METHOD_CENTROID);
-
-    context = crop.push(workingSet, context);
-
-    // next, if the usable extent is less than the full extent (i.e. we had to clamp the feature
-    // extent to fit on the map), calculate the extent of the features in this tile and
-    // crop to the map extent if necessary. (Note, if cropFeatures was set to true, this is
-    // already done)
-    if (_featureExtentClamped && _options.layout().isSet() && _options.layout()->cropFeatures() == false)
+    if (_options.autoCropFeatures() == true)
     {
-        context.extent() = _usableFeatureExtent;
-        CropFilter crop2(CropFilter::METHOD_CROP_TO_EXTENT);
-        context = crop2.push(workingSet, context);
+        // First Crop the feature set to the working extent.
+        // Note: There is an obscure edge case that can happen is a feature's centroid
+        // falls exactly on the crop extent boundary. In that case the feature can
+        // show up in more than one tile. It's rare and not trivial to mitigate so for now
+        // we have decided to do nothing. :)
+        CropFilter crop(
+            _options.layout().isSet() && _options.layout()->cropFeatures() == true ?
+            CropFilter::METHOD_CROP_TO_EXTENT : CropFilter::METHOD_CENTROID);
+
+        context = crop.push(workingSet, context);
+
+        // next, if the usable extent is less than the full extent (i.e. we had to clamp the feature
+        // extent to fit on the map), calculate the extent of the features in this tile and
+        // crop to the map extent if necessary. (Note, if cropFeatures was set to true, this is
+        // already done)
+        if (_featureExtentClamped && _options.layout().isSet() && _options.layout()->cropFeatures() == false)
+        {
+            context.extent() = _usableFeatureExtent;
+            CropFilter crop2(CropFilter::METHOD_CROP_TO_EXTENT);
+            context = crop2.push(workingSet, context);
+        }
     }
 
     // finally, compile the features into a node.
@@ -1852,6 +1872,9 @@ FeatureModelGraph::createStyleGroup(const Style&          style,
         query.bounds().isSet() ? *query.bounds() : extent.bounds();
 
     FilterContext context(_session.get(), featureProfile, GeoExtent(featureProfile->getSRS(), cellBounds), index);
+
+    //if (!query.tileKey()->is(14, 2847, 6583))
+    //    return {};
 
     // query the feature source:
     osg::ref_ptr<FeatureCursor> cursor = _session->getFeatureSource()->createFeatureCursor(

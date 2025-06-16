@@ -1,28 +1,10 @@
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include "PBRMaterial"
 #include "URI"
-#include "XmlUtils"
 #include "ImageUtils"
-#include "Elevation"
 
 #include <osg/Texture2D>
 
@@ -53,15 +35,15 @@ namespace
             ImageUtils::PixelReader read_opacity(opacity.get());
             ImageUtils::ImageIterator iter(output.get());
             osg::Vec4 a, b;
-            iter.forEachPixel([&]()
+            write_output.forEachPixel([&](auto& iter)
                 {
-                    read_color(a, iter.s(), iter.t());
+                    read_color(a, iter);
                     if (opacity.valid())
                     {
                         read_opacity(b, iter.u(), iter.v());
                         a.a() = b[0];
                     }
-                    write_output(a, iter.s(), iter.t());
+                    write_output(a, iter);
                 });
         }
         else
@@ -153,8 +135,7 @@ namespace
                 ImageUtils::PixelWriter write_output(output.get());
 
                 osg::Vec4 in, out;
-                ImageUtils::ImageIterator iter(output.get());
-                iter.forEachPixel([&]()
+                write_output.forEachPixel([&](auto& iter)
                     {
                         if (displacement.valid())
                         {
@@ -196,7 +177,7 @@ namespace
                             out.a() = DEFAULT_METAL;
                         }
 
-                        write_output(out, iter.s(), iter.t());
+                        write_output(out, iter);
                     });
             }
         }

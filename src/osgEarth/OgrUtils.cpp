@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/OgrUtils>
 
@@ -496,37 +479,23 @@ OgrUtils::createOgrGeometry(const osgEarth::Geometry* geometry, OGRwkbGeometryTy
 }
 
 Feature*
-OgrUtils::createFeature(OGRFeatureH handle, const FeatureProfile* profile, bool rewindPolygons)
-{
-    Feature* f = 0L;
-    if ( profile )
-    {
-        f = createFeature( handle, profile->getSRS(), rewindPolygons);
-        if ( f && profile->geoInterp().isSet() )
-            f->geoInterp() = profile->geoInterp().get();
-    }
-    else
-    {
-        f = createFeature( handle, (const SpatialReference*)0L, rewindPolygons);
-    }
-    return f;
-}
-
-Feature*
-OgrUtils::createFeature( OGRFeatureH handle, const SpatialReference* srs, bool rewindPolygons)
+OgrUtils::OGRFeatureFactory::createFeature(OGRFeatureH handle) const
 {
     FeatureID fid = OGR_F_GetFID( handle );
 
     OGRGeometryH geomRef = OGR_F_GetGeometryRef( handle );
 
-    Geometry* geom = 0;
+    Geometry* geom = nullptr;
 
     if ( geomRef )
     {
         geom = OgrUtils::createGeometry( geomRef, rewindPolygons);
     }
 
-    Feature* feature = new Feature( geom, srs, Style(), fid );
+    Feature* feature = new Feature(geom, srs, Style(), fid);
+
+    if (srs && interp.isSet())
+        feature->geoInterp() = interp.value();
 
     int numAttrs = OGR_F_GetFieldCount(handle);
     for (int i = 0; i < numAttrs; ++i)
@@ -548,27 +517,27 @@ OgrUtils::createFeature( OGRFeatureH handle, const SpatialReference* srs, bool r
                     long long value = OGR_F_GetFieldAsInteger(handle, i);
                     feature->set( name, value );
                 }
-                else
+                else if (keepNullValues)
                 {
                     feature->setNull( name, ATTRTYPE_INT );
                 }
             }
             break;
-#if GDAL_VERSION_AT_LEAST(2,0,0)
+
         case OFTInteger64:
-        {
-            if (IsFieldSet(handle, i))
             {
-                long long value = OGR_F_GetFieldAsInteger64(handle, i);
-                feature->set(name, value);
+                if (IsFieldSet(handle, i))
+                {
+                    long long value = OGR_F_GetFieldAsInteger64(handle, i);
+                    feature->set(name, value);
+                }
+                else if (keepNullValues)
+                {
+                    feature->setNull(name, ATTRTYPE_INT);
+                }
             }
-            else
-            {
-                feature->setNull(name, ATTRTYPE_INT);
-            }
-        }
-        break;
-#endif
+            break;
+
         case OFTReal:
             {
                 if (IsFieldSet( handle, i ))
@@ -576,7 +545,7 @@ OgrUtils::createFeature( OGRFeatureH handle, const SpatialReference* srs, bool r
                     double value = OGR_F_GetFieldAsDouble( handle, i );
                     feature->set( name, value );
                 }
-                else
+                else if (keepNullValues)
                 {
                     feature->setNull( name, ATTRTYPE_DOUBLE );
                 }
@@ -589,7 +558,7 @@ OgrUtils::createFeature( OGRFeatureH handle, const SpatialReference* srs, bool r
                     const char* value = OGR_F_GetFieldAsString(handle, i);
                     feature->set( name, std::string(value) );
                 }
-                else
+                else if (keepNullValues)
                 {
                     feature->setNull( name, ATTRTYPE_STRING );
                 }

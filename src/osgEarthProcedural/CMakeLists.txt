@@ -3,8 +3,6 @@
 #
 if(OSGEARTH_BUILD_SHARED_LIBS)
     add_definitions(-DOSGEARTHPROCEDURAL_LIBRARY)
-else()
-    add_definitions(-DOSGEARTHPROCEDURAL_LIBRARY_STATIC)
 endif()
 
 SET(LIB_NAME osgEarthProcedural)
@@ -25,7 +23,8 @@ endif()
 # shaders:
 set(TARGET_GLSL
     Procedural.Vegetation.glsl
-    Procedural.TextureSplatting.glsl)
+    Procedural.TextureSplatting.glsl
+    Procedural.FeatureSplatting.glsl)
 
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
@@ -42,13 +41,18 @@ set(TARGET_SRC
     Biome.cpp
     BiomeLayer.cpp
     BiomeManager.cpp
+    BridgeLayer.cpp
+    RoadNetwork.cpp
     RoadSurfaceLayer.cpp
     TextureSplattingLayer.cpp
     TextureSplattingMaterials.cpp
     LifeMapLayer.cpp
+    NodeGraph.cpp
+    ProceduralTiledModelLayer.cpp
     VegetationFeatureGenerator.cpp
     VegetationLayer.cpp
     RoadLayer.cpp
+    FeatureSplattingLayer.cpp
     ${SHADERS_CPP} )
 	
 # headers:
@@ -56,15 +60,20 @@ set(TARGET_H
     Biome
     BiomeLayer
     BiomeManager
+    BridgeLayer
 	Export
+    NodeGraph
+    RoadNetwork
     RoadSurfaceLayer
     ProceduralShaders
+    ProceduralTiledModelLayer
     TextureSplattingLayer
     TextureSplattingMaterials
     LifeMapLayer
     VegetationFeatureGenerator
     VegetationLayer
-    RoadLayer )
+    RoadLayer
+    FeatureSplattingLayer)
     
 add_osgearth_library(
     TARGET ${LIB_NAME}

@@ -1,26 +1,10 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/EarthManipulator>
 #include <osgEarth/GeoMath>
 #include <osgEarth/TerrainEngineNode>
-#include <osgEarth/ViewFitter>
-#include <osgEarth/NodeUtils>
 #include <osgViewer/View>
 
 #define LC "[EarthManip] "
@@ -1712,7 +1696,7 @@ EarthManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapt
             int buttonMask = ea.getButtonMask();
             int modKeyMask = ea.getModKeyMask();
 
-            if (eventType == osgGA::GUIEventAdapter::RELEASE && isMouseClick(&ea))
+            if (eventType == (EventType)osgGA::GUIEventAdapter::RELEASE && isMouseClick(&ea))
             {
                 eventType = EVENT_MOUSE_CLICK;
                 buttonMask = _mouse_down_event->getButtonMask();

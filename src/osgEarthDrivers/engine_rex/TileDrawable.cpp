@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2014 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include "TileDrawable"
 #include "EngineContext"
@@ -36,7 +22,7 @@ using namespace osgEarth;
 //........................................................................
 
 ModifyBoundingBoxCallback::ModifyBoundingBoxCallback(EngineContext* context) :
-_context(context)
+    _context(context)
 {
     //nop
 }
@@ -65,17 +51,19 @@ ModifyBoundingBoxCallback::operator()(const TileKey& key, osg::BoundingBox& bbox
         }
     }
 }
+
 //........................................................................
 
-TileDrawable::TileDrawable(const TileKey& key,
-                           SharedGeometry* geometry,
-                           int tileSize) :
-osg::Drawable( ),
-_key         ( key ),
-_geom        ( geometry ),
-_tileSize    ( tileSize ),
-_bboxRadius  ( 1.0 ),
-_bboxCB      ( NULL )
+TileDrawable::TileDrawable(
+    const TileKey& key,
+    SharedGeometry* geometry,
+    int tileSize) :
+    osg::Drawable(),
+    _key(key),
+    _geom(geometry),
+    _tileSize(tileSize),
+    _bboxRadius(1.0),
+    _bboxCB(NULL)
 {
     // builds the initial mesh.
     setElevationRaster(0L, osg::Matrixf::identity());
@@ -215,6 +203,8 @@ TileDrawable::computeBoundingBox() const
     }
 
     _bboxRadius = box.radius();
+    _bboxHalfWidth = 0.5 * (box.xMax() - box.xMin());
+    _bboxHalfHeight = 0.5 * (box.yMax() - box.yMin());
 
     return box;
 }

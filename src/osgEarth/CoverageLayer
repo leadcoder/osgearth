@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #ifndef OSGEARTH_COVERAGE_LAYER_H
 #define OSGEARTH_COVERAGE_LAYER_H
@@ -132,11 +118,17 @@ namespace osgEarth
 
                 GeoCoverage<T> result;
 
-                if (!readFromCache(key, result, progress))
-                {
-                    populate(result, key, progress);
-                    writeToCache(key, result, progress);
-                }
+                // got something from the cache? return it
+                if (readFromCache(key, result, progress))
+                    return result;
+                
+                // nothing in the cache, but we're cache-only, so fail silently
+                if (_layer->getCacheSettings()->cachePolicy()->isCacheOnly())
+                    return result;
+
+                // populate the result (and write it to the cache if necessary)
+                populate(result, key, progress);
+                writeToCache(key, result, progress);
 
                 return result;
             }

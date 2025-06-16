@@ -1,28 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-
-#ifndef OSGEARTH_UTIL_DEBUG_IMAGE_LAYER_H
-#define OSGEARTH_UTIL_DEBUG_IMAGE_LAYER_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/Geometry>
+#include <osgEarth/Map>
 #include <osgText/Font>
 
 using namespace osgEarth;
@@ -52,14 +37,13 @@ namespace osgEarth { namespace Util
 
     public: // Layer
 
-        //! Called by constructors
-        virtual void init();
-        
-        //! Establishes a connection to the WMS service
-        virtual Status openImplementation();
+        void init() override;
+        Status openImplementation() override;
+        void addedToMap(const Map* map) override;
+        GeoImage createImageImplementation(const TileKey& key, ProgressCallback* progress) const override;
 
-        //! Gets a raster image for the given tile key
-        virtual GeoImage createImageImplementation(const TileKey& key, ProgressCallback* progress) const;
+        //! Allow the user to directly set the profile before opening the layer
+        void setProfile(const Profile* profile) override;
 
     protected:
 
@@ -75,6 +59,3 @@ namespace osgEarth { namespace Util
 } }
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::Util::DebugImageLayer::Options);
-
-
-#endif // OSGEARTH_UTIL_DEBUG_IMAGE_LAYER_H

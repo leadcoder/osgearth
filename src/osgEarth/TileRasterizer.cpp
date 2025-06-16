@@ -1,32 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/TileRasterizer>
-#include <osgEarth/NodeUtils>
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/GLUtils>
-#include <osgEarth/Metrics>
 #include <osgEarth/CameraUtils>
-#include <osgViewer/Renderer>
 #include <osgViewer/Viewer>
 #include <osg/BlendFunc>
 #include <osg/CullFace>
-#include <osgDB/WriteFile>
 
 #ifndef GL_COPY_WRITE_BUFFER
 #define GL_COPY_WRITE_BUFFER 0x8F37
@@ -52,10 +34,6 @@
 
 using namespace osgEarth;
 using namespace osgEarth::Util;
-
-// This is the number of renders to use. This number is chosen 
-// to accomodate a round robin setup in multi-threaded OSG mode.
-#define NUM_RENDERERS_PER_GC 3
 
 TileRasterizer::Renderer::Renderer(unsigned width, unsigned height)
 {
@@ -163,16 +141,22 @@ TileRasterizer::TileRasterizer(unsigned width, unsigned height) :
     _rttStateSet->setAttribute(vp);
 }
 
-
-TileRasterizer::~TileRasterizer()
+void
+TileRasterizer::setNumRenderersPerGraphicsContext(unsigned num)
 {
-    //nop
+    _numRenderersPerGC = std::max(3u, num);
+}
+
+void
+TileRasterizer::setNumJobsToDispatchPerFrame(unsigned num)
+{
+    _numJobsToDispatchPerFrame = std::max(1u, num);
 }
 
 void
 TileRasterizer::install(GLObjects::Ptr gc)
 {
-    for (unsigned i = 0; i < NUM_RENDERERS_PER_GC; ++i)
+    for (unsigned i = 0; i < _numRenderersPerGC; ++i)
     {
         Renderer::Ptr r = std::make_shared<Renderer>(_width, _height);
 
@@ -196,7 +180,7 @@ TileRasterizer::render(osg::Node* node, const GeoExtent& extent)
     job->_extent = extent;
 
     // retrieve the future so we can return it to the caller:
-    Future<Job::Result> result = job->_promise; // .getFuture();
+    Future<Job::Result> result = job->_promise;
 
     // put it on the queue:
     _jobQ.push(job);
@@ -235,24 +219,27 @@ TileRasterizer::traverse(osg::NodeVisitor& nv)
                 install(gc);
             }
 
-            // Find the next unused renderer. If it is in use, just bail out
-            // and come back next time.
-            Renderer::Ptr renderer = gc->_renderers.next();
-            if (renderer.use_count() != 2)
-                return;
-
-            // Ready the next job:
-            Job::Ptr job = _jobQ.take_front();
-            if (job)
+            for (unsigned i = 0; i < _numJobsToDispatchPerFrame && !_jobQ.empty(); ++i)
             {
-                // assign a context to this job:
-                job->useRenderer(renderer);
+                // Find the next unused renderer. If it is in use, just bail out
+                // and come back next time.
+                Renderer::Ptr renderer = gc->_renderers.next();
+                if (renderer.use_count() != 2)
+                    break;
 
-                // cull the RTT:
-                renderer->_rtt->accept(nv);
+                // Ready the next job:
+                Job::Ptr job = _jobQ.take_front();
+                if (job)
+                {
+                    // assign a context to this job:
+                    job->useRenderer(renderer);
 
-                // queue for rendering.
-                gc->_renderQ.push(job);
+                    // cull the RTT:
+                    renderer->_rtt->accept(nv);
+
+                    // queue for rendering.
+                    gc->_renderQ.push(job);
+                }
             }
         }
     }
@@ -406,7 +393,6 @@ TileRasterizer::postDraw(osg::RenderInfo& ri)
         // is the query still running?
         if (invocation == INV_QUERY)
         {
-            OE_GL_ZONE_NAMED("TileRasterizer/QUERY");
             GLuint samples = job->_renderer->query(state);
 
             if (samples > 0)

@@ -1,0 +1,15 @@
+<Map name="MapZen Elevation">    
+    <XYZElevation name="MapZen global elevation (S3)">
+        <url>https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png</url>
+        <elevation_encoding>terrarium</elevation_encoding>
+        <max_level>13</max_level>
+        <stitch_edges>true</stitch_edges>
+        <vdatum>egm96</vdatum>
+    </XYZElevation>
+
+    <ContourMap name="Color Ramp"/>
+    
+    <gdaldem name="Hill Shade" blend="modulate" opacity="0.15">
+        <processing>hillshade</processing>
+    </gdaldem>
+</Map>

@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #ifndef OSGEARTHSYMBOLOGY_STYLE_SELECTOR_H
 #define OSGEARTHSYMBOLOGY_STYLE_SELECTOR_H 1
@@ -35,7 +21,7 @@ namespace osgEarth
     {
     public:
         /** Constructs a style selector */
-        StyleSelector( const Config& conf =Config() );
+        StyleSelector(const Config& conf = Config());
 
         /** Constructs a style selector with a name and expression */
         StyleSelector(const std::string& name, const StringExpression& expr);
@@ -64,7 +50,7 @@ namespace osgEarth
         std::string getSelectedStyleName() const;
 
         //Configurable
-        virtual void mergeConfig( const Config& conf );
+        virtual void mergeConfig(const Config& conf);
         virtual Config getConfig() const;
 
     protected:
@@ -72,6 +58,27 @@ namespace osgEarth
         optional<std::string>      _styleName;
         optional<StringExpression> _styleExpression;
         optional<Query>            _query;
+    };
+
+    class OSGEARTH_EXPORT SelectorSymbol : public Symbol
+    {
+    public:
+        META_Object(osgEarth, SelectorSymbol);
+
+        SelectorSymbol(const Config& conf = {});
+        SelectorSymbol(const SelectorSymbol& rhs, const osg::CopyOp& op = osg::CopyOp::SHALLOW_COPY);
+
+        //! A predicate function (in a scripting language) that returns true if the style should be selected.
+        OE_OPTION(std::string, predicate);
+
+    public:
+        Config getConfig() const override;
+        void mergeConfig(const Config& conf) override;
+        static void parseSLD(const Config& c, class Style& style);
+
+    protected:
+
+        virtual ~SelectorSymbol() { }
     };
 
 } // namespace osgEarth

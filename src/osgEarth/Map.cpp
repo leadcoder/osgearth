@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Map>
 #include <osgEarth/MapModelChange>
@@ -27,6 +13,7 @@ using namespace osgEarth;
 
 //...................................................................
 
+#if 0
 Map::LayerCB::LayerCB(Map* map) : _map(map) { }
 
 void Map::LayerCB::onOpen(Layer* layer)
@@ -42,6 +29,7 @@ void Map::LayerCB::onClose(Layer* layer)
     if (_map.lock(map))
         map->notifyOnLayerOpenOrClose(layer);
 }
+#endif
 
 //...................................................................
 
@@ -191,7 +179,7 @@ Map::init()
     URIContext( options().referrer() ).store( _readOptions.get() );
 
     // create a callback that the Map will use to detect setEnabled calls
-    _layerCB = new LayerCB(this);
+    //_layerCB = new LayerCB(this);
 
     // elevation sampling
     _elevationPool = new ElevationPool();
@@ -736,13 +724,31 @@ void
 Map::installLayerCallbacks(Layer* layer)
 {
     // Callback to detect changes in "enabled"
-    layer->addCallback(_layerCB.get());
+    //layer->addCallback(_layerCB.get());
+
+    osg::observer_ptr<Map> weak_ptr(this);
+
+    _layerOpenCallbacks.emplace(layer, layer->onOpen([weak_ptr](Layer* layer)
+        {
+            osg::ref_ptr<Map> map;
+            if (weak_ptr.lock(map))
+                map->notifyOnLayerOpenOrClose(layer);
+        }));
+
+    _layerCloseCallbacks.emplace(layer, layer->onClose([weak_ptr](Layer* layer)
+        {
+            osg::ref_ptr<Map> map;
+            if (weak_ptr.lock(map))
+                map->notifyOnLayerOpenOrClose(layer);
+        }));
 }
 
 void
 Map::uninstallLayerCallbacks(Layer* layer)
 {
-    layer->removeCallback(_layerCB.get());
+    //layer->removeCallback(_layerCB.get());
+    layer->onOpen.remove(_layerOpenCallbacks[layer]);
+    layer->onClose.remove(_layerCloseCallbacks[layer]);
 }
 
 Revision

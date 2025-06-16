@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/ConvertTypeFilter>
 
@@ -24,46 +10,28 @@ using namespace osgEarth::Util;
 OSGEARTH_REGISTER_SIMPLE_FEATUREFILTER(convert, ConvertTypeFilter)
 
 
-ConvertTypeFilter::ConvertTypeFilter() :
-_toType( Geometry::TYPE_UNKNOWN )
-{
-    //NOP
-}
-
-ConvertTypeFilter::ConvertTypeFilter( const Geometry::Type& toType ) :
-_toType( toType )
+ConvertTypeFilter::ConvertTypeFilter(const Geometry::Type& toType) :
+    _toType(toType)
 {
     // NOP
 }
 
-ConvertTypeFilter::ConvertTypeFilter( const ConvertTypeFilter& rhs ) :
-_toType( rhs._toType )
-{
-    //NOP
-}
-
-ConvertTypeFilter::ConvertTypeFilter( const Config& conf):
-_toType( Geometry::TYPE_UNKNOWN )
+ConvertTypeFilter::ConvertTypeFilter(const Config& conf)
 {
     if (conf.key() == "convert")
     {
-        optional<Geometry::Type> type = Geometry::TYPE_POINTSET;
-        conf.get( "type", "point",   type, Geometry::TYPE_POINTSET );
-        conf.get( "type", "line",    type, Geometry::TYPE_LINESTRING );
-        conf.get( "type", "polygon", type, Geometry::TYPE_POLYGON );
-        _toType = *type;        
+        conf.get("type", "point", _toType, Geometry::TYPE_POINTSET);
+        conf.get("type", "line", _toType, Geometry::TYPE_LINESTRING);
+        conf.get("type", "polygon", _toType, Geometry::TYPE_POLYGON);
     }
 }
 
 Config ConvertTypeFilter::getConfig() const
 {
     Config config("convert");
-    optional<Geometry::Type> type(_toType);
-    type = _toType;
-    config.set("type", "point", type, Geometry::TYPE_POINTSET);
-    config.set("type", "line", type, Geometry::TYPE_LINESTRING);
-    config.set("type", "polygon", type, Geometry::TYPE_POLYGON);
-
+    config.set("type", "point", _toType, Geometry::TYPE_POINTSET);
+    config.set("type", "line", _toType, Geometry::TYPE_LINESTRING);
+    config.set("type", "polygon", _toType, Geometry::TYPE_POLYGON);
     return config;
 }
 
@@ -76,13 +44,22 @@ ConvertTypeFilter::push( FeatureList& input, FilterContext& context )
         return context;
     }
 
-    bool ok = true;
-    for( FeatureList::iterator i = input.begin(); i != input.end(); ++i )
+    if (_toType == Geometry::TYPE_UNKNOWN)
     {
-        Feature* input = i->get();
-        if ( input && input->getGeometry() && input->getGeometry()->getComponentType() != _toType )
+        return context;
+    }
+
+    bool ok = true;
+    for (auto& feature : input)
+    {
+        if (feature && feature->getGeometry() && feature->getGeometry()->getComponentType() != _toType.value())
         {
-            input->setGeometry( input->getGeometry()->cloneAs(_toType) );
+            auto cloned = feature->getGeometry()->cloneAs(_toType.value());
+            if (cloned)
+            {
+                OE_SOFT_ASSERT(cloned->isValid());
+                feature->setGeometry(cloned);
+            }
         }
     }
 

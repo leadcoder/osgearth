@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/GeodeticGraticule>
 #include <osgEarth/Shaders>
@@ -178,9 +164,10 @@ GeodeticGraticule::init()
     // Read the resolutions from the config.
     if (options().resolutions().isSet())
     {
-        StringTokenizer tok(" ");
-        StringVector tokens;
-        tok.tokenize(*options().resolutions(), tokens);
+        auto tokens = StringTokenizer()
+            .delim(" ")
+            .tokenize(options().resolutions().value());
+
         for (unsigned int i = 0; i < tokens.size(); i++)
         {
             double r = as<double>(tokens[i], -1.0);
@@ -518,6 +505,7 @@ GeodeticGraticule::getViewExtent(osgUtil::CullVisitor* cullVisitor) const
     // side of the globe
     osg::Vec3d eye = osg::Vec3d(0,0,0) * invmv;
 
+    // TODO: fix this, hard coded to earth
     const osgEarth::SpatialReference* srs = osgEarth::SpatialReference::create("epsg:4326");
 
     double nearPlane, farPlane;
@@ -594,6 +582,7 @@ GeodeticGraticule::getViewExtent(osgUtil::CullVisitor* cullVisitor) const
     osgEarth::GeoPoint center;
     center.fromWorld(srs, bs.center());
 
+    // TODO: fix this, it's hard-coded to earth
     double radiusDegrees = bs.radius() / 111000.0;
 
     // Try to clamp the maximum radius so far out views don't go wacky.
@@ -619,6 +608,7 @@ GeodeticGraticule::updateLabels()
         return;
     }
 
+    //TODO: fix earth hard coding
     const osgEarth::SpatialReference* srs = osgEarth::SpatialReference::create("wgs84");
 
     std::lock_guard<std::mutex> lock(_cameraDataMapMutex);

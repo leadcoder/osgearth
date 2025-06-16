@@ -1,21 +1,7 @@
 
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
  * Copyright 2008-2014 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * MIT License
  */
 #include "TerrainCuller"
 #include "TileNode"
@@ -80,6 +66,10 @@ TerrainCuller::reset(
         pd,
         _cv,
         _context);
+
+    // need a dedicated horizon object for this cull traversal.
+    _horizon = new Horizon(context->getMap()->getSRS());
+    _horizon->setEye(parent_cullVisitor->getViewPointLocal(), _cv->getProjectionMatrix());
 }
 
 float
@@ -136,8 +126,8 @@ TerrainCuller::addDrawCommand(UID uid, const TileRenderModel* model, const Rende
             tile._modelViewMatrix = *_cv->getModelViewMatrix();
             tile._localToWorld = surface->getMatrix();
             tile._keyValue = tileNode->getTileKeyValue();
-            tile._geom = surface->getDrawable()->_geom.get();
-            tile._tile = surface->getDrawable();
+            tile._geom = surface->_drawable->_geom.get();
+            tile._tile = surface->_drawable;
             tile._morphConstants = tileNode->getMorphConstants();
             tile._key = &tileNode->getKey();
             tile._tileRevision = tileNode->getRevision();
@@ -266,7 +256,7 @@ TerrainCuller::apply(TileNode& node)
             _cv->pushModelViewMatrix(matrix.get(), surface->getReferenceFrame());
 
             // adjust the tile bounding box to account for the patch layer buffer.
-            auto bbox = surface->getAlignedBoundingBox();
+            auto bbox = surface->_drawable->getBoundingBox();
             bbox._min += buffer._min, bbox._max += buffer._max;
             
             if (!_cv->isCulled(bbox))
@@ -309,11 +299,11 @@ TerrainCuller::apply(SurfaceNode& node)
     _cv->pushModelViewMatrix(matrix, node.getReferenceFrame());
 
     // now test against the local bounding box for tighter culling:
-    if (!_cv->isCulled(node.getAlignedBoundingBox()))
+    if (!_cv->isCulled(node._drawable->getBoundingBox()))
     {
         if (!_isSpy)
         {
-            node.setLastFramePassedCull(_context->getClock()->getFrame());
+            node._lastFramePassedCull = _context->getClock()->getFrame();
         }
 
         int order = 0;
@@ -376,7 +366,7 @@ TerrainCuller::apply(SurfaceNode& node)
     // pop the matrix from the cull stack
     _cv->popModelViewMatrix();
 
-    if (node.getDebugNode())
+    if (node._debugNode.valid())
     {
         node.accept(*_cv);
     }

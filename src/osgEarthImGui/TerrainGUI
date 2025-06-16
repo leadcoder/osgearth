@@ -1,35 +1,18 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
 #include <osgEarthImGui/ImGuiPanel>
 #include <osgEarth/Threading>
-#include <osgEarth/MemoryUtils>
 #include <osgEarth/GLUtils>
 #include <osgEarth/ExampleResources>
 #include <osgEarth/FeatureNode>
 #include <osgEarth/LabelNode>
 #include <osgEarth/SelectExtentTool>
 #include <osgEarth/TerrainEngineNode>
-#include <osgEarth/GLUtils>
-#include <chrono>
-#include <list>
+#include <osgEarth/GeoMath>
 #include <algorithm>
 
 namespace osgEarth
@@ -84,13 +67,13 @@ namespace osgEarth
                     return;
                 }
 
+                static unsigned u32_one = 1;
+
                 auto options = _mapNode->getTerrainOptions();
 
                 if (ImGuiLTable::Begin("terraingui"))
                 {
-                    ImGuiLTable::Text("Resident Tiles", "%u",
-                        engine->getNumResidentTiles());// ,
-                        //engine->getNode()->getName().c_str());
+                    ImGuiLTable::Text("Resident Tiles", "%u", engine->getNumResidentTiles());
 
                     int minResident = options.getMinResidentTiles();
                     if (ImGuiLTable::SliderInt("Resident Cache Size", &minResident, 0, 5000))
@@ -111,8 +94,7 @@ namespace osgEarth
                         visible_cb->setVisible(terrain_visible);
                     }
 
-                    static int max_max_lod = -1;
-                    static unsigned u32_one = 1;
+                    static int max_max_lod = -1;                    
                     unsigned max_lod = options.getMaxLOD();
                     if (max_max_lod < 0) max_max_lod = max_lod;
                     if (ImGuiLTable::InputScalar("Max LOD", ImGuiDataType_U32, &max_lod, &u32_one, nullptr, "%u"))
@@ -149,6 +131,36 @@ namespace osgEarth
                     if (ImGuiLTable::ColorEdit3("Background", color.ptr()))
                     {
                         options.setColor(color);
+                        engine->dirtyTerrainOptions();
+                    }
+
+                    // Expiration options
+                    ImGui::Separator();
+                    unsigned int minExpiryFrames = options.getMinExpiryFrames();
+                    if (ImGuiLTable::InputScalar("Min Expiry Frames", ImGuiDataType_U32, &minExpiryFrames, &u32_one, nullptr, "%u"))
+                    {
+                        options.setMinExpiryFrames(minExpiryFrames);
+                        engine->dirtyTerrainOptions();
+                    }
+
+                    float minExpiryTime = options.getMinExpiryTime();
+                    if (ImGuiLTable::InputFloat("Min Expiry Time", &minExpiryTime))
+                    {
+                        options.setMinExpiryTime(minExpiryTime);
+                        engine->dirtyTerrainOptions();
+                    }
+
+                    float minExpiryRange = options.getMinExpiryRange();
+                    if (ImGuiLTable::InputFloat("Min Expiry Range", &minExpiryRange))
+                    {
+                        options.setMinExpiryRange(minExpiryRange);
+                        engine->dirtyTerrainOptions();
+                    }
+
+                    unsigned int maxTilesToUnloadPerFrame = options.getMaxTilesToUnloadPerFrame();
+                    if (ImGuiLTable::InputScalar("Max Tiles to Unload", ImGuiDataType_U32, &maxTilesToUnloadPerFrame, &u32_one, nullptr, "%u"))
+                    {
+                        options.setMaxTilesToUnloadPerFrame(maxTilesToUnloadPerFrame);
                         engine->dirtyTerrainOptions();
                     }
 
@@ -207,7 +219,7 @@ namespace osgEarth
                         osg::Vec3d world;
                         mp.toWorld(world);
 
-                        ImGui::Text("Lat %.3f  Lon %.3f  Z %.3f", mp.y(), mp.x(), mp.z());
+                        ImGui::Text("Lat %.5f  Lon %.5f  Z %.3f", mp.y(), mp.x(), mp.z());
                         ImGui::Text("X %d  Y %d  Z %d", (int)world.x(), (int)world.y(), (int)world.z());
                     }
                     else
@@ -269,7 +281,7 @@ namespace osgEarth
                         _sample = _sampler->getSample(mp);
                         _ax = _x, _ay = _y;
                     }
-                }
+                }                
 
                 ImGui::Separator();
 
@@ -323,10 +335,18 @@ namespace osgEarth
                     _measureLabel->setNodeMask(0);
                 }
 
-                if (ImGui::Checkbox("Drag to invalidate", &_invalidating))
+                if (selectedExtent().isValid())
                 {
-                    _invalidateTool->setEnabled(_invalidating);
+                    if (ImGui::Button("Invalidate selected extent"))
+                    {
+                        _mapNode->getTerrainEngine()->invalidateRegion(selectedExtent());
+                    }
                 }
+
+                //if (ImGui::Checkbox("Drag to invalidate", &_invalidating))
+                //{
+                //    _invalidateTool->setEnabled(_invalidating);
+                //}
             }
             ImGui::End();
         }
@@ -340,13 +360,13 @@ namespace osgEarth
             _sampler = std::unique_ptr<AsyncElevationSampler>(new AsyncElevationSampler(_mapNode->getMap(), 1u));
 
             Style measureStyle;
-            measureStyle.getOrCreate<LineSymbol>()->stroke().mutable_value().width() = 4.0f;
+            measureStyle.getOrCreate<LineSymbol>()->stroke().mutable_value().width() = Distance(4.0f, Units::PIXELS);
             measureStyle.getOrCreate<LineSymbol>()->stroke().mutable_value().color().set(1, 0.5, 0.0, 1);
             measureStyle.getOrCreate<LineSymbol>()->stroke().mutable_value().stipplePattern() = 0xCCCC;
             measureStyle.getOrCreate<LineSymbol>()->tessellation() = (_clamp_measure ? 64 : 0);
             measureStyle.getOrCreate<AltitudeSymbol>()->clamping() = AltitudeSymbol::CLAMP_TO_TERRAIN;
             measureStyle.getOrCreate<AltitudeSymbol>()->technique() = AltitudeSymbol::TECHNIQUE_SCENE;
-            measureStyle.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().enabled() = true;
+            measureStyle.getOrCreate<RenderSymbol>()->depthOffset().mutable_value().automatic() = true;
 
             _measureFeature = new Feature(new LineString(), _mapNode->getMapSRS());
             _measureCursor = new FeatureNode(_measureFeature.get(), measureStyle);
@@ -365,12 +385,14 @@ namespace osgEarth
             _measureLabel->setNodeMask(0);
             _mapNode->addChild(_measureLabel);
 
+#if 0
             // Tool to invalidate a map extent
             _invalidateTool = new Contrib::SelectExtentTool(_mapNode.get());
             _invalidateTool->setEnabled(false);
             _invalidateTool->getStyle().getOrCreateSymbol<LineSymbol>()->stroke().mutable_value().color() = Color::Red;
             view(ri)->getEventHandlers().push_front(_invalidateTool);
-            _invalidateTool->setCallback([&](const GeoExtent& ex)
+
+            _invalidateTool->onSelect([&](const GeoExtent& ex)
                 {
                     OE_NOTICE << "Invalidating extent " << ex.toString() << std::endl;
                     _mapNode->getTerrainEngine()->invalidateRegion(ex);
@@ -378,6 +400,7 @@ namespace osgEarth
                     _invalidateTool->setEnabled(false);
                     _invalidating = false;
                 });
+#endif
 
             _installed = true;
         }

@@ -1,35 +1,18 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include "Geometry"
 #include "GEOS"
 #include "Math"
-#include "weemesh.h"
-#include <algorithm>
 #include <iterator>
-#include <cstdarg>
+#include <cstdarg> // for va_start et al
 
 using namespace osgEarth;
 
 #define GEOS_OUT OE_DEBUG
+
+//#define CROP_WITH_GEOS
 
 #define LC "[Geometry] "
 
@@ -86,8 +69,12 @@ Geometry::Geometry(Type type, int capacity) :
 Geometry::Geometry(Type type, const Vec3dVector* data) :
     _type(type)
 {
-    reserve( data->size() );
-    insert( begin(), data->begin(), data->end() );
+    OE_SOFT_ASSERT(data != nullptr);
+    if (data)
+    {
+        reserve(data->size());
+        insert(begin(), data->begin(), data->end());
+    }
 }
 
 Geometry::~Geometry()
@@ -111,14 +98,16 @@ Geometry::getBounds() const
 }
 
 Geometry*
-Geometry::cloneAs( const Geometry::Type& newType ) const
+Geometry::cloneAs(const Geometry::Type& newType) const
 {
-    switch( newType )
+    OE_SOFT_ASSERT_AND_RETURN(newType != TYPE_MULTI && newType != TYPE_UNKNOWN, nullptr);
+
+    switch (newType)
     {
     case TYPE_POINT:
-        return new Point( &this->asVector() );
+        return new Point(&this->asVector());
     case TYPE_POINTSET:
-        return new PointSet( &this->asVector() );
+        return new PointSet(&this->asVector());
     case TYPE_LINESTRING:
         return new LineString( &this->asVector() );
     case TYPE_RING:
@@ -128,12 +117,11 @@ Geometry::cloneAs( const Geometry::Type& newType ) const
             return new Polygon( *static_cast<const Polygon*>(this) );
         else
             return new Polygon( &this->asVector() );
-    case TYPE_UNKNOWN:
-        return new Geometry(newType, &this->asVector() );
     default:
         break;
     }
-    return 0L;
+
+    return nullptr;
 }
 
 osg::Vec3Array*
@@ -242,62 +230,280 @@ Geometry::buffer(double distance,
 }
 
 bool
-Geometry::crop( const Polygon* cropPoly, osg::ref_ptr<Geometry>& output ) const
+Geometry::offsetCurve(
+    double distance,
+    int quadSegs,
+    BufferParameters::JoinStyle joinStyle,
+    double mitreLimit,
+    osg::ref_ptr<Geometry>& output
+    ) const
 {
 #ifdef OSGEARTH_HAVE_GEOS
+
     GEOSContextHandle_t handle = initGEOS_r(OSGEARTH_WarningHandler, OSGEARTH_GEOSErrorHandler);
 
+    GEOSGeometry* inGeom = GEOS::importGeometry(handle, this);
+    if (inGeom)
+    {
+        int  geosJoinStyle =
+            joinStyle == BufferParameters::JOIN_ROUND ? GEOSBufJoinStyles::GEOSBUF_JOIN_ROUND :
+            joinStyle == BufferParameters::JOIN_MITRE ? GEOSBufJoinStyles::GEOSBUF_JOIN_MITRE :
+            joinStyle == BufferParameters::JOIN_BEVEL ? GEOSBufJoinStyles::GEOSBUF_JOIN_BEVEL :
+            GEOSBufJoinStyles::GEOSBUF_JOIN_ROUND;
+
+        GEOSGeometry* outGeom = NULL;
+        outGeom = GEOSOffsetCurve_r(handle, inGeom, distance, quadSegs, geosJoinStyle, mitreLimit);
+        if (outGeom)
+        {
+            output = GEOS::exportGeometry(handle, outGeom);
+            // If the z value of the geometry is nan set it to 0
+            for (auto& p : output->asVector())
+            {
+                if (std::isnan(p.z()))
+                    p.z() = 0.0;
+            }
+            GEOSGeom_destroy_r(handle, outGeom);
+        }
+
+        GEOSGeom_destroy_r(handle, inGeom);
+    }
+
+    finishGEOS_r(handle);
+
+    return output.valid();
+
+#else // OSGEARTH_HAVE_GEOS
+
+    OE_WARN << LC << "Offset Curve failed - GEOS not available" << std::endl;
+    return false;
+
+#endif // OSGEARTH_HAVE_GEOS
+}
+
+namespace
+{
+    // Function to check if a point is inside the clipping edge
+    bool inside(const osg::Vec3d& p, const osg::Vec3d& edgeStart, const osg::Vec3d& edgeEnd)
+    {
+        return (edgeEnd.x() - edgeStart.x()) * (p.y() - edgeStart.y()) -
+            (edgeEnd.y() - edgeStart.y()) * (p.x() - edgeStart.x()) >= 0;
+    }
+
+    // Function to calculate the intersection point of two lines
+    osg::Vec3d intersection(const osg::Vec3d& p1, const osg::Vec3d& p2, const osg::Vec3d& edgeStart, const osg::Vec3d& edgeEnd)
+    {
+        double a1 = p2.y() - p1.y();
+        double b1 = p1.x() - p2.x();
+        double c1 = a1 * p1.x() + b1 * p1.y();
+
+        double a2 = edgeEnd.y() - edgeStart.y();
+        double b2 = edgeStart.x() - edgeEnd.x();
+        double c2 = a2 * edgeStart.x() + b2 * edgeStart.y();
+
+        double determinant = a1 * b2 - a2 * b1;
+
+        if (equivalent(determinant, 0.0, 1e-6))
+        {
+            return osg::Vec3d(DBL_MAX, DBL_MAX, 0.0);
+        }
+
+        osg::Vec3d result = {
+            (b2 * c1 - b1 * c2) / determinant,
+            (a1 * c2 - a2 * c1) / determinant,
+            0.0 };
+
+        result.z() = p1.z() + (result.x() - p1.x()) / (p2.x() - p1.x()) * (p2.z() - p1.z()); // Interpolating Z
+        return result;
+    }
+
+    // Sutherland-Hodgman Polygon Clipping (input poly must be OPEN)
+    std::vector<osg::Vec3d> clipPolygon(const std::vector<osg::Vec3d>& input, const std::vector<osg::Vec3d>& boundary)
+    {
+        std::vector<osg::Vec3d> output = input;
+
+        for (unsigned b = 0; b < boundary.size(); ++b)
+        {
+            const osg::Vec3d& edgeStart = boundary[b];
+            const osg::Vec3d& edgeEnd = b < boundary.size() - 1 ? boundary[b + 1] : boundary[0];
+
+            std::vector<osg::Vec3d> input = output;
+            output.clear();
+
+            for (size_t i = 0; i < input.size(); ++i)
+            {
+                osg::Vec3d curr = input[i];
+                osg::Vec3d prev = input[(i + input.size() - 1) % input.size()];
+
+                if (inside(curr, edgeStart, edgeEnd))
+                {
+                    if (!inside(prev, edgeStart, edgeEnd))
+                    {
+                        output.push_back(intersection(prev, curr, edgeStart, edgeEnd));
+                    }
+                    output.push_back(curr);
+                }
+                else if (inside(prev, edgeStart, edgeEnd))
+                {
+                    output.push_back(intersection(prev, curr, edgeStart, edgeEnd));
+                }
+            }
+        }
+
+        return output;
+    }
+
+    std::vector<std::vector<osg::Vec3d>> clipLineString(const std::vector<osg::Vec3d>& input, const osg::Vec3d& e0, const osg::Vec3d& e1)
+    {
+        std::vector<std::vector<osg::Vec3d>> outputs;
+        std::vector<osg::Vec3d>* current = nullptr;
+
+        for (size_t i = 1; i < input.size(); ++i)
+        {
+            auto& p = input[i];
+            auto& prev = input[i - 1];
+
+            bool p_inside = inside(p, e0, e1);
+            bool prev_inside = inside(prev, e0, e1);
+
+            if (p_inside && prev_inside)
+            {
+                // both inside the zone:
+                if (!current)
+                {
+                    outputs.emplace_back();
+                    current = &outputs.back();
+                    current->emplace_back(prev); // starting out, so push them oth
+                }
+                current->emplace_back(p);
+            }
+            else if (p_inside && !prev_inside)
+            {
+                // just entered the zone from outside; current should always be nullptr
+                OE_SOFT_ASSERT(current == nullptr);
+                if (!current)
+                {
+                    outputs.emplace_back(); // new linestring
+                    current = &outputs.back();
+                }
+                current->emplace_back(intersection(prev, p, e0, e1));
+                current->emplace_back(p);
+            }
+            else if (!p_inside && prev_inside)
+            {
+                if (!current)
+                {
+                    outputs.emplace_back(); // new linestring
+                    current = &outputs.back();
+                    current->emplace_back(prev); // starting out, so push them
+                }
+                current->emplace_back(intersection(prev, p, e0, e1));
+                current = nullptr;
+            }
+            else
+            {
+                // both outside, do nothing
+            }
+        }
+
+        return outputs;
+    }
+
+    std::vector<std::vector<osg::Vec3d>> clipLineString(const std::vector<osg::Vec3d>& input, const std::vector<osg::Vec3d>& boundary)
+    {
+        if (input.empty())
+            return {};
+
+        std::vector<std::vector<osg::Vec3d>> working_set;
+        working_set.emplace_back(input);
+
+        for (size_t b = 0; b < boundary.size() && !working_set.empty(); ++b)
+        {
+            std::vector<std::vector<osg::Vec3d>> edge_outputs;
+
+            const osg::Vec3d& e0 = boundary[b];
+            const osg::Vec3d& e1 = b < boundary.size() - 1 ? boundary[b + 1] : boundary[0];
+
+            for (auto& edge_input : working_set)
+            {
+                auto clipped = clipLineString(edge_input, e0, e1);
+                if (!clipped.empty())
+                {
+                    for (auto& part : clipped)
+                        edge_outputs.emplace_back(std::move(part));
+                }
+            }
+
+            working_set.swap(edge_outputs);
+        }
+
+        return working_set;
+    }
+}
+
+Geometry*
+Geometry::crop(const Ring* boundary) const
+{
+#ifdef OSGEARTH_HAVE_GEOS
+
     bool success = false;
-    output = 0L;
+    Geometry* output = nullptr;
 
     if (getType() == TYPE_POINT)
     {
-        if (cropPoly->contains2D(front().x(), front().y()))
+        if (boundary->contains2D(front().x(), front().y()))
             output = this->clone();
-        return true;
+        return output;
     }
     else if (getType() == TYPE_POINTSET)
     {
-        osg::ref_ptr<PointSet> pointSet = new PointSet;
+        std::vector<osg::Vec3d> points;
         for (const auto& point : *this)
         {
-            if (cropPoly->contains2D(point.x(), point.y()))
-                pointSet->push_back(point);
+            if (boundary->contains2D(point.x(), point.y()))
+                points.emplace_back(point);
         }
-        output = pointSet;
-        return true;
+        if (!points.empty())
+        {
+            output = this->cloneAs(getComponentType());
+            output->asVector().swap(points);
+        }
+        return output;
     }
 
-    //Create the GEOS Geometries
-    GEOSGeometry* inGeom = GEOS::importGeometry(handle, this);
-    GEOSGeometry* cropGeom = GEOS::importGeometry(handle, cropPoly);
+    GEOSContextHandle_t handle = initGEOS_r(OSGEARTH_WarningHandler, OSGEARTH_GEOSErrorHandler);
 
-    if ( inGeom && cropGeom)
+    //Create the GEOS Geometries
+    Polygon boundary_as_poly(&boundary->asVector());
+    GEOSGeometry* inGeom = GEOS::importGeometry(handle, this);
+    GEOSGeometry* boundaryGeom = GEOS::importGeometry(handle, &boundary_as_poly);
+
+    if (inGeom && boundaryGeom)
     {
-        GEOSGeometry* outGeom = GEOSIntersection_r(handle, inGeom, cropGeom);
+        GEOSGeometry* outGeom = GEOSIntersection_r(handle, inGeom, boundaryGeom);
         if ( outGeom )
         {
-            output = GEOS::exportGeometry(handle, outGeom );
+            output = GEOS::exportGeometry(handle, outGeom);
 
-            if ( output.valid())
+            if (output)
             {
-                if ( output->isValid() )
+                if (output->isValid())
                 {
                     success = true;
                 }
                 else
                 {
                     // GEOS result is invalid
-                    output = 0L;
+                    delete output;
+                    output = nullptr;
                 }
             }
             else
             {
                 // set output to empty geometry to indicate the (valid) empty case,
                 // still returning false but allows for check.
-                if (GEOSGeomGetNumPoints_r(handle, outGeom ) == 0)
+                if (GEOSGeomGetNumPoints_r(handle, outGeom) == 0)
                 {
-                    output = new osgEarth::Geometry(TYPE_UNKNOWN);
+                    output = cloneEmpty();
                 }
             }
 
@@ -306,31 +512,31 @@ Geometry::crop( const Polygon* cropPoly, osg::ref_ptr<Geometry>& output ) const
     }
 
     //Destroy the geometry
-    GEOSGeom_destroy_r(handle, cropGeom);
+    GEOSGeom_destroy_r(handle, boundaryGeom);
     GEOSGeom_destroy_r(handle, inGeom);
 
     finishGEOS_r(handle);
 
-    return success;
+    return output;
 
 #else // OSGEARTH_HAVE_GEOS
 
     OE_WARN << LC << "Crop failed - GEOS not available" << std::endl;
-    return false;
+    return { };
 
 #endif // OSGEARTH_HAVE_GEOS
 }
 
-bool
-Geometry::crop( const Bounds& bounds, osg::ref_ptr<Geometry>& output ) const
+Geometry*
+Geometry::crop(const Bounds& bounds) const
 {
-    osg::ref_ptr<Polygon> poly = new Polygon;
-    poly->resize( 4 );
-    (*poly)[0].set(bounds.xMin(), bounds.yMin(), 0);
-    (*poly)[1].set(bounds.xMax(), bounds.yMin(), 0);
-    (*poly)[2].set(bounds.xMax(), bounds.yMax(), 0);
-    (*poly)[3].set(bounds.xMin(), bounds.yMax(), 0);
-    return crop(poly.get(), output);
+    Ring boundary;
+    boundary.resize(4);
+    boundary[0].set(bounds.xMin(), bounds.yMin(), 0);
+    boundary[1].set(bounds.xMax(), bounds.yMin(), 0);
+    boundary[2].set(bounds.xMax(), bounds.yMax(), 0);
+    boundary[3].set(bounds.xMin(), bounds.yMax(), 0);
+    return crop(&boundary);
 }
 
 bool
@@ -369,7 +575,7 @@ Geometry::geounion( const Geometry* other, osg::ref_ptr<Geometry>& output ) cons
             // still returning false but allows for check.
             if (GEOSGeomGetNumPoints_r(handle, outGeom) == 0)
             {
-                output = new osgEarth::Geometry(TYPE_UNKNOWN);
+                output = cloneEmpty();
             }
         }
 
@@ -466,13 +672,11 @@ Geometry::intersects(
 #endif // OSGEARTH_HAVE_GEOS
 }
 
-bool
-Geometry::simplify(
-    double distanceTolerance,
-    bool preserveTopology,
-    osg::ref_ptr<Geometry>& output
-) const
+osg::ref_ptr<Geometry>
+Geometry::simplify(double distanceTolerance, bool preserveTopology) const
 {
+    osg::ref_ptr<Geometry> output;
+
 #ifdef OSGEARTH_HAVE_GEOS
 
     GEOSContextHandle_t handle = initGEOS_r(OSGEARTH_WarningHandler, OSGEARTH_GEOSErrorHandler);
@@ -498,7 +702,7 @@ Geometry::simplify(
 
             if (output.valid() && !output->isValid())
             {
-                output = 0L;
+                output = {};
             }
         }
     }
@@ -508,11 +712,11 @@ Geometry::simplify(
 
     finishGEOS_r(handle);
 
-    return output.valid();
 #else
     OE_WARN << LC << "Simplify failed - GEOS not available" << std::endl;
-    return false;
 #endif
+
+    return output;
 }
 
 double
@@ -696,19 +900,64 @@ Geometry::close()
         push_back( front() );
 }
 
-void
-Geometry::forEachPart(bool includePolygonHoles, const std::function<void(Geometry*)>& func)
+Geometry*
+Geometry::splitAcrossAntimeridian()
 {
-    GeometryIterator i(this, includePolygonHoles);
-    i.forEach(func);
+    double xmin = DBL_MAX;
+    GeometryIterator(this, true).forEach([&](Geometry* part) {
+        for(auto& p : *part)
+            xmin = std::min(xmin, p.x());
+        });
+
+    double count = 0.0;
+    while (xmin <= -180.0)
+        xmin += 360.0, count += 1;
+
+    GeometryIterator(this, true).forEach([&](Geometry* part) {
+        for (auto& p : *part)
+            p.x() += 360.0 * count;
+        });
+    
+    // assume geographic coordinates.
+    std::vector<osg::Vec3d> west_boundary = { {-1e6, -91, 0}, {180, -91, 0}, {180, 91, 0}, {-1e6, 91, 0} };
+    Polygon west(&west_boundary);
+    auto* west_geom = crop(&west);
+
+    std::vector<osg::Vec3d> east_boundary = { {180, -91, 0}, {1e6, -91, 0}, {1e6, 91, 0}, {180, 91, 0} };
+    Polygon east(&east_boundary);
+    auto* east_geom = crop(&east);
+
+    if (west_geom && !east_geom)
+        return west_geom;
+
+    if (east_geom && !west_geom)
+        return east_geom;
+
+    auto* m = new MultiGeometry();
+    m->add(east_geom);
+    m->add(west_geom);
+
+    GeometryIterator(m, true).forEach([&](Geometry* part) {
+        for (auto& p : *part)
+            p.x() -= 360.0 * count;
+        });
+
+    return m;
 }
 
-void
-Geometry::forEachPart(bool includePolygonHoles, const std::function<void(const Geometry*)>& func) const
-{
-    ConstGeometryIterator i(this, includePolygonHoles);
-    i.forEach(func);
-}
+//void
+//Geometry::forEachPart(bool includePolygonHoles, const std::function<void(Geometry*)>& func)
+//{
+//    GeometryIterator i(this, includePolygonHoles);
+//    i.forEach(func);
+//}
+//
+//void
+//Geometry::forEachPart(bool includePolygonHoles, const std::function<void(const Geometry*)>& func) const
+//{
+//    ConstGeometryIterator i(this, includePolygonHoles);
+//    i.forEach(func);
+//}
 
 //----------------------------------------------------------------------------
 
@@ -741,6 +990,25 @@ LineString::getSegment(double length, osg::Vec3d& start, osg::Vec3d& end)
     return false;
 }
 
+bool LineString::sample(double length, osg::Vec3d& point)
+{
+    double pos = 0;
+    for (unsigned int i = 0; i < size() - 1; ++i)
+    {
+        osg::Vec3d current = (*this)[i];
+        osg::Vec3d next = (*this)[i + 1];
+        double segLength = (next - current).length();
+        if (pos + segLength > length)
+        {
+            double t = (length - pos) / segLength;
+            point = current + (next - current) * t;
+            return true;
+        }
+        pos += segLength;
+    }
+    return false;
+}
+
 void
 LineString::close()
 {
@@ -764,6 +1032,12 @@ LineString::getSignedDistance2D(
     return sqrt(r);
 }
 
+Geometry*
+LineString::crop(const Ring* boundary) const
+{
+    return Geometry::crop(boundary);
+}
+
 //----------------------------------------------------------------------------
 
 Ring::Ring(Type type, const Vec3dVector* data) :
@@ -773,8 +1047,10 @@ Ring::Ring(Type type, const Vec3dVector* data) :
 }
 
 Geometry*
-Ring::cloneAs( const Geometry::Type& newType ) const
+Ring::cloneAs(const Geometry::Type& newType) const
 {
+    OE_SOFT_ASSERT_AND_RETURN(newType != TYPE_UNKNOWN && newType != TYPE_MULTI, cloneAs(_type));
+
     if ( newType == TYPE_LINESTRING )
     {
         LineString* line = new LineString( &this->asVector() );
@@ -816,6 +1092,7 @@ Ring::close()
 // whether the ring is open.
 bool
 Ring::isOpen() const
+
 {
     return size() > 1 && front() != back();
 }
@@ -885,6 +1162,72 @@ Ring::contains2D( double x, double y ) const
         }
     }
     return result;
+}
+
+Geometry*
+Ring::crop(const Ring* boundary) const
+{
+    return Geometry::crop(boundary);
+}
+
+namespace
+{
+    template<class RING>
+    void split(const RING* input, osg::ref_ptr<RING>& left, osg::ref_ptr<RING>& right, bool& is_left, int& ptr)
+    {
+        // check the current side's back() against the next point in the input.
+        RING* current = is_left ? left.get() : right.get();
+        auto& p0 = current->back();
+        auto& p1 = (*input)[ptr];
+
+        if (p0.x() > 90.0 && p1.x() < -90.0)
+        {
+            // we're crossing the dateline. Split the segment.
+            double t = (180.0 - p0.x()) / ((p1.x() + 360.0) - p0.x());
+            double y = p0.y() + t * (p1.y() - p0.y());
+            left->push_back(osg::Vec3d(180.0, y, 0.0));
+            right->push_back(osg::Vec3d(-180.0, y, 0.0));
+            is_left = !is_left;
+            if (is_left) left->push_back(p1); else right->push_back(p1);
+            while (ptr < input->size() - 1)
+                split(input, left, right, is_left, ++ptr);
+        }
+        else if (p0.x() < -90.0 && p1.x() > 90.0)
+        {
+            // we're crossing the dateline. Split the segment.
+            double t = (180.0 - p1.x()) / ((p0.x() + 360.0) - p1.x());
+            double y = p1.y() + t * (p0.y() - p1.y());
+            left->push_back(osg::Vec3d(180.0, y, 0.0));
+            right->push_back(osg::Vec3d(-180.0, y, 0.0));
+            is_left = !is_left;
+            if (is_left) left->push_back(p1); else right->push_back(p1);
+            while (ptr < input->size() - 1)
+                split(input, left, right, is_left, ++ptr);
+        }
+        else
+        {
+            current->push_back(p1);
+        }
+    }
+
+    template<class RING>
+    void split(const RING* input, osg::ref_ptr<RING>& left, osg::ref_ptr<RING>& right)
+    {
+        left = new RING();
+        right = new RING();
+
+        int ptr = 0;
+        bool is_left = (*input)[0].x() > 0.0;
+        if (is_left)
+            left->push_back((*input)[0]);
+        else
+            right->push_back((*input)[0]);
+
+        while (ptr < input->size() - 1)
+        {
+            split(input, left, right, is_left, ++ptr);
+        }
+    }
 }
 
 //----------------------------------------------------------------------------
@@ -967,12 +1310,64 @@ Polygon::getSignedDistance2D(const osg::Vec3d& a) const
     return r;
 }
 
+Geometry*
+Polygon::crop(const Ring* boundary) const
+{
+    return Geometry::crop(boundary);
+}
+
+Geometry*
+Polygon::cloneAs(const Geometry::Type& newType) const
+{
+    OE_SOFT_ASSERT_AND_RETURN(newType != TYPE_UNKNOWN && newType != TYPE_MULTI, cloneAs(_type));
+
+    if (newType == TYPE_LINESTRING)
+    {
+        LineString* line = new LineString(&this->asVector());
+
+        if (line->size() > 1 && line->front() != line->back())
+            line->push_back(front());
+
+        if (_holes.empty())
+        {
+            return line;
+        }
+        else
+        {
+            auto* mg = new MultiGeometry();
+            mg->add(line);
+            for (auto& hole : _holes)
+            {
+                if (hole.valid() && !hole->empty())
+                {
+                    LineString* holeLine = new LineString(&hole->asVector());
+                    if (holeLine->size() > 1 && holeLine->front() != holeLine->back())
+                        holeLine->push_back(hole->front());
+                    std::reverse(holeLine->begin(), holeLine->end());
+                    mg->add(holeLine);
+                }
+            }
+            return mg;
+        }
+    }
+    else
+    {
+        return Ring::cloneAs(newType);
+    }
+}
+
 //----------------------------------------------------------------------------
 
 namespace
 {
     template<class T>
     double cross2d(const T& a, const T& b) { return a.x()*b.y() - a.y()*b.x(); }
+}
+
+TriMesh::TriMesh(const TriMesh& rhs) :
+    Geometry(rhs)
+{
+    _indices = rhs._indices;
 }
 
 bool TriMesh::contains2D(double x, double y) const
@@ -993,7 +1388,6 @@ bool TriMesh::contains2D(double x, double y) const
     }
     return false;
 }
-
 
 //----------------------------------------------------------------------------
 
@@ -1062,12 +1456,15 @@ MultiGeometry::getBounds() const
 }
 
 Geometry*
-MultiGeometry::cloneAs( const Geometry::Type& newType ) const
+MultiGeometry::cloneAs(const Geometry::Type& newType) const
 {
-    MultiGeometry* multi = new MultiGeometry();
+    OE_SOFT_ASSERT(_parts.size() > 0);
+    OE_SOFT_ASSERT_AND_RETURN(newType != TYPE_UNKNOWN && newType != TYPE_MULTI, nullptr);
+
+    auto* multi = new MultiGeometry();
     for (auto& part : _parts)
     {
-        auto cloned_part = part->cloneAs(part->getType());
+        auto cloned_part = part->cloneAs(newType);
         if (cloned_part) multi->getComponents().push_back(cloned_part);
     }
     return multi;
@@ -1145,6 +1542,12 @@ MultiGeometry::contains2D(double x, double y) const
     return false;
 }
 
+Geometry*
+MultiGeometry::crop(const Ring* boundary) const
+{
+    return Geometry::crop(boundary);
+}
+
 //----------------------------------------------------------------------------
 
 GeometryIterator::GeometryIterator(Geometry* geom, bool holes) :
@@ -1176,12 +1579,17 @@ GeometryIterator::next()
 void
 GeometryIterator::fetchNext()
 {
-    _next = 0L;
-    if ( _stack.size() == 0 )
-        return;
+    _next = nullptr;
 
-    Geometry* current = _stack.front();
-    _stack.pop();
+    Geometry* current = nullptr;
+    while (!current)
+    {
+        if (_stack.size() == 0)
+            return;
+
+        current = _stack.front();
+        _stack.pop();
+    }
 
     if ( current->getType() == Geometry::TYPE_MULTI && _traverseMulti )
     {
@@ -1247,11 +1655,15 @@ void
 ConstGeometryIterator::fetchNext()
 {
     _next = nullptr;
-    if ( _stack.size() == 0 )
-        return;
+    const Geometry* current = nullptr;
+    while (!current)
+    {
+        if (_stack.size() == 0)
+            return;
 
-    const Geometry* current = _stack.back();
-    _stack.resize(_stack.size() - 1);
+        current = _stack.back();
+        _stack.resize(_stack.size() - 1);
+    }
 
     if (_traverseMulti && current->getType() == Geometry::TYPE_MULTI)
     {

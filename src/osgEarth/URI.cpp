@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/URI>
 #include <osgEarth/HTTPClient>
@@ -22,14 +8,14 @@
 #include <osgEarth/Registry>
 #include <osgEarth/FileUtils>
 #include <osgEarth/Progress>
-#include <osgEarth/Utils>
-#include <osgEarth/Metrics>
 #include <osgEarth/NetworkMonitor>
 #include <osgDB/FileNameUtils>
 #include <osgDB/ReadFile>
 #include <osgDB/Archive>
-#include <osgUtil/IncrementalCompileOperation>
-#include <typeinfo>
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+#include <Superluminal/PerformanceAPI.h>
+#endif
 
 #define LC "[URI] "
 
@@ -529,11 +515,15 @@ namespace
         const osgDB::Options* dbOptions,
         ProgressCallback*     progress)
     {
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+        PERFORMANCEAPI_INSTRUMENT_FUNCTION();
+        PERFORMANCEAPI_INSTRUMENT_DATA("url", inputURI.full().c_str());
+#endif
         ScopedGate<std::string> gatelock(uri_gate, inputURI.full());
 
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
-        unsigned long handle = NetworkMonitor::begin(inputURI.full(), "pending", "URI");
+        unsigned long handle = NetworkMonitor::begin(inputURI.full(), "Pending", inputURI.isRemote() ? "Network" : "File");
         ReadResult result;
 
         if (osgEarth::Registry::instance()->isBlacklisted(inputURI.full()))
@@ -694,13 +684,22 @@ namespace
             (*post)(result);
         }
 
-        std::stringstream buf;
-        buf << result.getResultCodeString();
+        auto msg = result.getResultCodeString();
+
         if (result.isFromCache() && result.succeeded())
         {
-            buf << " (from cache)";
+            msg = "Cache";
         }
-        NetworkMonitor::end(handle, buf.str());
+
+        std::string details;
+
+        if (!result.metadata().empty())
+            details += result.metadata().toJSON(true);
+
+        if (!result.errorDetail().empty())
+            details += result.errorDetail();
+
+        NetworkMonitor::end(handle, msg, details);
 
         return result;
     }

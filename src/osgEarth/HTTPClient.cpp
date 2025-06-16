@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/HTTPClient>
 #include <osgEarth/Progress>
@@ -29,6 +15,10 @@
 #include <osgDB/ReadFile>
 #include <osgDB/FileNameUtils>
 #include <curl/curl.h>
+
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+#include <Superluminal/PerformanceAPI.h>
+#endif
 
 // Whether to use WinInet instead of cURL - CMAKE option
 #ifdef OSGEARTH_USE_WININET_FOR_HTTP
@@ -181,11 +171,13 @@ namespace osgEarth
                     }
                     else
                     {
-                        StringTokenizer tok(":");
-                        StringVector tized;
-                        tok.tokenize(line, tized);
-                        if ( tized.size() >= 2 )
-                            next_part->_headers[tized[0]] = tized[1];
+                        auto tokens = StringTokenizer()
+                            .delim(":")
+                            .standardQuotes()
+                            .tokenize(line);
+
+                        if (tokens.size() >= 2 )
+                            next_part->_headers[tokens[0]] = tokens[1];
                     }
                 }
             }
@@ -220,6 +212,31 @@ namespace osgEarth
         }
 
         return true;
+    }
+
+    void setMetadata(ReadResult& result, const HTTPRequest& request, const HTTPResponse& response)
+    {
+        // be sure to install the response headers at the top level:
+        Config meta = response.getHeadersAsConfig();
+        meta.key() = "HTTP GET";
+
+        auto& r = meta.add("osgEarth Request");
+        
+        r.add("URI", request.getURL());
+
+        if (response.getCode() == 0)
+        {
+            if (!response.getMessage().empty())
+                r.add("Request Error", response.getMessage());
+            else
+                r.add("Request Error (UNKNOWN)");
+        }
+        else
+        {
+            r.add("HTTP Response Code", std::to_string(response.getCode()));
+            r.add("HTTP Request Headers", request.getHeadersAsConfig());
+        }
+        result.setMetadata(meta);
     }
 }
 
@@ -288,6 +305,16 @@ Headers&
 HTTPRequest::getHeaders()
 {
     return _headers;
+}
+
+Config
+HTTPRequest::getHeadersAsConfig() const
+{
+    Config conf("HTTP Request Headers");
+    for (auto& header : _headers)
+        conf.add(header.first, header.second);
+    return conf;
+
 }
 
 void HTTPRequest::setLastModified( const DateTime &lastModified)
@@ -400,13 +427,11 @@ HTTPResponse::getMimeType() const {
 Config
 HTTPResponse::getHeadersAsConfig() const
 {
-    Config conf;
+    Config conf("HTTP Response Headers");
     if ( _parts.size() > 0 )
     {
-        for( Headers::const_iterator i = _parts[0]->_headers.begin(); i != _parts[0]->_headers.end(); ++i )
-        {
-            conf.set(osgEarth::toLower(i->first), i->second);
-        }
+        for(auto& header : _parts[0]->_headers)
+            conf.add(header.first, header.second);
     }
     return conf;
 }
@@ -432,9 +457,6 @@ HTTPResponse::setHeadersFromConfig(const Config& conf)
 
 namespace
 {
-    // per-thread client map (must be global scope)
-    static PerThread<HTTPClient>       s_clientPerThread;
-
     static optional<ProxySettings>     s_proxySettings;
 
     static std::string                 s_userAgent = USER_AGENT;
@@ -445,7 +467,7 @@ namespace
 
     // HTTP debugging.
     static bool                        s_HTTP_DEBUG = false;
-    static std::mutex            s_HTTP_DEBUG_mutex;
+    static std::mutex                  s_HTTP_DEBUG_mutex;
     static int                         s_HTTP_DEBUG_request_count;
     static double                      s_HTTP_DEBUG_total_duration;
 
@@ -473,7 +495,8 @@ namespace
             curl_easy_setopt( _curl_handle, CURLOPT_HEADERFUNCTION, StreamObjectHeaderCallback );
             curl_easy_setopt( _curl_handle, CURLOPT_FOLLOWLOCATION, (void*)1 );
             curl_easy_setopt( _curl_handle, CURLOPT_MAXREDIRS, (void*)5 );
-            curl_easy_setopt( _curl_handle, CURLOPT_PROGRESSFUNCTION, &CurlProgressCallback);
+            //curl_easy_setopt( _curl_handle, CURLOPT_PROGRESSFUNCTION, &CurlProgressCallback);
+            curl_easy_setopt( _curl_handle, CURLOPT_XFERINFOFUNCTION, &CurlProgressCallback);
             curl_easy_setopt( _curl_handle, CURLOPT_NOPROGRESS, (void*)0 ); //0=enable.
             curl_easy_setopt( _curl_handle, CURLOPT_FILETIME, true );
 
@@ -708,6 +731,7 @@ namespace
                 // CURLE_ABORTED_BY_CALLBACK means ProgressCallback cancelation.
                 HTTPResponse response;
                 response.setCanceled(true);
+                response.setMessage(std::string(curl_easy_strerror(res)));
                 return response;
             }
 
@@ -717,7 +741,8 @@ namespace
                 CURLcode r = curl_easy_getinfo(_curl_handle, CURLINFO_HTTP_CONNECTCODE, &connect_code);
                 if ( r != CURLE_OK )
                 {
-                    OE_WARN << LC << "Proxy connect error: " << curl_easy_strerror(r) << std::endl;
+                    std::string msg = "Proxy connect error   " + std::string(curl_easy_strerror(r));
+                    OE_WARN << LC << msg << std::endl;
 
                     // Free the headers
                     if (headers)
@@ -725,7 +750,9 @@ namespace
                         curl_slist_free_all(headers);
                     }
 
-                    return HTTPResponse(0);
+                    HTTPResponse response(0);
+                    response.setMessage(msg);
+                    return response;
                 }
             }
 
@@ -774,7 +801,7 @@ namespace
                 {
                     for (Headers::iterator itr = sp._headers.begin(); itr != sp._headers.end(); ++itr)
                     {
-                        part->_headers[itr->first] = itr->second;
+                        part->_headers[Strings::trim(itr->first)] = Strings::trim(itr->second);
                     }
 
                     // Write the headers to the metadata
@@ -1225,9 +1252,9 @@ WinInetHTTPImplementationFactory::create() const
 //........................................................................
 
 #ifdef OSGEARTH_USE_WININET_FOR_HTTP
-HTTPClient::ImplementationFactory* HTTPClient::_implFactory = new WinInetHTTPImplementationFactory();
+    HTTPClient::ImplementationFactory* HTTPClient::_implFactory = new WinInetHTTPImplementationFactory();
 #else
-HTTPClient::ImplementationFactory* HTTPClient::_implFactory = new CURLHTTPImplementationFactory();
+    HTTPClient::ImplementationFactory* HTTPClient::_implFactory = new CURLHTTPImplementationFactory();
 #endif
 
 void
@@ -1245,17 +1272,12 @@ HTTPClient::setImplementationFactory(ImplementationFactory* factory)
 HTTPClient&
 HTTPClient::getClient()
 {
-    return s_clientPerThread.get();
+    static thread_local HTTPClient s_clientPerThread;
+    return s_clientPerThread;
 }
 
-HTTPClient::HTTPClient() :
-_initialized    ( false ),
-_curl_handle    ( 0L ),
-_simResponseCode( -1L ),
-_previousHttpAuthentication(0L),
-_impl(NULL)
+HTTPClient::HTTPClient()
 {
-    //nop
     //do no CURL calls here.
     if (_implFactory)
     {
@@ -1343,6 +1365,7 @@ HTTPClient::initializeImpl()
 
 HTTPClient::~HTTPClient()
 {
+    //nop
 }
 
 void
@@ -1522,6 +1545,11 @@ HTTPClient::doGet(const HTTPRequest&    request,
     OE_PROFILING_ZONE;
     OE_PROFILING_ZONE_TEXT(Stringify() << "url " << request.getURL());
 
+#ifdef OSGEARTH_HAVE_SUPERLUMINALAPI
+    PERFORMANCEAPI_INSTRUMENT_FUNCTION();
+    PERFORMANCEAPI_INSTRUMENT_DATA("url", request.getURL().c_str());
+#endif
+
     initialize();
 
     URI uri(request.getURL());
@@ -1554,6 +1582,7 @@ HTTPClient::doGet(const HTTPRequest&    request,
 
     bool gotFromCache = false;
 
+    
     //Try to read result from the cache.
     if (bin)
     {
@@ -1571,7 +1600,7 @@ HTTPClient::doGet(const HTTPRequest&    request,
                 noCache = true;
             }
 
-            expired = noCache || cachePolicy->isExpired(result.lastModifiedTime());
+           // expired = noCache || cachePolicy->isExpired(result.lastModifiedTime());
             result.setIsFromCache(true);            
 
             HTTPResponse cacheResponse(HTTPResponse::CATEGORY_SUCCESS);
@@ -1727,7 +1756,7 @@ HTTPClient::doReadImage(const HTTPRequest&    request,
         if (!reader)
         {
             result = ReadResult(ReadResult::RESULT_NO_READER);
-            result.setErrorDetail(Stringify() << "Content-Type=" << response.getMimeType());
+            result.setErrorDetail("Content-Type=" + response.getMimeType());
         }
 
         else
@@ -1811,8 +1840,9 @@ HTTPClient::doReadImage(const HTTPRequest&    request,
         }
     }
 
-    // encode headers
-    result.setMetadata( response.getHeadersAsConfig() );
+    // encode metadata
+    setMetadata(result, request, response);
+
     result.setIsFromCache(response.getFromCache());
 
     // set the source name
@@ -1888,6 +1918,11 @@ HTTPClient::doReadNode(const HTTPRequest&    request,
             {
                 OE_WARN << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
             }
+
+            if (s_HTTP_DEBUG)
+            {
+                OE_WARN << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
+            }
         }
 
         //If we have an error but it's recoverable, like a server error or timeout then set the callback to retry.
@@ -1913,8 +1948,10 @@ HTTPClient::doReadNode(const HTTPRequest&    request,
         }
     }
 
-    // encode headers
-    result.setMetadata( response.getHeadersAsConfig() );
+
+    // encode metadata
+    setMetadata(result, request, response);
+
     result.setIsFromCache(response.getFromCache());
 
     return result;
@@ -1987,6 +2024,11 @@ HTTPClient::doReadObject(const HTTPRequest&    request,
             {
                 OE_WARN << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
             }
+
+            if (s_HTTP_DEBUG)
+            {
+                OE_WARN << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
+            }
         }
 
         //If we have an error but it's recoverable, like a server error or timeout then set the callback to retry.
@@ -2012,7 +2054,8 @@ HTTPClient::doReadObject(const HTTPRequest&    request,
         }
     }
 
-    result.setMetadata( response.getHeadersAsConfig() );
+    // encode metadata
+    setMetadata(result, request, response);
 
     return result;
 }
@@ -2049,7 +2092,7 @@ HTTPClient::doReadString(const HTTPRequest&    request,
 
             if (s_HTTP_DEBUG)
             {
-                OE_NOTICE << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
+                OE_WARN << LC << "SERVER REPORTS: " << result.errorDetail() << std::endl;
             }
         }
 
@@ -2076,8 +2119,9 @@ HTTPClient::doReadString(const HTTPRequest&    request,
         }
     }
 
-    // encode headers
-    result.setMetadata( response.getHeadersAsConfig() );
+    // encode metadata
+    setMetadata(result, request, response);
+
     result.setIsFromCache(response.getFromCache());
 
     // last-modified (file time)

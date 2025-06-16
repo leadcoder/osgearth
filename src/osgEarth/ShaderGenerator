@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
  * Copyright 2008-2011 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * MIT License
  */
 
 #ifndef OSGEARTH_SHADER_GENERATOR_H
@@ -91,6 +77,14 @@ namespace osgEarth
         /** Copy constructor */
         ShaderGenerator(const ShaderGenerator& rhs, const osg::CopyOp& copy);
 
+    public:
+        /**
+         * returns a copy of the shaderGenerator.
+         * need to be reimplemented by any child that wish to be used as the 
+         * default implementation in Registry via Registry::setShaderGenerator().
+         */
+        virtual ShaderGenerator* getCopy(const osg::CopyOp& copy) const { return new ShaderGenerator(*this, copy); };
+
     public: // ShaderGeneratorInterface
 
         /**
@@ -121,6 +115,16 @@ namespace osgEarth
         static bool ignore(const osg::Object* object);
 
     public:
+
+        //! Whether to remove unsupported fixed-function pipeline attributes 
+        //! when FFP is not available in OSG. Default is true.
+        //! @param value True to remove unsupported FFP attributes, false to leave them in place.
+        void setRemoveUnsupportedFFPAttributes(bool value) { _removeUnsupportedFFPAttributes = value; }
+
+        //! Whether to remove unsupported fixed-function pipeline attributes
+        //! when FFP is not available in OSG.
+        //! @return True to remove unsupported FFP attributes, false to leave them in place.
+        bool getRemoveUnsupportedFFPAttributes() const { return _removeUnsupportedFFPAttributes; }
 
         /**
          * Whether to automatically duplicate (by cloning) subgraphs with
@@ -237,10 +241,10 @@ namespace osgEarth
 
         osg::ref_ptr<osg::State> _state;
 
-        bool _active;
-
         std::string _name;
-        bool _duplicateSharedSubgraphs;
+        bool _active = true;
+        bool _duplicateSharedSubgraphs = false;
+        bool _removeUnsupportedFFPAttributes = true;
 
         typedef std::vector<osg::ref_ptr<AcceptCallback> > AcceptCallbackVector;
         AcceptCallbackVector _acceptCallbacks;
@@ -270,7 +274,7 @@ namespace osgEarth
 
     public:
         ShaderGeneratorProxy(const ShaderGenerator* temp)
-            : _instance( new ShaderGenerator(*temp, osg::CopyOp::SHALLOW_COPY) ) { }
+            : _instance( temp->getCopy( osg::CopyOp::SHALLOW_COPY ) ) { }
 
     private:
         osg::ref_ptr<ShaderGenerator> _instance;

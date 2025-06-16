@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -28,16 +14,17 @@
 
 namespace {
     const char* render_view_normals = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_view_normals, fragment_lighting, last
 in vec3 vp_Normal;
+uniform float oe_render_blend = 1.0;
 void oeui_render_view_normals(inout vec4 color) {
-    color = vec4((vp_Normal+1.0)*0.5, 1);
+    color = mix(color, vec4((vp_Normal+1.0)*0.5, 1), oe_render_blend);
 }
 )";
 
     const char* render_model_normals = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_model_normals_vs, vertex_model, last
 out vec3 vp_Normal;
 out vec3 oeui_model_normal;
@@ -45,23 +32,24 @@ void oeui_render_model_normals_vs(inout vec4 vertex) {
     oeui_model_normal = vp_Normal;
 }
 [break]
-#version 450
+#version 330
 #pragma vp_function oeui_render_view_normals_fs, fragment_lighting, last
 in vec3 oeui_model_normal;
+uniform float oe_render_blend = 1.0;
 void oeui_render_view_normals_fs(inout vec4 color) {
-    color = vec4( (normalize(oeui_model_normal)+1.0)*0.5, 1);
+    color = mix(color, vec4((normalize(oeui_model_normal)+1.0)*0.5, 1), oe_render_blend);
 }
 )";
 
     const char* render_fb_normals = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_fb_normals, fragment_lighting, last
 in vec3 vp_Normal;
+uniform float oe_render_blend = 1.0;
 void oeui_render_fb_normals(inout vec4 color) {
     float a = step(0.5, color.a);
     float nz = normalize(vp_Normal).z;
-    color.rgb = mix(vec3(0,0,0), vec3(1,1,1), (nz+1.0)*0.5);
-    color = vec4(color.rgb, a);
+    color = mix(color, vec4(mix(vec3(0,0,0), vec3(1,1,1), (nz+1.0)*0.5), a), oe_render_blend);
 }
 )";
 
@@ -69,10 +57,11 @@ void oeui_render_fb_normals(inout vec4 color) {
 #version 450
 #extension GL_NV_fragment_shader_barycentric : enable
 #pragma vp_function oeui_render_winding_fs, fragment_lighting, last
+uniform float oe_render_blend = 1.0;
 void oeui_render_winding_fs(inout vec4 color) {
-    color.rgb = gl_FrontFacing ? vec3(0,0.75,0) : vec3(1,0,0);
+    vec3 c = gl_FrontFacing ? vec3(0,0.75,0) : vec3(1,0,0);
     float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*28.0;
-    color = vec4(mix(vec3(1), color.rgb, clamp(b,0,1)), 1.0);
+    color = mix(color, vec4(mix(vec3(1), c.rgb, clamp(b,0,1)), 1.0), oe_render_blend);
 }
 )";
 
@@ -81,38 +70,52 @@ void oeui_render_winding_fs(inout vec4 color) {
 #extension GL_NV_fragment_shader_barycentric : enable
 #pragma vp_function oeui_render_outlines, fragment_lighting, last
 #define VP_STAGE_FRAGMENT
+uniform float oe_render_blend = 1.0;
 void oeui_render_outlines(inout vec4 color) {
     float b = min(gl_BaryCoordNV.x, min(gl_BaryCoordNV.y, gl_BaryCoordNV.z))*32.0;
     float mono = dot(color.rgb, vec3(0.299, 0.587, 0.114));
     mono = mod(mono + 0.25, 1.0); 
-    color = vec4(mix(vec3(mono), color.rgb, clamp(b,0,1)), color.a);
+    color = mix(color, vec4(mix(vec3(mono), color.rgb, clamp(b,0,1)), color.a), oe_render_blend);
 }
 )";
 
     const char* render_ao = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_ao, fragment_lighting, last
 struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
+uniform float oe_render_blend = 1.0;
 void oeui_render_ao(inout vec4 color) {
-    color = vec4(oe_pbr.ao, oe_pbr.ao, oe_pbr.ao, 1);
+    color = mix(color, vec4(oe_pbr.ao, oe_pbr.ao, oe_pbr.ao, 1), oe_render_blend);
 }
 )";
 
     const char* render_roughness = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_roughness, fragment_lighting, last
 struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
+uniform float oe_render_blend = 1.0;
 void oeui_render_roughness(inout vec4 color) {
-    color = vec4(oe_pbr.roughness, oe_pbr.roughness, oe_pbr.roughness, 1);
+    color = mix(color, vec4(oe_pbr.roughness, oe_pbr.roughness, oe_pbr.roughness, 1), oe_render_blend);
 }
 )";
 
     const char* render_metal = R"(
-#version 450
+#version 330
 #pragma vp_function oeui_render_metal, fragment_lighting, last
 struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
+uniform float oe_render_blend = 1.0;
 void oeui_render_metal(inout vec4 color) {
-    color = vec4(oe_pbr.metal, oe_pbr.metal, oe_pbr.metal, 1);
+    color = mix(color, vec4(oe_pbr.metal, oe_pbr.metal, oe_pbr.metal, 1), oe_render_blend);
+}
+)";
+
+    const char* render_displacement = R"(
+#version 330
+#pragma vp_function oeui_render_metal, fragment_lighting, last
+struct OE_PBR { float displacement, roughness, ao, metal; } oe_pbr;
+uniform float oe_render_blend = 1.0;
+void oeui_render_metal(inout vec4 color) {
+    color = mix(color, vec4(oe_pbr.displacement, oe_pbr.displacement, oe_pbr.displacement, 1), oe_render_blend);
 }
 )";
 
@@ -161,13 +164,14 @@ const vec3 colors[32] = { // thanks, GPT
     vec3(0.8, 0.5, 0.8),   // Orchid
     vec3(0.5, 0.8, 0.8)    // Light Slate Gray
 };
+uniform float oe_render_blend = 1.0;
 void oeui_render_drawid(inout vec4 color) {
-    color.rgb = colors[oeui_drawid % 32];
+    color.rgb = mix(color.rgb, colors[oeui_drawid % 32], oe_render_blend);
 }
 )";
 
     const char* render_elevation_marker = R"(
-#version 460
+#version 330
 #pragma vp_function oeui_render_elevation_marker_vs, vertex_view
 out vec4 oeui_color;
 flat out int oe_terrain_vertexMarker;
@@ -182,8 +186,9 @@ void oeui_render_elevation_marker_vs(inout vec4 vertex) {
 [break]
 #pragma vp_function oeui_render_elevation_marker_fs, fragment_lighting, last
 in vec4 oeui_color;
+uniform float oe_render_blend = 1.0;
 void oeui_render_elevation_marker_fs(inout vec4 color) {
-    color.rgb = mix(color.rgb, oeui_color.rgb, oeui_color.a);
+    color.rgb = mix(color.rgb, mix(color.rgb, oeui_color.rgb, oeui_color.a), oe_render_blend);
 }
 )";
 }
@@ -259,6 +264,7 @@ namespace osgEarth
 
                 ImGui::TextColored(ImVec4(1, 1, 0, 1), "Overlays");
                 static int s_renderMode = 0;
+                static float s_renderBlend = 1.0f;
                 int m = 0;
 
                 if (ImGui::RadioButton("Off", &s_renderMode, m++)) {
@@ -288,6 +294,9 @@ namespace osgEarth
                 if (ImGui::RadioButton("AO (PBR)", &s_renderMode, m++)) {
                     setRenderMode(render_ao, ri);
                 }
+                if (ImGui::RadioButton("Displacement (PBR)", &s_renderMode, m++)) {
+                    setRenderMode(render_displacement, ri);
+                }
                 if (ImGui::RadioButton("Draw ID", &s_renderMode, m++)) {
                     setRenderMode(render_draw_id, ri);
                 }
@@ -305,6 +314,12 @@ namespace osgEarth
                         else
                             stateset(ri)->setDefine("OE_GPUCULL_DEBUG", "0");
                     }
+                }
+
+                ImGui::Separator();
+
+                if (ImGui::SliderFloat("Blend", &s_renderBlend, 0.0f, 1.0f)) {
+                    stateset(ri)->getOrCreateUniform("oe_render_blend", osg::Uniform::FLOAT)->set(s_renderBlend);
                 }
 
                 ImGui::Separator();

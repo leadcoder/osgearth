@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "PagedNode"
 #include "GLUtils"
@@ -48,15 +34,16 @@ void
 PagedNode2::traverse(osg::NodeVisitor& nv)
 {
     // locate the paging manager if there is one
-    if (_pagingManager == nullptr)
+    if (!_pagingManager_weak.valid())
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (_pagingManager == nullptr) // double check
+
+        if (!_pagingManager_weak.valid())
         {
             osg::ref_ptr<PagingManager> pm;
             if (ObjectStorage::get(&nv, pm))
             {
-                _pagingManager = pm.get();
+                _pagingManager_weak = pm.get();
             }
         }
     }
@@ -149,9 +136,10 @@ PagedNode2::touch()
 {
     // tell the paging manager this node is still alive
     // (and should not be removed from the scene graph)
-    if (_pagingManager)
+    osg::ref_ptr<PagingManager> pagingManager;
+    if (_pagingManager_weak.lock(pagingManager))
     {
-        _token = _pagingManager->use(this, _token);
+        _token = pagingManager->use(this, _token);
     }
 }
 
@@ -216,8 +204,10 @@ PagedNode2::startLoad(const osg::Object* host)
     auto pnode_weak = osg::observer_ptr<PagedNode2>(this);
 
     // Configure the jobs to run in a specific pool and with a dynamic priority.
-    auto poolName = _pagingManager ? _pagingManager->_jobpoolName : _jobpoolName;
-    if (poolName.empty()) poolName = DEFAULT_JOBPOOL_NAME;
+    // This is called during traversal, so no need to lock the pm:
+    auto poolName = _pagingManager_weak.valid() ? _pagingManager_weak->_jobpoolName : _jobpoolName;
+    if (poolName.empty())
+        poolName = DEFAULT_JOBPOOL_NAME;
 
     jobs::context context;
     context.pool = jobs::get_pool(poolName);
@@ -226,6 +216,8 @@ PagedNode2::startLoad(const osg::Object* host)
             return pnode_weak.lock(pnode) ? pnode->getPriority() : -FLT_MAX;
         };
 
+    osg::observer_ptr<const osg::Object> host_weak(host);
+
     // Job that will load the node and optionally compile it.
     auto load_and_compile_job = [pnode_weak, host](auto& promise)
         {
@@ -233,6 +225,7 @@ PagedNode2::startLoad(const osg::Object* host)
             osg::ref_ptr<ProgressCallback> progress = new ProgressCallback(&promise);
 
             osg::ref_ptr<PagedNode2> pnode;
+
             if (pnode_weak.lock(pnode))
             {
                 // invoke the loader function
@@ -266,9 +259,14 @@ PagedNode2::startLoad(const osg::Object* host)
     auto merge_job = [pnode_weak](const osg::ref_ptr<osg::Node>& node, auto& promise)
         {
             osg::ref_ptr<PagedNode2> pnode;
-            if (pnode_weak.lock(pnode) && pnode->_loaded.available() && pnode->_loaded->valid() && pnode->_pagingManager)
+            osg::ref_ptr<PagingManager> pagingManager;
+
+            if (pnode_weak.lock(pnode) && 
+                pnode->_pagingManager_weak.lock(pagingManager) && 
+                pnode->_loaded.available() && 
+                pnode->_loaded->valid())
             {
-                pnode->_pagingManager->merge(pnode);
+                pagingManager->merge(pnode);
                 pnode->dirtyBound();
             }
             else promise.resolve(false);
@@ -323,8 +321,19 @@ PagingManager::PagingManager(const std::string& jobpoolname) :
     setCullingActive(false);
     ADJUST_UPDATE_TRAV_COUNT(this, +1);
 
+    unsigned int concurrency = 4u; // default concurrency
+    const char* concurrency_str = ::getenv("OSGEARTH_NODEPAGER_CONCURRENCY");
+    if (concurrency_str)
+        concurrency = Strings::as<unsigned>(concurrency_str, concurrency);
+
+    if (_jobpoolName.empty())
+    {
+        // If no job pool name is specified, use the default.
+        _jobpoolName = DEFAULT_JOBPOOL_NAME;
+    }
+
     auto pool = jobs::get_pool(_jobpoolName);
-    pool->set_concurrency(4u);
+    pool->set_concurrency(concurrency);
     _metrics = pool->metrics();
 }
 

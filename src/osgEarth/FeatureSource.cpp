@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "FeatureSource"
 #include "Query"
@@ -37,6 +23,8 @@ FeatureSource::Options::getConfig() const
     conf.set("fid_attribute", fidAttribute());
     conf.set("rewind_polygons", rewindPolygons());
     conf.set("vdatum", vdatum());
+    conf.set("buffer_width", bufferWidth(), bufferWidthAsPercentage());
+    conf.set("auto_fid", autoFID());
 
     if (!filters().empty())
     {
@@ -59,6 +47,8 @@ FeatureSource::Options::fromConfig(const Config& conf)
     conf.get("fid_attribute", fidAttribute());
     conf.get("rewind_polygons", rewindPolygons());
     conf.get("vdatum", vdatum());
+    conf.get("buffer_width", bufferWidth(), bufferWidthAsPercentage());
+    conf.get("auto_fid", autoFID());
 
     for(auto& filterConf : conf.child("filters").children())
         filters().push_back(filterConf);
@@ -66,10 +56,31 @@ FeatureSource::Options::fromConfig(const Config& conf)
 
 //...................................................................
 
-OE_LAYER_PROPERTY_IMPL(FeatureSource, bool, OpenWrite, openWrite);
-OE_LAYER_PROPERTY_IMPL(FeatureSource, GeoInterpolation, GeoInterpolation, geoInterp);
-OE_LAYER_PROPERTY_IMPL(FeatureSource, std::string, FIDAttribute, fidAttribute);
-OE_LAYER_PROPERTY_IMPL(FeatureSource, bool, RewindPolygons, rewindPolygons);
+bool FeatureSource::getOpenWrite() const {
+    return options().openWrite().value();
+}
+void FeatureSource::setOpenWrite(bool value) {
+    options().openWrite() = value;
+}
+GeoInterpolation FeatureSource::getGeoInterpolation() const {
+    return options().geoInterp().value();
+}
+void FeatureSource::setGeoInterpolation(GeoInterpolation value) {
+    options().geoInterp() = value;
+}
+const std::string& FeatureSource::getFIDAttribute() const {
+    return options().fidAttribute().value();
+}
+void FeatureSource::setFIDAttribute(const std::string& value) {
+    options().fidAttribute() = value;
+}
+bool FeatureSource::getRewindPolygons() const {
+    return options().rewindPolygons().value();
+}
+void FeatureSource::setRewindPolygons(bool value) {
+    options().rewindPolygons() = value;
+}
+
 
 void
 FeatureSource::init()
@@ -81,7 +92,7 @@ FeatureSource::init()
 Status
 FeatureSource::openImplementation()
 {
-    unsigned int l2CacheSize = 16u;
+    unsigned int l2CacheSize = 32u;
 
     if (options().l2CacheSize().isSet())
     {
@@ -218,7 +229,7 @@ namespace
 {
     struct MultiCursor : public FeatureCursor
     {
-        typedef std::vector<osg::ref_ptr<FeatureCursor> > Cursors;
+        using Cursors = std::vector<osg::ref_ptr<FeatureCursor>>;
 
         Cursors _cursors;
         Cursors::iterator _iter;
@@ -263,46 +274,64 @@ FeatureSource::dirty()
 }
 
 osg::ref_ptr<FeatureCursor>
-FeatureSource::createFeatureCursor(
-    const Query& query,
-    const FeatureFilterChain& post_filters,
-    FilterContext* context,
-    ProgressCallback* progress) const
+FeatureSource::createFeatureCursor(const Query& in_query, const FeatureFilterChain& post_filters, FilterContext* context, ProgressCallback* progress) const
 {
     osg::ref_ptr<FeatureCursor> result;
 
+    //static float reads = 1;
+    //static float hits = 1;
+    //reads += 1;
+
+    std::string cache_key;
     bool fromCache = false;
 
     FilterContext temp_cx;
     if (context)
         temp_cx = *context;
 
-
     if (temp_cx.profile() == nullptr)
         temp_cx.setProfile(getFeatureProfile());
-    
+
+    // make a copy so we can override the buffer if necessary
+    Query query = in_query;
+
+    // clear a buffer that's set to zero units.
+    if (query.buffer()->getValue() == 0.0)
+        query.buffer().clear();
+
+    // No buffer? Check the options on the layer itself:
+    if (!query.buffer().isSet())
+    {
+        if (options().bufferWidth().isSet())
+        {
+            query.buffer() = options().bufferWidth().value();
+        }
+        else if (options().bufferWidthAsPercentage().isSet())
+        {
+            if (query.bounds().isSet())
+            {
+                double w = width(query.bounds().value());
+                double h = height(query.bounds().value());
+                double buffer = sqrt(w*h) * options().bufferWidthAsPercentage().value();
+                query.buffer() = Distance(buffer, getFeatureProfile()->getSRS()->getUnits());
+            }
+            else if (query.tileKey().isSet())
+            {
+                double w = query.tileKey()->getExtent().width();
+                double h = query.tileKey()->getExtent().height();
+                double buffer = sqrt(w*h) * options().bufferWidthAsPercentage().value();
+                query.buffer() = Distance(buffer, query.tileKey()->getProfile()->getSRS()->getUnits());
+            }
+            else
+            {
+                OE_WARN << LC << "Requested a buffer width as a percentage but no bounds or tilekey was set" << std::endl;
+            }
+        }
+    }
 
     // TileKey path:
     if (query.tileKey().isSet())
     {
-        // Try reading from the cache first if we have a TileKey.
-        if (_featuresCache)
-        {
-            FeaturesLRU::Record cache_entry;
-            {
-                std::lock_guard<std::mutex> lk(_featuresCacheMutex);
-                _featuresCache->get(*query.tileKey(), cache_entry);
-            }
-            if (result.valid())
-            {
-                FeatureList copy(cache_entry.value().size());
-                std::transform(cache_entry.value().begin(), cache_entry.value().end(), copy.begin(),
-                    [&](auto& feature) { return new Feature(*feature); });
-                result = new FeatureListCursor(std::move(copy));
-                fromCache = true;
-            }
-        }
-
         if (!temp_cx.extent().isSet())
         {
             temp_cx.extent() = query.tileKey()->getExtent();
@@ -310,35 +339,76 @@ FeatureSource::createFeatureCursor(
 
         if (!result.valid())
         {
-            std::unordered_set<TileKey> keys;
+            std::set<TileKey> keys;
+
             getKeys(query.tileKey().value(), query.buffer().value(), keys);
 
-            osg::ref_ptr<MultiCursor> multi = new MultiCursor(progress);
-
-            // Query and collect all the features we need for this tile.
-            for (auto& sub_key : keys)
+            // Try reading from the cache first if we have a TileKey.
+            if (_featuresCache)
             {
-                auto sub_cursor = createFeatureCursorImplementation(Query(sub_key), progress);
-                if (sub_cursor)
-                    multi->_cursors.emplace_back(sub_cursor);
+                for (auto& key : keys)
+                    cache_key += key.str() + ',';
 
-                if (progress && progress->isCanceled())
-                    return {};
+                FeaturesLRU::Record cache_entry;
+                {
+                    std::lock_guard<std::mutex> lk(_featuresCacheMutex);
+                    _featuresCache->get(cache_key, cache_entry);
+                }
+
+                if (cache_entry.valid())
+                {
+                    FeatureList copy(cache_entry.value().size());
+                    std::transform(cache_entry.value().begin(), cache_entry.value().end(), copy.begin(),
+                        [&](auto& feature) { return new Feature(*feature); });
+                    result = new FeatureListCursor(std::move(copy));
+                    fromCache = true;
+                }
             }
 
-            if (multi->_cursors.empty())
+            if (!result.valid())
             {
-                return { };
-            }
+                if (keys.size() == 1)
+                {
+                    Query query(*keys.begin());
+                    osg::ref_ptr<FeatureCursor> cursor;
+                    result = createPatchFeatureCursor(query, progress);
+                    if (!result.valid())
+                        result = createFeatureCursorImplementation(query, progress);
+                }
+                else
+                {
+                    osg::ref_ptr<MultiCursor> multi = new MultiCursor(progress);
 
-            multi->finish();
-            result = multi;
+                    // Query and collect all the features we need for this tile.
+                    for (auto& sub_key : keys)
+                    {
+                        auto sub_cursor = createPatchFeatureCursor(Query(sub_key), progress);
+
+                        if (!sub_cursor)
+                            sub_cursor = createFeatureCursorImplementation(Query(sub_key), progress);
+
+                        if (sub_cursor)
+                            multi->_cursors.emplace_back(sub_cursor);
+
+                        if (progress && progress->isCanceled())
+                            return {};
+                    }
+
+                    if (multi->_cursors.empty())
+                    {
+                        return { };
+                    }
+
+                    multi->finish();
+                    result = multi;
+                }
+            }
         }
     }
 
     else
     {
-        OE_SOFT_ASSERT(!query.buffer().isSet(), "Buffer not supported for non-tilekey queries; ignoring");
+        //OE_SOFT_ASSERT(!query.buffer().isSet(), "Buffer not supported for non-tilekey queries; ignoring");
 
         if (!temp_cx.extent().isSet() && _featureProfile.valid())
         {
@@ -373,7 +443,21 @@ FeatureSource::createFeatureCursor(
                 for(auto& feature : features)
                 {
                     std::string attr = feature->getString(options().fidAttribute().get());
+                    for (auto& c : attr)
+                        if (!isdigit(c))
+                            c = ' ';
                     feature->setFID(as<FeatureID>(attr, 0));
+                }
+                result = new FeatureListCursor(std::move(features));
+            }
+            else if (options().autoFID() == true)
+            {
+                static FeatureID generator = 0;
+                FeatureList features;
+                result->fill(features);
+                for (auto& feature : features)
+                {
+                    feature->setFID(generator++);
                 }
                 result = new FeatureListCursor(std::move(features));
             }
@@ -391,7 +475,7 @@ FeatureSource::createFeatureCursor(
                     [&](auto& feature) { return new Feature(*feature); });
 
                 std::lock_guard<std::mutex> lk(_featuresCacheMutex);
-                _featuresCache->insert(*query.tileKey(), clone);
+                _featuresCache->insert(cache_key, clone);
 
                 result = new FeatureListCursor(std::move(features));
             }
@@ -411,12 +495,15 @@ FeatureSource::createFeatureCursor(
         if (context)
             *context = temp_cx;
     }
+
+    //if (fromCache) hits += 1;
+    //OE_INFO << LC << "cache hits = " << 100.0f * (hits / reads) << "%" << std::endl;
     
     return result;
 }
 
 unsigned
-FeatureSource::getKeys(const TileKey& key, const Distance& buffer, std::unordered_set<TileKey>& output) const
+FeatureSource::getKeys(const TileKey& key, const Distance& buffer, std::set<TileKey>& output) const
 {
     if (_featureProfile.valid())
     {
@@ -439,7 +526,11 @@ FeatureSource::getKeys(const TileKey& key, const Distance& buffer, std::unordere
             else
             {
                 GeoExtent extent = key.getExtent();
-                double d = buffer.asDistance(extent.getSRS()->getUnits(), 0.5*(extent.yMin() + extent.yMax()));
+                double d = extent.getSRS()->transformDistance(
+                    buffer,
+                    extent.getSRS()->getUnits(),
+                    0.5*(extent.yMin() + extent.yMax()));
+                //double d = buffer.asDistance(extent.getSRS()->getUnits(), 0.5*(extent.yMin() + extent.yMax()));
                 extent.expand(d, d);
                 unsigned lod = profile->getEquivalentLOD(key.getProfile(), key.getLOD());
                 profile->getIntersectingTiles(extent, lod, intersectingKeys);
@@ -473,12 +564,171 @@ FeatureSource::getKeys(const TileKey& key, const Distance& buffer, std::unordere
     return output.size();
 }
 
-void FeatureSource::addedToMap(const class Map* map)
+void
+FeatureSource::addedToMap(const Map* map)
 {
-    for (auto& filter : _filters)
+    for(auto& filter : _filters)
     {
         filter->addedToMap(map);
     }
 
     super::addedToMap(map);
+}
+
+void
+FeatureSource::removedFromMap(const Map* map)
+{
+    super::removedFromMap(map);
+}
+
+Config
+TiledFeatureSource::Options::getConfig() const
+{
+    auto conf = super::getConfig();
+    conf.set("min_level", minLevel());
+    conf.set("max_level", maxLevel());
+    conf.set("layers", layers());
+    patch().set(conf, "patch");
+    return conf;
+}
+
+void
+TiledFeatureSource::Options::fromConfig(const Config& conf)
+{
+    conf.get("min_level", minLevel());
+    conf.get("max_level", maxLevel());
+    conf.get("layers", layers());
+    patch().get(conf, "patch");
+}
+
+Status
+TiledFeatureSource::openImplementation()
+{
+    Status parent = super::openImplementation();
+    if (parent.isError())
+        return parent;
+
+#if 0
+    if (patch.isSet() && (patch.embeddedOptions() != nullptr))
+    {
+        auto* layer = patch.create(getReadOptions());
+        if (layer && getFeatureProfile() && getFeatureProfile()->getTilingProfile())
+        {
+            layer->setMinLevel(getMinLevel());
+            layer->setMaxLevel(getMaxLevel());
+            layer->setFeatureProfile(getFeatureProfile());
+            layer->setFIDAttribute(getFIDAttribute());
+            layer->setGeoInterpolation(getGeoInterpolation());
+            parent = layer->open(getReadOptions());
+
+            if (parent.isError())
+            {
+                OE_WARN << LC << "Failed to open patch: " << parent.message() << std::endl;
+            }
+        }
+    }
+#endif
+
+    if (parent.isError())
+    {
+        OE_WARN << LC << "Failed to open patch: " << parent.message() << std::endl;
+    }
+
+
+    return super::openImplementation();
+}
+
+void
+TiledFeatureSource::addedToMap(const Map* map)
+{
+    options().patch().addedToMap(map);
+
+    if (options().patch().isSet())
+    {
+        if (options().patch().getLayer() == nullptr)
+        {
+            OE_WARN << LC << "Patch layer was set, but the layer was not found in the Map." << std::endl;
+        }
+        else if (options().patch().getLayer()->getStatus().isError())
+        {
+            OE_WARN << LC << "Patch layer was set, but the layer failed to open: " << options().patch().getLayer()->getStatus().message() << std::endl;
+        }
+    }
+
+    super::addedToMap(map);
+}
+
+Status
+TiledFeatureSource::closeImplementation()
+{
+    return super::closeImplementation();
+}
+
+FeatureCursor*
+TiledFeatureSource::createPatchFeatureCursor(const Query& query, ProgressCallback* progress) const
+{
+    // If we have a patch, create a cursor for it as well.
+    if (options().patch().isOpen())
+    {
+        auto patch_cursor = options().patch().getLayer()->createFeatureCursor(query, {}, {}, progress);
+        if (patch_cursor.valid() && patch_cursor->hasMore())
+        {
+            return patch_cursor.release();
+        }
+    }
+
+    return {};
+}
+
+void
+TiledFeatureSource::setPatchFeatureSource(TiledFeatureSource* tfs)
+{
+    OE_SOFT_ASSERT_AND_RETURN(tfs, void());
+
+    options().patch().setLayer(tfs);
+}
+
+bool
+TiledFeatureSource::hasTilePatch() const
+{
+    return options().patch().isOpen();
+}
+
+Status
+TiledFeatureSource::insertPatch(const TileKey& key, const FeatureList& features, bool overwrite)
+{
+    if (hasTilePatch())
+    {
+        return options().patch().getLayer()->insert(key, features, overwrite);
+    }
+
+    return Status::ServiceUnavailable;
+}
+
+void
+TiledFeatureSource::dirty()
+{
+    super::dirty();
+    if (hasTilePatch())
+    {
+        options().patch().getLayer()->dirty();
+    }
+}
+
+void
+TiledFeatureSource::setMinLevel(int value) {
+    options().minLevel() = value;
+}
+int
+TiledFeatureSource::getMinLevel() const {
+    return options().minLevel().value();
+}
+
+void
+TiledFeatureSource::setMaxLevel(int value) {
+    options().maxLevel() = value;
+}
+int
+TiledFeatureSource::getMaxLevel() const {
+    return options().maxLevel().value();
 }

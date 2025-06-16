@@ -1,26 +1,11 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-
-#ifndef OSGEARTH_ELEVATION_TERRAIN_LAYER_H
-#define OSGEARTH_ELEVATION_TERRAIN_LAYER_H 1
+#pragma once
 
 #include <osgEarth/TileLayer>
+#include <osgEarth/Callbacks>
 #include <osg/MixinVector>
 
 namespace osgEarth
@@ -35,42 +20,48 @@ namespace osgEarth
         public:
             META_LayerOptions(osgEarth, Options, TileLayer::Options);
             OE_OPTION(std::string, verticalDatum);
-            OE_OPTION(bool, offset, false);
-            OE_OPTION(ElevationNoDataPolicy, noDataPolicy, NODATA_INTERPOLATE);
-            virtual Config getConfig() const;
-        private:
-            void fromConfig( const Config& conf );
+            OE_OPTION(bool, interpretValuesAsOffsets, false);
+            OE_OPTION(std::string, reinterpretAsVerticalDatum);
+            Config getConfig() const override;
+            void fromConfig(const Config& conf);
         };
 
     public:
         META_Layer_Abstract(osgEarth, ElevationLayer, Options, TileLayer);
 
-        //! Layer callbacks
-        class OSGEARTH_EXPORT Callback : public osg::Referenced
-        {
-        public:
-            //! Called when new data is created. This callback fires
-            //! before the data is cached, and does NOT fire if the data
-            //! was read from a cache.
-            //! NOTE: This may be invoked from a worker thread. Use caution.
-            virtual void onCreate(const TileKey&, GeoHeightField&) { }
-        };
+        //! Callback fired when new data is created. This callback fires
+        //! before the data is cached, and does NOT fire if the data
+        //! was read from a cache.
+        //! NOTE: This may be invoked from a worker thread. Use caution.
+        Callback<void(const TileKey&, GeoHeightField&)> onCreate;
 
-        //! Vertical data identifier (options)
+        //! Vertical datum of height data. This is metadata that tells osgEarth the
+        //! vertical datum used to express the height values. This setting does
+        //! not cause any transformation of the data, it only describes the data.
         void setVerticalDatum(const std::string& value);
         const std::string& getVerticalDatum() const;
 
+        //! Re-interpret values as being relative to a particular vertical datum, even if
+        //! this conflicts with the "verticalDatum" property. Setting this will effectively
+        //! override the "verticalDatum" metadata property. This is useful in the DIS/HLA
+        //! simulation world where pretending MSL is HAE is a historically common practice.
+        void setReinterpretAsVerticalDatum(const std::string& value);
+        const std::string& getReinterpretAsVerticalDatum() const;
+
         //! Whether this layer contains offsets instead of absolute elevation heights
-        void setOffset(bool value);
-        bool getOffset() const;
-        bool isOffset() const { return getOffset(); }
+        void setInterpretValuesAsOffsets(bool value);
+        bool getInterpretValuesAsOffsets() const;
 
-        //! Poly for handling "no-data" elevation values
-        void setNoDataPolicy(const ElevationNoDataPolicy& value);
-        const ElevationNoDataPolicy& getNoDataPolicy() const;
+    public: // deprecated
 
-        //! Override from VisibleLayer
-        //virtual void setVisible(bool value);
+        OE_DEPRECATED("use setInterpretValuesAsOffsets() instead")
+        void setOffset(bool value) { setInterpretValuesAsOffsets(value); }
+
+        OE_DEPRECATED("use getInterpretValuesAsOffsets() instead")
+        bool getOffset() const { return getInterpretValuesAsOffsets(); }
+
+        OE_DEPRECATED("use getInterpretValuesAsOffsets() instead")
+        bool isOffset() const { return getInterpretValuesAsOffsets(); }
 
     public: // methods
 
@@ -99,20 +90,14 @@ namespace osgEarth
          */
         Status writeHeightField(const TileKey& key, const osg::HeightField* hf, ProgressCallback* progress) const;
 
-        //! Install a user callback
-        void addCallback(Callback* callback);
-
-        //! Remove a user callback
-        void removeCallback(Callback* callback);
-
     protected: // Layer
 
-        virtual void init() override;
+        void init() override;
 
     protected: // TileLayer
 
         //! Override aspects of the layer Profile as needed
-        virtual void applyProfileOverrides(osg::ref_ptr<const Profile>& inOutProfile) const override;
+        void applyProfileOverrides(osg::ref_ptr<const Profile>& inOutProfile) const override;
 
     protected: // ElevationLayer
 
@@ -133,17 +118,9 @@ namespace osgEarth
         virtual ~ElevationLayer() { }
 
     private:
-        void assembleHeightField(
-            const TileKey& key,
-            osg::ref_ptr<osg::HeightField>& out_hf,
-            ProgressCallback* progress) const;
+        GeoHeightField assembleHeightField(const TileKey& key, ProgressCallback* progress);
 
         void normalizeNoDataValues(osg::HeightField* hf) const;
-
-        void invoke_onCreate(const TileKey&, GeoHeightField&);
-
-        typedef std::vector< osg::ref_ptr<Callback> > Callbacks;
-        Threading::Mutexed<Callbacks> _callbacks;
 
         Gate<TileKey> _sentry;
     };
@@ -186,5 +163,3 @@ namespace osgEarth
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::ElevationLayer::Options);
-
-#endif // OSGEARTH_ELEVATION_TERRAIN_LAYER_H

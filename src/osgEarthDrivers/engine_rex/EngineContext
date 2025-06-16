@@ -1,23 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2014 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
-#ifndef OSGEARTH_DRIVERS_REX_TILE_GROUP_FACTORY
-#define OSGEARTH_DRIVERS_REX_TILE_GROUP_FACTORY 1
+#pragma once
 
 #include "Common"
 #include "GeometryPool"
@@ -31,6 +16,7 @@
 #include <osgEarth/TerrainTileModel>
 #include <osgEarth/Progress>
 #include <osgEarth/TerrainEngineNode>
+#include <osgEarth/Horizon>
 
 #include <osgUtil/CullVisitor>
 
@@ -76,9 +62,7 @@ namespace osgEarth { namespace REX
 
         const TerrainOptionsAPI& options() const { return _options; }
 
-        ProgressCallback* progress() const { return _progress.get(); }
-
-        double getExpirationRange2() const { return _expirationRange2; }
+        ProgressCallback* progress() const { return _progress.get(); }        
 
         ModifyBoundingBoxCallback* getModifyBBoxCallback() const { return _bboxCB.get(); }
 
@@ -104,13 +88,10 @@ namespace osgEarth { namespace REX
         const SelectionInfo&                  _selectionInfo;
         osg::Timer_t                          _tick;
         int                                   _tilesLastCull;
-        osg::ref_ptr<ProgressCallback>        _progress;    
-        double                                _expirationRange2;
+        osg::ref_ptr<ProgressCallback>        _progress;
         osg::ref_ptr<ModifyBoundingBoxCallback> _bboxCB;
         const FrameClock*                     _clock;
         osg::ref_ptr<TextureArena>            _textures;
     };
 
 } } // namespace osgEarth::Drivers::RexTerrainEngine
-
-#endif // OSGEARTH_DRIVERS_REX_TILE_GROUP_FACTORY

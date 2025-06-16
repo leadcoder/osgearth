@@ -1,27 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/BboxDrawable>
-#include <osgEarth/AnnotationUtils>
-
 #include <osg/LineWidth>
 
 using namespace osgEarth;
@@ -29,8 +10,8 @@ using namespace osgEarth;
 
 //------------------------------------------------------------------------
 
-BboxDrawable::BboxDrawable( const osg::BoundingBox& box, const BBoxSymbol &bboxSymbol ) :
-osg::Geometry()
+BboxDrawable::BboxDrawable(const osg::BoundingBox& box, const BBoxSymbol& bboxSymbol) :
+    osg::Geometry()
 {
     setUseVertexBufferObjects(true);
 
@@ -65,8 +46,12 @@ osg::Geometry()
     if ( bboxSymbol.border().isSet() )
     {
         c->push_back( bboxSymbol.border()->color() );
-        if ( bboxSymbol.border()->width().isSet() )
-            getOrCreateStateSet()->setAttribute( new osg::LineWidth( bboxSymbol.border()->width().value() ));
+        auto& widthExpr = bboxSymbol.border()->width();
+        if (widthExpr.isSet()) {
+            Distance width = widthExpr->literal();
+            getOrCreateStateSet()->setAttribute(new osg::LineWidth(width.as(Units::PIXELS)), 1);
+        }
+
         addPrimitiveSet( new osg::DrawArrays(GL_LINE_LOOP, 0, v->getNumElements()) );
     }
 

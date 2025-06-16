@@ -1,26 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "ViewpointsExtension"
 #include <osgEarth/Viewpoint>
 #include <osgEarth/XmlUtils>
 #include <osgEarth/EarthManipulator>
 #include <osgEarth/StringUtils>
+#include <osgEarth/Math>
 #include <osgViewer/View>
 
 using namespace osgEarth;
@@ -46,9 +33,9 @@ namespace
         Viewpoint currentVP = manip->getViewpoint();
         GeoPoint vp0 = currentVP.focalPoint().get();
         GeoPoint vp1 = vp.focalPoint().get();
-        double distance = vp0.distanceTo(vp1);
-        double duration = osg::clampBetween(distance / VP_METERS_PER_SECOND, VP_MIN_DURATION, (double)t);
-        manip->setViewpoint( vp, duration );
+        auto distance = vp0.geodesicDistanceTo(vp1);
+        double duration = clamp(distance.as(Units::METERS) / VP_METERS_PER_SECOND, VP_MIN_DURATION, (double)t);
+        manip->setViewpoint(vp, duration);
     }
 
 

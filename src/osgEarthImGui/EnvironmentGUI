@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -112,7 +98,7 @@ namespace osgEarth
         float _wind_power = 1.0f;
 
     public:
-        EnvironmentGUI() : ImGuiPanel("Environment/Sky")
+        EnvironmentGUI() : ImGuiPanel("Sky")
         {
             DateTime now;
             _hour = now.hours(), _day = now.day(), _month = now.month(), _year = now.year();
@@ -121,10 +107,6 @@ namespace osgEarth
         void load(const Config& conf) override
         {
             conf.get("ShowDetails", _showDetails);
-            conf.get("Hour", _hour);
-            conf.get("Day", _day);
-            conf.get("Month", _month);
-            conf.get("Year", _year);
             conf.get("Exposure", _exposure);
             conf.get("Contrast", _contrast);
             conf.get("Ambient", _ambient);
@@ -135,10 +117,6 @@ namespace osgEarth
         void save(Config& conf) override
         {
             conf.set("ShowDetails", _showDetails);
-            conf.set("Hour", _hour);
-            conf.set("Day", _day);
-            conf.set("Month", _month);
-            conf.set("Year", _year);
             conf.set("Exposure", _exposure);
             conf.set("Contrast", _contrast);
             conf.set("Ambient", _ambient);

@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
+/* osgEarth
 * Copyright 2008-2012 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+* MIT License
 */
 #include "TextureSplattingMaterials"
 #include <osgEarth/URI>
@@ -80,10 +63,9 @@ namespace
         osg::Vec4 temp, temp2;
         float minh = 1.0f, maxh = 0.0f;
 
-        ImageUtils::ImageIterator iter(output.get());
-        iter.forEachPixel([&]()
+        write.forEachPixel([&](auto& iter)
             {
-                readColor(temp, iter.s(), iter.t());
+                readColor(temp, iter);
                 if (height.valid())
                 {
                     // use (u,v) in case textures are different sizes
@@ -98,10 +80,10 @@ namespace
                 minh = osg::minimum(minh, temp.a());
                 maxh = osg::maximum(maxh, temp.a());
 
-                write(temp, iter.s(), iter.t());
+                write(temp, iter);
             });
 
-        //Resize the image to the nearest power of two
+        // Resize the image to the nearest power of two
         if (!ImageUtils::isPowerOfTwo(output.get()))
         {
             unsigned s = osg::Image::computeNearestPowerOfTwo(output->s());
@@ -149,8 +131,7 @@ namespace
         osg::Vec4 aoVal;
         osg::Vec4 packed;
 
-        ImageUtils::ImageIterator iter(output.get());
-        iter.forEachPixel([&]()
+        write.forEachPixel([&](auto& iter)
             {
                 if (normals.valid())
                 {
@@ -195,7 +176,7 @@ namespace
                 }
                 else packed[3] = DEFAULT_AO;
 
-                write(packed, iter.s(), iter.t());
+                write(packed, iter);
             });
 
         //Resize the image to the nearest power of two
@@ -260,8 +241,13 @@ RGBH_Loader::readImageFromSourceData(
         color = colorURI.getImage(options);
         if (color.valid())
         {
-            URI heightURI(basename + "_HGT." + extension);
+            auto getDisplacementFileName = MaterialUtils::getDefaultDisplacementMapNameMangler();
+            URI heightURI(getDisplacementFileName(color_filename));
             osg::ref_ptr<osg::Image> height = heightURI.getImage(options);
+            if (!height.valid())
+            {
+                OE_WARN << LC << "Failed to load \"" << heightURI.full() << "\"" << std::endl;
+            }
             return assemble_RGBH(color, height);
         }
         else

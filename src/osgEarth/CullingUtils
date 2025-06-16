@@ -1,37 +1,20 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/optional>
 #include <osgEarth/SpatialReference>
-#include <osgEarth/Horizon>
 #include <osgEarth/GeoTransform>
+#include <osgEarth/Horizon>
 
-#include <osg/NodeCallback>
 #include <osg/ClusterCullingCallback>
-#include <osg/CoordinateSystemNode>
-#include <osg/MatrixTransform>
 #include <osg/Vec3d>
 #include <osg/Vec3>
-#include <osg/ClipPlane>
 #include <osg/LOD>
+#include <osg/NodeCallback>
 #include <osgUtil/CullVisitor>
 #include <osgUtil/RenderBin>
 
@@ -121,7 +104,7 @@ namespace osgEarth
 
         public: //NodeCallback
 
-            void operator()(osg::Node* node, osg::NodeVisitor* nv);
+            void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
 
         private:
 
@@ -219,26 +202,6 @@ namespace osgEarth
         };
 
 
-
-        /**
-         * Cull callback that sets a clip plane at the visible horizon
-         * of the Ellipsoid.
-         */
-        class OSGEARTH_EXPORT ClipToGeocentricHorizon : public osg::NodeCallback
-        {
-        public:
-            ClipToGeocentricHorizon(
-                const osgEarth::SpatialReference* srs,
-                osg::ClipPlane* clipPlane);
-
-            void operator()(osg::Node* node, osg::NodeVisitor* nv);
-
-        protected:
-            osg::ref_ptr<Horizon>             _horizon;
-            osg::observer_ptr<osg::ClipPlane> _clipPlane;
-        };
-
-
         struct OSGEARTH_EXPORT CullDebugger
         {
             Config dumpRenderBin(osgUtil::RenderBin* bin) const;
@@ -310,32 +273,13 @@ namespace osgEarth
             bool _visible = true;
 
         public:
-            void operator()(osg::Node* node, osg::NodeVisitor* nv) override
-            {
-                if (_visible)
-                {
-                    traverse(node, nv);
-                }
-                else
-                {
-                    osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
-                    osg::ref_ptr<osgUtil::RenderBin> savedBin;
-                    osg::ref_ptr<EmptyRenderBin> emptyStage;
-                    if (cv)
-                    {
-                        savedBin = cv->getCurrentRenderBin();
-                        emptyStage = new EmptyRenderBin(savedBin->getStage());
-                        cv->setCurrentRenderBin(emptyStage.get());
-                    }
+            void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
+        };
 
-                    traverse(node, nv);
-
-                    if (cv)
-                    {
-                        cv->setCurrentRenderBin(savedBin.get());
-                    }
-                }
-            }
+        class OSGEARTH_EXPORT CheckVisibilityCallback : public osg::NodeCallback
+        {
+        public:
+            void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
         };
     }
 }

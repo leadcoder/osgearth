@@ -1,33 +1,19 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include "ExampleResources"
 #include "Shadowing"
 #include "LogarithmicDepthBuffer"
 #include "SimpleOceanLayer"
 #include "Registry"
+#include "MapNode"
 #include "TerrainEngineNode"
+#include "EarthManipulator"
 #include "NodeUtils"
 #include "GLUtils"
 #include "CullingUtils"
+#include "Sky"
 
 #include <osgDB/ReadFile>
 #include <osgGA/StateSetManipulator>
@@ -144,6 +130,28 @@ MapNodeHelper::load(osg::ArgumentParser& args, osgViewer::ViewerBase* viewer) co
     for (auto view : views)
     {
         configureView(view);
+    }
+
+    if (args.read("--headless"))
+    {
+        osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
+        traits->x = 0;
+        traits->y = 0;
+        traits->width = 16;
+        traits->height = 16;
+        traits->windowDecoration = false;
+        traits->pbuffer = true;
+        traits->doubleBuffer = true;
+        traits->sharedContext = nullptr;
+
+        osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext(traits.get());
+        for (auto view : views)
+        {
+            view->getCamera()->setGraphicsContext(gc.get());
+            view->getCamera()->setDrawBuffer(GL_BACK);
+            view->getCamera()->setReadBuffer(GL_BACK);
+            view->getCamera()->setViewport(new osg::Viewport(0, 0, traits->width, traits->height));
+        }
     }
 
     // vsync on/off?

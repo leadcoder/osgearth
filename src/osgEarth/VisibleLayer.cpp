@@ -1,24 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "VisibleLayer"
 #include "VirtualProgram"
-#include "Utils"
 #include "NodeUtils"
 #include "ShaderLoader"
 #include "SimplePager"
@@ -41,6 +26,15 @@ namespace
         void oe_VisibleLayer_initOpacity(inout vec4 vertex)
         {
             oe_layer_opacity = clamp(oe_VisibleLayer_opacityUniform, 0.0, 1.0);
+        }
+    )";
+
+    const char* depthOffsetVS = R"(
+        uniform float oe_VisibleLayer_depthOffset = 0.0;
+        void oe_VisibleLayer_applyDepthOffset(inout vec4 vertex_view)
+        {
+            vec3 vert_dir = normalize(vertex_view.xyz);
+            vertex_view.xyz = vertex_view.xyz - vert_dir * oe_VisibleLayer_depthOffset;
         }
     )";
 
@@ -89,11 +83,12 @@ namespace
 
     // Shader that calculates a modulation color based on the "opacity", i.e. intensity
     const char* opacityModulateFS = R"(
-        const float OE_MODULATION_EXPOSURE = 2.5;
+        //const float OE_MODULATION_EXPOSURE = 3.5;
         in float oe_layer_opacity;
         void oe_VisibleLayer_setOpacity(inout vec4 color)
         {
-            vec3 rgbHi = color.rgb * OE_MODULATION_EXPOSURE;
+            //vec3 rgbHi = 1.0 - exp(color.rgb * -OE_MODULATION_EXPOSURE);
+            vec3 rgbHi = color.rgb; //color.rgb * OE_MODULATION_EXPOSURE;
             color.rgb = clamp(mix(vec3(1), rgbHi, oe_layer_opacity), 0.0, 1.0);
             color.a = 1.0;
             oe_layer_opacity = 1.0;
@@ -127,6 +122,7 @@ VisibleLayer::Options::getConfig() const
     conf.set( "attenuation_range", attenuationRange() );
     conf.set( "blend", "interpolate", _blend, BLEND_INTERPOLATE );
     conf.set( "blend", "modulate", _blend, BLEND_MODULATE );
+    conf.set( "depth_offset", depthOffset() );
     conf.set( "nvgl", useNVGL() );
     return conf;
 }
@@ -142,6 +138,7 @@ VisibleLayer::Options::fromConfig(const Config& conf)
     conf.get( "mask", _mask );
     conf.get( "blend", "interpolate", _blend, BLEND_INTERPOLATE );
     conf.get( "blend", "modulate", _blend, BLEND_MODULATE );
+    conf.get( "depth_offset", depthOffset() );
     conf.get( "nvgl", useNVGL());
 }
 
@@ -182,6 +179,23 @@ VisibleLayer::openImplementation()
     return Status::NoError;
 }
 
+Status
+VisibleLayer::closeImplementation()
+{
+    if (_noDrawCallback.valid())
+    {
+        // remove the no-draw callback
+        auto* node = getNode();
+        if (node)
+        {
+            node->removeCullCallback(_noDrawCallback.get());
+        }
+    }
+
+    _noDrawCallback = nullptr;
+    return Layer::closeImplementation();
+}
+
 void
 VisibleLayer::prepareForRendering(TerrainEngine* engine)
 {
@@ -200,12 +214,6 @@ VisibleLayer::setVisible(bool value)
 {
     if (_canSetVisible)
     {
-        options().visible() = value;
-
-        updateNodeMasks();
-
-        onVisibleChanged.fire(this);
-
         if (_visibleTiedToOpen)
         {
             if (value && !isOpen())
@@ -213,6 +221,13 @@ VisibleLayer::setVisible(bool value)
             else if (!value && isOpen())
                 close();
         }
+        else
+        {
+            options().visible() = value;
+            updateNodeMasks();
+        }
+
+        onVisibleChanged.fire(this);
     }
 }
 
@@ -223,15 +238,17 @@ VisibleLayer::updateNodeMasks()
     osg::Node* node = getNode();
     if (node)
     {
-        if (!_noDrawCallback.valid())
+        if (!_noDrawCallback.valid() || _noDrawCallbackNode != node)
         {
             auto cb = new ToggleVisibleCullCallback();
             node->addCullCallback(cb);
             _noDrawCallback = cb;
+            _noDrawCallbackNode = node;
         }
 
         auto cb = dynamic_cast<ToggleVisibleCullCallback*>(_noDrawCallback.get());
-        cb->setVisible(options().visible().value());
+
+        cb->setVisible(getVisible());
     }
 }
 
@@ -303,6 +320,12 @@ VisibleLayer::initializeUniforms()
 
         vp->setFunction("oe_VisibleLayer_initOpacity", opacityVS, VirtualProgram::LOCATION_VERTEX_MODEL);
 
+
+        _depthOffsetU = new osg::Uniform("oe_VisibleLayer_depthOffset", (float)options().depthOffset().get());
+        stateSet->addUniform(_depthOffsetU.get());
+
+        vp->setFunction("oe_VisibleLayer_applyDepthOffset", depthOffsetVS, VirtualProgram::LOCATION_VERTEX_VIEW, 1.1f);
+
         if (options().blend() == BLEND_MODULATE)
         {
             vp->setFunction("oe_VisibleLayer_setOpacity", 
@@ -371,6 +394,20 @@ float
 VisibleLayer::getOpacity() const
 {
     return options().opacity().get();
+}
+
+void
+VisibleLayer::setDepthOffset(float value)
+{
+    options().depthOffset() = value;
+    initializeUniforms();
+    _depthOffsetU->set(value);
+}
+
+float
+VisibleLayer::getDepthOffset() const
+{
+    return options().depthOffset().get();
 }
 
 void

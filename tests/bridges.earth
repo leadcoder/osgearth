@@ -1,0 +1,354 @@
+<Map name="MapZen Elevation">
+
+    <libraries>osgEarthProcedural</libraries>
+
+    <options>
+        <cache type="rocksdb" path="cache" />
+    </options>
+
+            <XYZFeatures name="data:osm-highway-patches">
+                <url>D:/data/osm-patches/{z}/{x}/{y}.json</url>
+                <min_level>14</min_level>
+                <max_level>14</max_level>
+                <profile>spherical-mercator</profile>
+                <format>json</format>
+            </XYZFeatures>
+
+    <XYZFeatures name="data:osm-highway">
+        <url>https://readymap.org/readymap/mbtiles/osm/{z}/{x}/{-y}.pbf</url>
+        <min_level>14</min_level>
+        <max_level>14</max_level>
+        <profile>spherical-mercator</profile>
+        <format>pbf</format>
+        <fid_attribute>@id</fid_attribute>
+        <filters>
+            <script><![CDATA[
+                "highway" in feature.properties;
+            ]]></script>
+        </filters>
+        <patch>data:osm-highway-patches
+        </patch>
+    </XYZFeatures>
+
+<!--
+
+    <CompositeFeatures name="data:osm-highway">
+        <note>This must come before the layers that use it, for now</note>
+        <layers>
+            <features>data:osm-highway-patches</features>
+            <features>data:osm-highway-original</features>
+        </layers>
+    </CompositeFeatures>
+-->
+
+    <TMSElevation name="Elevation MAK Earth">
+        <url>http://vr-theworld.com/vr-theworld/tiles/1.0.0/149/</url>
+    </TMSElevation>
+
+    <FlattenedElevation name="Road flattening" min_level="14" max_data_level="14" open="true">
+        <features>data:osm-highway</features>
+        <filters>
+            <script><![CDATA[
+                'highway' in feature.properties && !('bridge' in feature.properties);
+            ]]></script>
+        </filters>
+        <line_width>12.0</line_width>
+        <buffer_width>24.0</buffer_width>
+    </FlattenedElevation>
+
+    <TMSImage name="Worldwide High Resolution Imagery">
+        <url>http://vr-theworld.com/vr-theworld/tiles/1.0.0/142/</url>
+    </TMSImage>
+
+    <gdaldem name="Hill Shade" blend="modulate" opacity="0.25" caching="false">
+        <processing>hillshade</processing>
+    </gdaldem>
+
+    <RoadSurface name="Roads" min_level="14" max_data_level="19" tile_size="512" open="true" pickable="true">
+        <features>data:osm-highway</features>
+        <filters>
+            <script><![CDATA[
+                ('highway' in feature.properties) &&
+                !('bridge' in feature.properties) &&
+                feature.properties.highway !== 'footway' &&
+                feature.properties.highway !== 'path';
+            ]]></script>
+        </filters>
+        <styles>
+            <style type="text/css"><![CDATA[
+                common {
+                    stroke: #ffffff;
+                    stroke-tessellation-size: 10m;
+                    stroke-linecap: flat;
+                    stroke-linejoin: round;
+                    stroke-width: num_lanes() * 3.5;
+                    stroke-width-units: meters;
+                }
+                one-lane : common {
+                    select: num_lanes() === 1;
+                    stroke-image: "https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_1_lane.jpg";
+                }
+                two-lane : common {
+                    select: num_lanes() === 2;
+                    stroke-image: "https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_2_lane_1_way.jpg";
+                }
+                four-lane : common {
+                    select: num_lanes() === 4;
+                    stroke-image: "https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_4_lane_2_way.jpg";
+                }
+              ]]>
+            </style>
+
+            <script><![CDATA[
+                     
+                function one_of(value, options) {
+                    return options.indexOf(value) >= 0;
+                }
+
+                function not_a_bridge() {
+                    return !('bridge' in feature.properties);
+                }
+
+                function is_very_small_road() {
+                    return not_a_bridge() && feature.properties.highway === 'service';
+                }
+
+                function is_minor_road() {
+                    return not_a_bridge() && one_of(feature.properties.highway, ['residential', 'unclassified' ]);
+                }
+
+                function is_major_road() {
+                    return not_a_bridge() && one_of(feature.properties.highway, ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+                }
+
+                function is_ramp() {
+                    return not_a_bridge() && one_of(feature.properties.highway, ['motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link']);
+                }
+
+                function is_railway() {
+                    return 'railway' in feature.properties;
+                }
+
+                function num_lanes() {
+                    var lanes = 0;
+                    if ('lanes' in feature.properties) {
+                        lanes = parseInt(feature.properties.lanes);
+                    }
+                    else if ('width' in feature.properties) {
+                        lanes = Math.ceil(parseFloat(feature.properties.width) / 3.5);
+                    }
+                    else if (is_ramp()) {
+                        if (feature.properties.oneway === 'yes')
+                            lanes = 1;
+                        else
+                            lanes = 2;
+                    }
+                    else if (is_major_road()) {                    
+                        lanes = 4;
+                    }
+                    else if (is_minor_road()) {
+                        lanes = 2;
+                    }
+                    else if (is_very_small_road()) {
+                        lanes = 1;
+                    }
+
+                    if (lanes === 3) lanes = 2;
+                    if (lanes > 4) lanes = 4;
+
+                    return lanes;
+                }
+                ]]>
+            </script>
+        </styles>
+    </RoadSurface>
+
+
+    <Bridges name="Bridges" open="true" pickable="true" nvgl="true">
+
+        <features>data:osm-highway</features>
+
+        <constraint_min_level>99</constraint_min_level>
+
+        <filters>
+            <script><![CDATA[
+                feature.properties.bridge === 'yes' &&
+                feature.properties.layer > 0 &&
+                feature.properties.highway !== 'footway' &&
+                feature.properties.highway !== 'path';
+            ]]></script>
+        </filters>
+
+        <styles>
+            <library name="assets">
+                <skin name="deck-default">
+                    <url>../data/road.png</url>
+                    <image_width>4</image_width>
+                    <image_height>1</image_height>
+                </skin>
+                <skin name="girder-default">
+                    <url>../data/resources/textures_us/barriers/stonewall.jpg</url>
+                    <tiled>true</tiled>
+                    <image_width>2</image_width>
+                    <image_height>2</image_height>
+                </skin>
+                <skin name="railing-default">
+                    <url>../data/resources/textures_us/barriers/fence2.png</url>
+                    <image_width>4</image_width>
+                    <image_height>1</image_height>
+                </skin>
+                <skin name="road-one-lane">
+                    <url>https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_1_lane.jpg</url>
+                </skin>
+                <skin name="road-two-lane">
+                    <url>https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_2_lane_1_way.jpg</url>
+                </skin>
+                <skin name="road-four-lane">
+                    <url>https://readymap.org/readymap/filemanager/download/public/textures/texturelib.com/road/road_4_lane_2_way.jpg</url>
+                </skin>
+            </library>
+
+            <style type="text/css"><![CDATA[
+                common {
+                    library: assets;
+                    bridge-deck-width: num_lanes() * 3.5;
+                    bridge-deck-skin: "deck-default";
+                    bridge-girder-skin: "girder-default";
+                    bridge-railing-skin: "railing-default";
+                    bridge-girder-height: 0.75m;
+                    bridge-railing-height: 0.0m;
+                    bridge-span-lift: 0.5m;
+                }
+                one-lane : common {
+                    select: num_lanes() === 1;
+                    bridge-deck-skin: "road-one-lane";
+                }
+                two-lane : common {
+                    select: num_lanes() === 2;
+                    bridge-deck-skin: "road-two-lane";
+                }
+                four-lane : common {
+                    select: num_lanes() === 4;
+                    bridge-deck-skin: "road-four-lane";
+                }
+            ]]></style>
+
+            <script><![CDATA[
+                     
+                function one_of(value, options) {
+                    return options.indexOf(value) >= 0;
+                }
+
+                function is_very_small_road() {
+                    return feature.properties.highway === 'service';
+                }
+
+                function is_minor_road() {
+                    return one_of(feature.properties.highway, ['residential', 'unclassified' ]);
+                }
+
+                function is_major_road() {
+                    return one_of(feature.properties.highway, ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+                }
+
+                function is_ramp() {
+                    return one_of(feature.properties.highway, ['motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link']);
+                }
+
+                function is_railway() {
+                    return 'railway' in feature.properties;
+                }
+
+                function num_lanes() {
+                    var lanes = 0;
+                    if ('lanes' in feature.properties) {
+                        lanes = parseInt(feature.properties.lanes);
+                    }
+                    else if ('width' in feature.properties) {
+                        lanes = Math.ceil(parseFloat(feature.properties.width) / 3.5);
+                    }
+                    else if (is_ramp()) {
+                        if (feature.properties.oneway === 'yes')
+                            lanes = 1;
+                        else
+                            lanes = 2;
+                    }
+                    else if (is_major_road()) {                    
+                        lanes = 4;
+                    }
+                    else if (is_minor_road()) {
+                        lanes = 2;
+                    }
+                    else if (is_very_small_road()) {
+                        lanes = 1;
+                    }
+
+                    if (lanes === 3) lanes = 2;
+                    if (lanes > 4) lanes = 4;
+                    
+                    return lanes;
+                }
+                ]]>
+            </script>
+        </styles>
+    </Bridges>
+
+    <TiledFeatureModel name="OSM PATCH Features" pickable="true" nvgl="true" open="false">
+        <min_level>14</min_level>
+        <max_level>14</max_level>
+        <features>data:osm-highway-patches</features>
+        <styles>
+            <style type="text/css"><![CDATA[
+                default {
+                    stroke: #00ffff;
+                    stroke-width: 3px;
+                    point-fill: #0000ff;
+                    point-size: 8px;
+                    point-smooth: true;
+                    altitude-clamping: terrain;
+                    render-depth-offset: 25m;
+                }
+                ]]>
+            </style>
+        </styles>
+    </TiledFeatureModel>
+
+    <Viewpoints home="0" time="0">
+        <viewpoint name="American Legion">
+            <heading>6.76504</heading>
+            <pitch>-89.8511</pitch>
+            <range>359.171m</range>
+            <long>-77.17828253983667</long>
+            <lat>38.97422486805582</lat>
+            <height>12.2307749632746</height>
+            <srs>+proj=longlat +datum=WGS84 +no_defs</srs>
+        </viewpoint>
+        <viewpoint name="Link double-draw">
+            <heading>-113.683</heading>
+            <pitch>-87.5149</pitch>
+            <range>437.781m</range>
+            <long>7.373514082907831</long>
+            <lat>46.23816933529304</lat>
+            <height>494.6678204266354</height>
+            <srs>+proj=longlat +datum=WGS84 +no_defs</srs>
+        </viewpoint>
+        <viewpoint name="Diving bridge ERROR">
+            <heading>-11.8492</heading>
+            <pitch>-52.9157</pitch>
+            <range>147.99m</range>
+            <long>-77.21152793034737</long>
+            <lat>38.93152015184449</lat>
+            <height>90.01541636604816</height>
+            <srs>+proj=longlat +datum=WGS84 +no_defs</srs>
+        </viewpoint>
+        <viewpoint name="Tile boundary ERROR">
+            <heading>-66.1348</heading>
+            <pitch>-25.5125</pitch>
+            <range>325.792m</range>
+            <long>7.313622799552041</long>
+            <lat>46.21036667739475</lat>
+            <height>483.4801337011158</height>
+            <srs>+proj=longlat +datum=WGS84 +no_defs</srs>
+        </viewpoint>
+    </Viewpoints>
+</Map>

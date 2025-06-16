@@ -1,21 +1,7 @@
 
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/ShaderGenerator>
@@ -38,7 +24,6 @@
 #include <osg/TexGen>
 #include <osg/TexMat>
 #include <osg/ClipNode>
-#include <osg/Point>
 #include <osg/PointSprite>
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
@@ -316,7 +301,7 @@ namespace
 //...........................................................................
 
 ShaderGenerator::GenBuffers::GenBuffers() :
-_stateSet(0L)
+    _stateSet(0L)
 {
     //nop
 }
@@ -329,14 +314,13 @@ ShaderGenerator::ShaderGenerator()
     setTraversalMode( TRAVERSE_ALL_CHILDREN );
     setNodeMaskOverride( ~0 );
     _state = new StateEx();
-    _active = true;
-    _duplicateSharedSubgraphs = false;
 }
 
 ShaderGenerator::ShaderGenerator(const ShaderGenerator& rhs, const osg::CopyOp& copy) :
-osg::NodeVisitor         (rhs, copy),
-_active                  (rhs._active),
-_duplicateSharedSubgraphs(rhs._duplicateSharedSubgraphs)
+    osg::NodeVisitor(rhs, copy),
+    _active(rhs._active),
+    _duplicateSharedSubgraphs(rhs._duplicateSharedSubgraphs),
+    _removeUnsupportedFFPAttributes(rhs._removeUnsupportedFFPAttributes)
 {
     _state = new StateEx();
 }
@@ -863,12 +847,15 @@ ShaderGenerator::processGeometry(
             }
 
 #ifndef OSG_GL_FIXED_FUNCTION_AVAILABLE
-            if (texgen)
-                newStateSet->removeTextureAttribute(unit, texgen);
-            if (texenv)
-                newStateSet->removeTextureAttribute(unit, texenv);
-            if (texmat)
-                newStateSet->removeTextureAttribute(unit, texmat);
+            if (_removeUnsupportedFFPAttributes)
+            {
+                if (texgen)
+                    newStateSet->removeTextureAttribute(unit, texgen);
+                if (texenv)
+                    newStateSet->removeTextureAttribute(unit, texenv);
+                if (texmat)
+                    newStateSet->removeTextureAttribute(unit, texmat);
+            }
 #endif
         }
     }

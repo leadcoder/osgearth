@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #ifndef OSGEARTH_HTTP_CLIENT_H
 #define OSGEARTH_HTTP_CLIENT_H 1
@@ -73,10 +59,11 @@ namespace osgEarth { namespace Util
         //! Collection of headers in this request
         Headers& getHeaders();
 
-        /**
-         * Sets the last modified date of any locally cached data for this request.  This will
-         * automatically add a If-Modified-Since header to the request
-         */
+        //! Request headers in a config structure
+        Config getHeadersAsConfig() const;
+
+        //! Sets the last modified date of any locally cached data for this request.  This will
+        //! automatically add a If-Modified-Since header to the request
         void setLastModified( const DateTime &lastModified );
 
         /** Gets a copy of the complete URL (base URL + query string) for this request */
@@ -180,6 +167,8 @@ namespace osgEarth { namespace Util
 
         Parts& getParts() { return _parts; }
 
+        Config getHeadersAsConfig() const;
+
     private:
         Parts       _parts;
         long        _response_code;
@@ -190,7 +179,6 @@ namespace osgEarth { namespace Util
         std::string _message;
         bool        _fromCache;
 
-        Config getHeadersAsConfig() const;
         void setHeadersFromConfig(const Config& conf);
 
         friend class HTTPClient;
@@ -419,13 +407,13 @@ namespace osgEarth { namespace Util
         bool doDownload(const std::string& url, const std::string& filename);
 
     private:
-        void*       _curl_handle;
-        std::string _previousPassword;
-        long        _previousHttpAuthentication;
-        bool        _initialized;
-        long        _simResponseCode;
+        bool _initialized = false;
+        void* _curl_handle = nullptr;
+        long _simResponseCode = -1L;
+        long _previousHttpAuthentication = 0L;
 
         osg::ref_ptr<Implementation> _impl;
+        std::string _previousPassword;
 
         void initialize() const;
         void initializeImpl();

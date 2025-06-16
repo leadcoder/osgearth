@@ -1,24 +1,9 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/CachePolicy>
-
-#include <limits.h> 
+#include <climits>
 
 using namespace osgEarth;
 
@@ -32,33 +17,33 @@ CachePolicy CachePolicy::CACHE_ONLY( CachePolicy::USAGE_CACHE_ONLY );
 //------------------------------------------------------------------------
 
 CachePolicy::CachePolicy() :
-_usage  ( USAGE_READ_WRITE ),
-_maxAge ( INT_MAX ),
-_minTime( 0 )
+    _usage(USAGE_READ_WRITE),
+    _maxAge(INT_MAX),
+    _minTime(0)
 {
     //nop
 }
 
-CachePolicy::CachePolicy( const Usage& usage ) :
-_usage  ( usage ),
-_maxAge ( INT_MAX ),
-_minTime( 0 )
+CachePolicy::CachePolicy(const Usage& usage) :
+    _usage(usage),
+    _maxAge(INT_MAX),
+    _minTime(0)
 {
     _usage = usage; // explicity set the optional<>
 }
 
-CachePolicy::CachePolicy( const Config& conf ) :
-_usage  ( USAGE_READ_WRITE ),
-_maxAge ( INT_MAX ),
-_minTime( 0 )
+CachePolicy::CachePolicy(const Config& conf) :
+    _usage(USAGE_READ_WRITE),
+    _maxAge(INT_MAX),
+    _minTime(0)
 {
-    fromConfig( conf );
+    fromConfig(conf);
 }
 
 CachePolicy::CachePolicy(const CachePolicy& rhs) :
-_usage  ( rhs._usage ),
-_maxAge ( rhs._maxAge ),
-_minTime( rhs._minTime )
+    _usage(rhs._usage),
+    _maxAge(rhs._maxAge),
+    _minTime(rhs._minTime)
 {
     //nop
 }

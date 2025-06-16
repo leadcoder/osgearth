@@ -1,29 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/XYZFeatureSource>
 #include <osgEarth/OgrUtils>
-#include <osgEarth/GeometryUtils>
 #include <osgEarth/FeatureCursor>
 #include <osgEarth/Filter>
 #include <osgEarth/MVT>
-#include <osgEarth/Registry>
 #include <osgEarth/Metrics>
+#include <osgDB/FileUtils>
 
 #define LC "[XYZFeatureSource] " << getName() << " : "
 
@@ -36,11 +21,9 @@ using namespace osgEarth;
 Config
 XYZFeatureSource::Options::getConfig() const
 {
-    Config conf = FeatureSource::Options::getConfig();
+    Config conf = super::Options::getConfig();
     conf.set("url", _url);
     conf.set("format", _format);
-    conf.set("min_level", _minLevel);
-    conf.set("max_level", _maxLevel);
     conf.set("esri_geodetic", _esriGeodetic);
     conf.set("auto_fallback", _autoFallback);
     return conf;
@@ -51,8 +34,6 @@ XYZFeatureSource::Options::fromConfig(const Config& conf)
 {
     conf.get("url", _url);
     conf.get("format", _format);
-    conf.get("min_level", _minLevel);
-    conf.get("max_level", _maxLevel);
     conf.get("esri_geodetic", _esriGeodetic);
     conf.get("auto_fallback", _autoFallback);
 }
@@ -63,38 +44,50 @@ REGISTER_OSGEARTH_LAYER(xyzfeatures, XYZFeatureSource);
 
 OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, URI, URL, url);
 OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, std::string, Format, format);
-OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, int, MinLevel, minLevel);
-OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, int, MaxLevel, maxLevel);
 OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, bool, EsriGeodetic, esriGeodetic);
 OE_LAYER_PROPERTY_IMPL(XYZFeatureSource, bool, AutoFallbackToMaxLevel, autoFallback);
 
 Status
 XYZFeatureSource::openImplementation()
 {
-    Status parent = FeatureSource::openImplementation();
-    if (parent.isError())
-        return parent;
-
-    FeatureProfile* fp = 0L;
-
-    // Try to get the results from the settings instead
-    if (!options().profile().isSet())
-    {
-        return Status(Status::ConfigurationError, "XYZ driver requires an explicit profile");
-    }
-
-    if (!options().minLevel().isSet() || !options().maxLevel().isSet())
-    {
-        return Status(Status::ConfigurationError, "XYZ driver requires a min and max level");
-    }
-
     if (!options().format().isSet())
     {
         return Status(Status::ConfigurationError, "XYZ driver requires a format (pbf, json, gml)");
     }
 
-    _template = options().url()->full();
+    // if the user didn't expressly set a feature profile, create one from the options
+    if (getFeatureProfile() == nullptr)
+    {
+        FeatureProfile* fp = nullptr;
 
+        // Try to get the results from the settings instead
+        if (!options().profile().isSet())
+        {
+            return Status(Status::ConfigurationError, "XYZ driver requires an explicit profile");
+        }
+
+        if (!options().minLevel().isSet() || !options().maxLevel().isSet())
+        {
+            return Status(Status::ConfigurationError, "XYZ driver requires a min and max level");
+        }
+
+        osg::ref_ptr<const Profile> profile = Profile::create(options().profile().get());
+
+        fp = new FeatureProfile(profile->getExtent());
+        fp->setFirstLevel(options().minLevel().get());
+        fp->setMaxLevel(options().maxLevel().get());
+        fp->setTilingProfile(profile.get());
+
+        if (options().geoInterp().isSet())
+        {
+            fp->geoInterp() = options().geoInterp().get();
+        }
+
+        setFeatureProfile(fp);
+    }
+
+    // set up the URL template
+    _template = options().url()->full();
     _rotateStart = _template.find('[');
     _rotateEnd = _template.find(']');
     if (_rotateStart != std::string::npos && _rotateEnd != std::string::npos && _rotateEnd - _rotateStart > 1)
@@ -103,26 +96,13 @@ XYZFeatureSource::openImplementation()
         _rotateChoices = _template.substr(_rotateStart + 1, _rotateEnd - _rotateStart - 1);
     }
 
-
-    osg::ref_ptr<const Profile> profile = Profile::create(options().profile().get());
-    fp = new FeatureProfile(profile->getExtent());
-    fp->setFirstLevel(options().minLevel().get());
-    fp->setMaxLevel(options().maxLevel().get());
-    fp->setTilingProfile(profile.get());
-    if (options().geoInterp().isSet())
-    {
-        fp->geoInterp() = options().geoInterp().get();
-    }
-
-    setFeatureProfile(fp);
-
-    return Status::NoError;
+    return super::openImplementation();
 }
 
 void
 XYZFeatureSource::init()
 {
-    FeatureSource::init();
+    super::init();
 
     _rotateStart = 0.0;
     _rotateEnd = 0.0;
@@ -138,24 +118,25 @@ XYZFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
     if (!query.tileKey().isSet())
         return nullptr;
 
+    // Check the parent first
     FeatureCursor* result = nullptr;
 
     URI uri = createURL(query);
     if (uri.empty())
         return nullptr;
 
-    OE_DEVEL << LC << uri.full() << std::endl;
+    //OE_DEVEL << LC << uri.full() << std::endl;
 
     // read the data:
     ReadResult r = uri.readString(getReadOptions(), progress);
 
-    const std::string& buffer = r.getString();
+    const std::string& data = r.getString();
     const Config&      meta = r.metadata();
 
     bool dataOK = false;
 
     FeatureList features;
-    if (!buffer.empty())
+    if (!data.empty())
     {
         // Get the mime-type from the metadata record if possible
         std::string mimeType = r.metadata().value(IOMetadata::CONTENT_TYPE);
@@ -169,35 +150,13 @@ XYZFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
             else if (options().format().value().compare("pbf") == 0)
                 mimeType = "application/x-protobuf";
         }
-        dataOK = getFeatures(buffer, *query.tileKey(), mimeType, features);
+        dataOK = getFeatures(data, *query.tileKey(), mimeType, features);
     }
 
     if (dataOK)
     {
-        OE_DEVEL << LC << "Read " << features.size() << " features" << std::endl;
+        OE_DEVEL << LC << "Tile " << query.tileKey()->str() << " read " << features.size() << " features" << std::endl;
     }
-
-#if 0
-    //If we have any filters, process them here before the cursor is created
-    if (!getFilters().empty() && !features.empty())
-    {
-        FilterContext cx;
-        cx.setProfile(getFeatureProfile());
-        cx.extent() = query.tileKey()->getExtent();
-        cx = getFilters().push(features, cx);
-    }
-
-    // If we have any features and we have an fid attribute, override the fid of the features
-    if (options().fidAttribute().isSet())
-    {
-        for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
-        {
-            std::string attr = itr->get()->getString(options().fidAttribute().get());
-            FeatureID fid = as<FeatureID>(attr, 0);
-            itr->get()->setFID(fid);
-        }
-    }
-#endif
 
     result = dataOK ? new FeatureListCursor(std::move(features)) : nullptr;
 
@@ -205,13 +164,13 @@ XYZFeatureSource::createFeatureCursorImplementation(const Query& query, Progress
 }
 
 bool
-XYZFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, const std::string& mimeType, FeatureList& features) const
+XYZFeatureSource::getFeatures(const std::string& data, const TileKey& key, const std::string& mimeType, FeatureList& features) const
 {
     if (mimeType == "application/x-protobuf" || mimeType == "binary/octet-stream" || mimeType == "application/octet-stream")
     {
 #ifdef OSGEARTH_HAVE_MVT
-        std::stringstream in(buffer);
-        return MVT::readTile(in, key, features);
+        std::stringstream in(data);
+        return MVT::readTile(in, key, features, options().layers());
 #else
         if (getStatus().isOK())
         {
@@ -223,10 +182,13 @@ XYZFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, con
     }
     else
     {
+        bool json = isJSON(mimeType);
+        bool gml = isGML(mimeType);
+
         // find the right driver for the given mime type
         OGRSFDriverH ogrDriver =
-            isJSON(mimeType) ? OGRGetDriverByName("GeoJSON") :
-            isGML(mimeType) ? OGRGetDriverByName("GML") :
+            json ? OGRGetDriverByName("GeoJSON") :
+            gml ? OGRGetDriverByName("GML") :
             0L;
 
         // fail if we can't find an appropriate OGR driver:
@@ -237,7 +199,7 @@ XYZFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, con
             return false;
         }
 
-        OGRDataSourceH ds = OGROpen(buffer.c_str(), FALSE, &ogrDriver);
+        OGRDataSourceH ds = OGROpen(data.c_str(), FALSE, &ogrDriver);
 
         if (!ds)
         {
@@ -249,7 +211,23 @@ XYZFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, con
         OGRLayerH layer = OGR_DS_GetLayer(ds, 0);
         if (layer)
         {
-            const SpatialReference* srs = getFeatureProfile()->getSRS();
+            bool keepNullValues = true;
+
+            OgrUtils::OGRFeatureFactory factory;
+            factory.srs = getFeatureProfile()->getSRS();
+            factory.interp = getFeatureProfile()->geoInterp();
+            factory.rewindPolygons = _options->rewindPolygons().defaultValue();
+
+            if (json)
+            {
+                // GeoJSON is always WGS84 according to spec
+                // https://datatracker.ietf.org/doc/html/rfc7946
+                factory.srs = osgEarth::SpatialReference::create("wgs84");
+
+                // for GeoJSON we will discard null value properties since
+                // the data doesn't have a schema
+                factory.keepNullValues = false;
+            }
 
             OGR_L_ResetReading(layer);
             OGRFeatureH feat_handle;
@@ -257,9 +235,15 @@ XYZFeatureSource::getFeatures(const std::string& buffer, const TileKey& key, con
             {
                 if (feat_handle)
                 {
-                    osg::ref_ptr<Feature> f = OgrUtils::createFeature(feat_handle, getFeatureProfile(), *_options->rewindPolygons());
-                    if (f.valid() && !isBlacklisted(f->getFID()))
+                    osg::ref_ptr<Feature> f = factory.createFeature(feat_handle);
+
+                    if (f.valid())
                     {
+                        if (factory.srs != getFeatureProfile()->getSRS())
+                        {
+                            f->transform(getFeatureProfile()->getSRS());
+                        }
+
                         features.push_back(f.release());
                     }
                     OGR_F_Destroy(feat_handle);
@@ -381,4 +365,45 @@ XYZFeatureSource::createURL(const Query& query) const
         return uri;
     }
     return URI();
+}
+
+bool
+XYZFeatureSource::isWritable() const
+{
+    return options().url().isSet() &&
+        (options().url()->isRemote() == false);
+}
+
+Status
+XYZFeatureSource::insert(const TileKey& key, const FeatureList& features, bool overwrite)
+{
+    OE_SOFT_ASSERT_AND_RETURN(key.valid(), Status::AssertionFailure);
+    OE_SOFT_ASSERT_AND_RETURN(key.getLOD() >= getMinLevel(), Status::ConfigurationError);
+    OE_SOFT_ASSERT_AND_RETURN(key.getLOD() <= getMaxLevel(), Status::ConfigurationError);
+    OE_SOFT_ASSERT_AND_RETURN(ci_equals(options().format().value(), "json"), Status::ConfigurationError);
+
+    auto url = createURL(Query(key));
+
+    if (isJSON(options().format().value()))
+    {
+        if (overwrite == false && osgDB::fileExists(url.full()))
+        {
+            return Status(Status::ConfigurationError, "Tile already exists and overwrite disabled");
+        }
+
+        if (osgDB::makeDirectoryForFile(url.full()))
+        {
+            auto geojson = Feature::featuresToGeoJSON(features);
+            std::ofstream out(url.full().c_str());
+            out.write(geojson.c_str(), geojson.length());
+            out.close();
+            return Status::NoError;
+        }
+        else
+        {
+            return Status(Status::ResourceUnavailable, "Failed to create directory for file");
+        }
+    }
+
+    return Status(Status::ConfigurationError, "Bad JSON");
 }

@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarthImGui/ImGuiApp>
 
@@ -1240,7 +1223,8 @@ protected:
         {
             osg::ref_ptr< Observer > observer = itr->get();
             ImGui::PushID(observer.get());
-            ImGui::Text(observer->getName().c_str()); ImGui::SameLine();
+            ImGui::Text("%s", observer->getName().c_str());
+            ImGui::SameLine();
             if (ImGui::Button("Delete"))
             {
                 observers.erase(itr);
@@ -1301,9 +1285,6 @@ main(int argc, char** argv)
     // install our default manipulator (do this before calling load)
     EarthManipulator* manip = new EarthManipulator(arguments);
     viewer.setCameraManipulator(manip);
-
-    // Setup the viewer for imgui
-    viewer.setRealizeOperation(new ImGuiAppEngine::RealizeOperation);
 
     root = new osg::Group;
 

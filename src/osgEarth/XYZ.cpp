@@ -1,27 +1,13 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "XYZ"
 #include <osgEarth/Registry>
-#include <osgEarth/FileUtils>
-#include <osgEarth/XmlUtils>
 #include <osgEarth/ImageToHeightFieldConverter>
-#include <osgDB/FileUtils>
+#include "MetaTile"
+
+#include <osgDB/WriteFile>
 
 using namespace osgEarth;
 using namespace osgEarth::XYZ;
@@ -113,74 +99,54 @@ XYZ::Driver::read(const URI& uri,
 //........................................................................
 
 Config
-XYZImageLayerOptions::getConfig() const
+XYZImageLayer::Options::getConfig() const
 {
-    Config conf = ImageLayer::Options::getConfig();
+    Config conf = super::getConfig();
     conf.set("url", _url);
     conf.set("format", _format);
     conf.set("invert_y", _invertY);
+    conf.set("min_level", minLevel());
+    conf.set("max_level", maxLevel());
     return conf;
 }
 
 void
-XYZImageLayerOptions::fromConfig(const Config& conf)
+XYZImageLayer::Options::fromConfig(const Config& conf)
 {
-    invertY().setDefault(false);
-
     conf.get("url", _url);
     conf.get("format", _format);
     conf.get("invert_y", _invertY);
-}
-
-Config
-XYZImageLayerOptions::getMetadata()
-{
-    return Config::readJSON( R"(
-        { "name" : "XYZ Image Tile Service",
-            "properties": [
-            { "name": "url",      "description": "Location of the TMS repository", "type": "string", "default": "" },
-            { "name": "invert_y", "description": "Set to true invert the Y index", "type": "bool", "default": "false" },
-            { "name": "format",   "description": "Image format to assume", "type": "string", "default": "" }
-            ]
-        }
-    )" );
+    conf.get("min_level", minLevel());
+    conf.get("max_level", maxLevel());
 }
 
 //........................................................................
 
 Config
-XYZElevationLayerOptions::getConfig() const
+XYZElevationLayer::Options::getConfig() const
 {
-    Config conf = ElevationLayer::Options::getConfig();
+    Config conf = super::getConfig();
     conf.set("url", _url);
     conf.set("format", _format);
     conf.set("invert_y", _invertY);
+    conf.set("min_level", minLevel());
+    conf.set("max_level", maxLevel());
     conf.set("elevation_encoding", _elevationEncoding);
+    conf.set("stitch_edges", stitchEdges());
     return conf;
 }
 
 void
-XYZElevationLayerOptions::fromConfig(const Config& conf)
+XYZElevationLayer::Options::fromConfig(const Config& conf)
 {
     conf.get("url", _url);
     conf.get("format", _format);
     conf.get("invert_y", _invertY);
+    conf.get("min_level", minLevel());
+    conf.get("max_level", maxLevel());
     conf.get("elevation_encoding", _elevationEncoding);
-}
-
-Config
-XYZElevationLayerOptions::getMetadata()
-{
-    return Config::readJSON( R"(
-        { "name" : "XYZ Elevation Tile Service",
-            "properties": [
-            { "name": "url",      "description": "Location of the TMS repository", "type": "string", "default": "" },
-            { "name": "invert_y", "description": "Set to true invert the Y index", "type": "bool", "default": "false" },
-            { "name": "format",   "description": "Image format to assume", "type": "string", "default": "" },
-            { "name": "elevation_encoding", "description": "How elevation is encoded", "type": "string", "default": "" }
-            ]
-        }
-    )" );
+    conf.get("interpretation", elevationEncoding()); // compat with QGIS
+    conf.get("stitch_edges", stitchEdges());
 }
 
 //........................................................................
@@ -217,6 +183,7 @@ XYZImageLayer::openImplementation()
         return parent;
 
     DataExtentList dataExtents;
+
     Status status = _driver.open(
         options().url().get(),
         options().format().get(),
@@ -230,6 +197,15 @@ XYZImageLayer::openImplementation()
     {
         OE_INFO << LC << "No profile; assuming spherical-mercator" << std::endl;
         setProfile(Profile::create("spherical-mercator"));
+    }
+
+    if (dataExtents.empty())
+    {
+        DataExtent e(getProfile()->getExtent());
+        // these copy the optional, retaining the set or unset state:
+        e.minLevel() = options().minLevel();
+        e.maxLevel() = options().maxLevel();
+        dataExtents.emplace_back(e);
     }
 
     setDataExtents(dataExtents);
@@ -261,6 +237,8 @@ OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, URI, URL, url);
 OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, bool, InvertY, invertY);
 OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, std::string, Format, format);
 OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, std::string, ElevationEncoding, elevationEncoding);
+OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, bool, StitchEdges, stitchEdges);
+OE_LAYER_PROPERTY_IMPL(XYZElevationLayer, RasterInterpolation, Interpolation, interpolation);
 
 void
 XYZElevationLayer::init()
@@ -299,7 +277,17 @@ XYZElevationLayer::openImplementation()
     if (status.isError())
         return status;
 
-    setProfile(_imageLayer->getProfile());            
+    setProfile(_imageLayer->getProfile());
+
+    if (!options().maxLevel().isSet())
+    {
+        OE_WARN << LC << "Warning, max_level not set on this layer, so it will default to "
+            << options().maxLevel().value() << ". This may lead to poor performance or missing data." << std::endl;
+    }
+
+    DataExtentList de;
+    _imageLayer->getDataExtents(de);
+    setDataExtents(de);
 
     return Status::NoError;
 }
@@ -307,44 +295,121 @@ XYZElevationLayer::openImplementation()
 GeoHeightField
 XYZElevationLayer::createHeightFieldImplementation(const TileKey& key, ProgressCallback* progress) const
 {
-    // Make an image, then convert it to a heightfield
-    GeoImage geoImage = _imageLayer->createImageImplementation(key, progress);
-    if (geoImage.valid())
+    if (!_imageLayer->mayHaveData(key))
     {
-        const osg::Image* image = geoImage.getImage();
+        return GeoHeightField::INVALID;
+    }
 
-        if (options().elevationEncoding() == "mapbox")
+    std::function<float(const osg::Vec4f&)> decode;
+    
+    if (options().elevationEncoding() == "mapbox")
+    {
+        decode = [](const osg::Vec4f& p) -> float
+            {
+                return -10000.0f + ((p.r() * 255.0f * 256.0f * 256.0f + p.g() * 255.0f * 256.0f + p.b() * 255.0f) * 0.1f);
+            };
+    }
+    else if (options().elevationEncoding() == "terrarium")
+    {
+        decode = [](const osg::Vec4f& p) -> float
+            {
+                return (p.r() * 255.0f * 256.0f + p.g() * 255.0f + p.b() * 255.0f / 256.0f) - 32768.0f;
+            };
+    }
+    else
+    {
+        decode = [](const osg::Vec4f& p) -> float
+            {
+                return p.r();
+            };
+    }
+
+    if (options().stitchEdges() == true)
+    {
+        MetaTile<GeoImage> metaImage;
+        metaImage.setCreateTileFunction([this](const TileKey& key, ProgressCallback* progress)
+            {
+                Util::LRUCache<TileKey, GeoImage>::Record r;
+                if (_stitchingCache.get(key, r))
+                {
+                    return r.value();
+                }
+                else
+                {
+                    GeoImage image = _imageLayer->createImage(key, progress);
+                    if (image.valid())
+                    {
+                        _stitchingCache.insert(key, image);
+                    }
+                    return image;
+                }
+            });
+        metaImage.setCenterTileKey(key, progress);
+
+        if (!metaImage.getCenterTile().valid() || !metaImage.getScaleBias().isIdentity())
         {
+            return {};
+        }
+
+        osg::ref_ptr<osg::HeightField> hf = new osg::HeightField();
+        hf->allocate(getTileSize(), getTileSize());
+        std::fill(hf->getHeightList().begin(), hf->getHeightList().end(), NO_DATA_VALUE);
+
+        double xmin, ymin, xmax, ymax;
+        key.getExtent().getBounds(xmin, ymin, xmax, ymax);
+
+        osg::Vec4f pixel;
+        for (int c = 0; c < getTileSize(); c++)
+        {
+            if (progress && progress->isCanceled())
+                return {};
+
+            double u = (double)c / (double)(getTileSize() - 1);
+            double x = xmin + u * (xmax - xmin);
+            for (int r = 0; r < getTileSize(); r++)
+            {
+                double v = (double)r / (double)(getTileSize() - 1);
+                double y = ymin + v * (ymax - ymin);
+                if (metaImage.readAtCoord(pixel, x, y))
+                {
+                    hf->setHeight(c, r, decode(pixel));
+                }
+            }
+        }
+
+        return GeoHeightField(hf.release(), key.getExtent());
+    }
+
+    else
+    {
+        // Make an image, then convert it to a heightfield
+        GeoImage geoImage = _imageLayer->createImageImplementation(key, progress);
+        if (geoImage.valid())
+        {
+            const osg::Image* image = geoImage.getImage();
+
             // Allocate the heightfield.
             osg::HeightField* hf = new osg::HeightField();
             hf->allocate(image->s(), image->t());
 
-            ImageUtils::PixelReader reader(image);
+            ImageUtils::PixelReader read(image);
             osg::Vec4f pixel;
-
-            for (int c = 0; c < image->s(); c++)
-            {
-                for (int r = 0; r < image->t(); r++)
+            read.forEachPixel([&](auto& i)
                 {
-                    reader(pixel, c, r);
-                    pixel.r() *= 255.0;
-                    pixel.g() *= 255.0;
-                    pixel.b() *= 255.0;
-                    float h = -10000.0f + ((pixel.r() * 256.0f * 256.0f + pixel.g() * 256.0f + pixel.b()) * 0.1f);
-                    hf->setHeight(c, r, h);
-                }
+                    read(pixel, i.s(), i.t());
+                    hf->setHeight(i.s(), i.t(), decode(pixel));
+                });
+
+            if (key.is(8, 70, 107))
+            {
+                ImageToHeightFieldConverter c;
+                auto out = c.convert(hf, 32);
+                osgDB::writeImageFile(*out, "test.tif");
             }
 
             return GeoHeightField(hf, key.getExtent());
         }
-        else
-        {
-            ImageToHeightFieldConverter conv;
-            osg::HeightField* hf = conv.convert(image);
-            return GeoHeightField(hf, key.getExtent());
-        }
-    }
-    
 
-    return GeoHeightField::INVALID;
+        return GeoHeightField::INVALID;
+    }
 }

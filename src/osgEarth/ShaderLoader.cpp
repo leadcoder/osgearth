@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "ShaderLoader"
 #include "ShaderUtils"
@@ -92,8 +78,12 @@ namespace
             std::string line = ShaderLoader::getPragmaValue(source, "vp_function");
             if (!line.empty())
             {
-                StringVector tokens;
-                StringTokenizer(line, tokens, " ,\t", "", false, true);
+                auto tokens = StringTokenizer()
+                    .delim(" ").delim(",").delim("\t")
+                    .keepEmpties(false)
+                    .trimTokens(true)
+                    .tokenize(line);
+
                 if (tokens.size() > 0)
                     f.entryPoint = tokens[0];
                 if (tokens.size() > 1)
@@ -277,7 +267,12 @@ ShaderLoader::getPragmaValueAsTokens(
     std::string statement(input.substr(statementPos, endPos - statementPos));
     std::string value(trim(input.substr(startPos, endPos - startPos)));
 
-    StringTokenizer(value, tokens_out, ", \t", "", false, true);
+    tokens_out = StringTokenizer()
+        .delim(" ").delim(",").delim("\t")
+        .keepEmpties(false)
+        .trimTokens(true)
+        .tokenize(value);
+
     return tokens_out.size();
 }
 
@@ -628,8 +623,12 @@ namespace
 {
     void forEachLine(const std::string& file, std::function<bool(const std::string&)> func)
     {
-        std::vector<std::string> lines;
-        StringTokenizer(file, lines, "\n", "", true, false);
+        auto lines = StringTokenizer()
+            .delim("\n")
+            .keepEmpties(true)
+            .trimTokens(false)
+            .tokenize(file);
+
         for (auto& line : lines)
             if (func(line))
                 break;

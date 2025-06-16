@@ -1,30 +1,16 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Layer>
 #include <osgEarth/Cache>
 #include <osgEarth/Registry>
 #include <osgEarth/SceneGraphCallback>
-#include <osgEarth/ShaderLoader>
 #include <osgEarth/TileKey>
 #include <osgEarth/TerrainEngineNode>
-#include <osgEarth/TerrainResources>
+#include <osgEarth/NetworkMonitor>
 #include <osg/StateSet>
+#include <osgDB/Registry>
 
 using namespace osgEarth;
 
@@ -279,14 +265,12 @@ Layer::setOpenAutomatically(bool value)
 bool
 Layer::getEnabled() const
 {
-    OE_DEPRECATED(Layer::getEnabled, Layer::getOpenAutomatically);
     return getOpenAutomatically();
 }
 
 void
 Layer::setEnabled(bool value)
 {
-    OE_DEPRECATED(Layer::setEnabled, Layer::setOpenAutomatically);
     setOpenAutomatically(value);
 }
 
@@ -352,6 +336,8 @@ Layer::open()
         return getStatus();
     }
 
+    NetworkMonitor::ScopedRequestLayer layerRequest(getName());
+
     // be optimistic :)
     _status.set(Status::NoError);
 
@@ -371,7 +357,10 @@ Layer::open()
     setStatus(openImplementation());
     if (isOpen())
     {
-        fireCallback(&LayerCallback::onOpen);
+        onOpen.fire(this);
+
+        // deprecated
+        OE_CALL_DEPRECATED(fireCallback(&LayerCallback::onOpen));
     }
 
     return getStatus();
@@ -440,7 +429,11 @@ Layer::close()
         closeImplementation();
         _status.set(Status::ResourceUnavailable, "Layer closed");
         _runtimeCacheId = "";
-        fireCallback(&LayerCallback::onClose);
+
+        onClose.fire(this);
+
+        // @deprecated - remove after 3.7.3
+        OE_CALL_DEPRECATED(fireCallback(&LayerCallback::onClose));
     }
     return getStatus();
 }
@@ -650,6 +643,7 @@ Layer::getStateSet() const
     return _stateSet.get();
 }
 
+// deprecated, use onOpen or onClose
 void
 Layer::fireCallback(LayerCallback::MethodPtr method)
 {

@@ -1,32 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/FeatureModelSource>
-#include <osgEarth/FeatureModelGraph>
 #include <osgEarth/SpatialReference>
-#include <osgEarth/ShaderFactory>
 #include <osgEarth/ShaderUtils>
-#include <osgEarth/Registry>
-#include <osgEarth/Capabilities>
 #include <osgEarth/DrapeableNode>
 #include <osgEarth/ClampableNode>
 #include <osgEarth/GLUtils>
-#include <osgEarth/Progress>
+
 #include <osg/Notify>
 #include <osg/Depth>
 #include <osg/PolygonOffset>
@@ -72,6 +54,8 @@ FeatureModelOptions::fromConfig(const Config& conf)
     
     conf.get( "session_wide_resource_cache", _sessionWideResourceCache );
 
+    conf.get("auto_crop_features", _autoCropFeatures);
+
     const Config& filtersConf = conf.child("filters");
     for(ConfigSet::const_iterator i = filtersConf.children().begin(); i != filtersConf.children().end(); ++i)
         filters().push_back( ConfigOptions(*i) );
@@ -103,6 +87,8 @@ FeatureModelOptions::getConfig() const
     conf.set( "node_caching",     _nodeCaching );
     
     conf.set( "session_wide_resource_cache", _sessionWideResourceCache );
+
+    conf.set("auto_crop_features", _autoCropFeatures);
 
     if (filters().empty() == false)
     {
@@ -142,8 +128,7 @@ FeatureNodeFactory::getOrCreateStyleGroup(const Style& style,
     // Otherwise, a normal group.
     if ( !group )
     {
-        auto styleGroup = new StyleGroup();
-        styleGroup->_style = style;
+        auto styleGroup = new StyleGroup(style);
         group = styleGroup;
         //group = new osg::Group();
     }

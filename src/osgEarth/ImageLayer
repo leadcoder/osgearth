@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #pragma once
 
@@ -24,6 +10,7 @@
 #include <osgEarth/TileLayer>
 #include <osgEarth/URI>
 #include <osgEarth/Threading>
+#include <osgEarth/Callbacks>
 #include <osg/Texture2D>
 
 namespace osgEarth
@@ -87,31 +74,17 @@ namespace osgEarth
     public:
         META_Layer_Abstract(osgEarth, ImageLayer, Options, TileLayer);
 
-        //! Layer callbacks
-        class OSGEARTH_EXPORT Callback : public osg::Referenced
-        {
-        public:
-            //! Called when a new data is created. This callback fires
-            //! before the data is cached, and does NOT fire if the data
-            //! was read from a cache.
-            //! NOTE: This may be invoked from a worker thread. Use caution.
-            virtual void onCreate(const TileKey&, GeoImage&) { }
-        };
-
-    public:
-
         //! Convenience function to create an ImageLayer from a ConfigOptions.
         static ImageLayer* create(const ConfigOptions& conf);
 
-        //! @deprecated
         //! Adds a color filter to the filter chain.
+        OE_DEPRECATED("Use GLSL")
         void addColorFilter(ColorFilter* filter);
 
-        //! @deprecated
         //! Removes a color filter from the filter chain
+        OE_DEPRECATED("Use GLSL")
         void removeColorFilter(ColorFilter* filter);
 
-        //! @deprecated
         //! Accesses the color filter chain
         const ColorFilterChain& getColorFilters() const;
 
@@ -179,17 +152,18 @@ namespace osgEarth
 
         //! Stores an image in this layer (if writing is enabled).
         //! Returns a status value indicating whether the store succeeded.
-        Status writeImage(const TileKey& key, const osg::Image* image, ProgressCallback* progress = 0L);
+        Status writeImage(const TileKey& key, const osg::Image* image, ProgressCallback* progress = {});
+
+        //! Stores a pre-encoded image in this layer (if encoded writing is supported).
+        //! Returns s tatus value indicating whether the store succeeded.
+        Result<osg::ref_ptr<osg::Image>> encodeImage(const TileKey& key, const osg::Image* image, ProgressCallback* progress = {});
 
         //! Returns the compression method prefered by this layer
         //! that you can pass to ImageUtils::compressImage.
         const std::string getCompressionMethod() const;
 
-        //! Install a user callback
-        void addCallback(Callback* callback);
-
-        //! Remove a user callback
-        void removeCallback(Callback* callback);
+        //! Fired after a new image is created, but before it is cached.
+        Callback<void(const TileKey&, GeoImage&)> onCreate;
 
         //! Add a post-processing layer
         void addPostLayer(Layer* layer);
@@ -218,6 +192,8 @@ namespace osgEarth
 
         //! Subclass can override this to write data for a tile key.
         virtual Status writeImageImplementation(const TileKey&, const osg::Image*, ProgressCallback*) const;
+
+        virtual Result<osg::ref_ptr<osg::Image>> encodeImageImplementation(const TileKey&, const osg::Image*, ProgressCallback*) const;
 
         //! Modify the bbox if an altitude is set (for culling)
         virtual void modifyTileBoundingBox(const TileKey& key, osg::BoundingBox& box) const;
@@ -288,11 +264,6 @@ namespace osgEarth
 
         optional<int> _shareImageUnit;
         bool _useCreateTexture;
-
-        void invoke_onCreate(const TileKey&, GeoImage&);
-
-        typedef std::vector< osg::ref_ptr<Callback> > Callbacks;
-        Threading::Mutexed<Callbacks> _callbacks;
 
         Mutexed<std::vector<osg::ref_ptr<Layer>>> _postLayers;
 

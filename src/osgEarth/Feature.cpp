@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Feature>
 #include <osgEarth/FilterContext>
@@ -23,7 +9,6 @@
 
 #include <osgEarth/StringUtils>
 #include <osgEarth/JsonUtils>
-#include <algorithm>
 
 using namespace osgEarth;
 using namespace osgEarth::Util;
@@ -33,9 +18,9 @@ using namespace osgEarth::Util;
 //----------------------------------------------------------------------------
 
 FeatureProfile::FeatureProfile(const GeoExtent& extent) :
-_extent    ( extent ),
-_firstLevel( 0 ),
-_maxLevel  ( -1 )
+    _extent(extent),
+    _firstLevel(0),
+    _maxLevel(-1)
 {
     //nop
 }
@@ -207,32 +192,19 @@ Feature::Feature(Geometry* geom, const SpatialReference* srs, const Style& style
     dirty();
 }
 
-Feature::Feature(const Feature& rhs) : //, const osg::CopyOp& copyOp) :
+Feature::Feature(const Feature& rhs) :
     _fid(rhs._fid),
     _attrs(rhs._attrs),
     _style(rhs._style),
     _geoInterp(rhs._geoInterp),
     _srs(rhs._srs.get())
 {
+    OE_SOFT_ASSERT(rhs._geom.valid());
+
     if (rhs._geom.valid())
         _geom = rhs._geom->clone();
 
     dirty();
-}
-
-Feature::Feature(Feature&& rhs) // : osg::Object(rhs)
-{
-    _fid = rhs._fid;
-    _attrs = std::move(rhs._attrs);
-    _style = std::move(rhs._style);
-    _geoInterp = std::move(rhs._geoInterp);
-    _geom = std::move(rhs._geom);
-    _cachedExtent = std::move(rhs._cachedExtent);
-}
-
-Feature::~Feature()
-{
-    //nop
 }
 
 FeatureID
@@ -267,6 +239,7 @@ Feature::setSRS( const SpatialReference* srs )
 void
 Feature::setGeometry( Geometry* geom )
 {
+    OE_HARD_ASSERT(geom != nullptr);
     _geom = geom;
     dirty();
 }
@@ -282,7 +255,7 @@ Feature::dirty()
 void
 Feature::set( const std::string& name, const std::string& value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_STRING;
     a.value.stringValue = value;
     a.value.set = true;
@@ -291,7 +264,7 @@ Feature::set( const std::string& name, const std::string& value )
 void
 Feature::set( const std::string& name, double value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_DOUBLE;
     a.value.doubleValue = value;
     a.value.set = true;
@@ -300,7 +273,7 @@ Feature::set( const std::string& name, double value )
 void
 Feature::set( const std::string& name, long long value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_INT;
     a.value.intValue = value;
     a.value.set = true;
@@ -309,7 +282,7 @@ Feature::set( const std::string& name, long long value )
 void
 Feature::set(const std::string& name, int value)
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_INT;
     a.value.intValue = value;
     a.value.set = true;
@@ -318,13 +291,13 @@ Feature::set(const std::string& name, int value)
 void
 Feature::set( const std::string& name, const AttributeValue& value)
 {
-    _attrs[ name ] = value;
+    _attrs[toLower(name)] = value;
 }
 
 void
 Feature::set( const std::string& name, bool value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_BOOL;
     a.value.boolValue = value;
     a.value.set = true;
@@ -333,7 +306,7 @@ Feature::set( const std::string& name, bool value )
 void
 Feature::set( const std::string& name, const std::vector<double>& value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_DOUBLEARRAY;
     a.value.doubleArrayValue = value;
     a.value.set = true;
@@ -342,7 +315,7 @@ Feature::set( const std::string& name, const std::vector<double>& value )
 void
 Feature::setSwap( const std::string& name, std::vector<double>& value )
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = ATTRTYPE_DOUBLEARRAY;
     a.value.doubleArrayValue.swap(value);
     a.value.set = true;
@@ -351,14 +324,14 @@ Feature::setSwap( const std::string& name, std::vector<double>& value )
 void
 Feature::setNull( const std::string& name)
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.value.set = false;
 }
 
 void
 Feature::setNull( const std::string& name, AttributeType type)
 {
-    AttributeValue& a = _attrs[name];
+    AttributeValue& a = _attrs[toLower(name)];
     a.type = type;
     a.value.set = false;
 }
@@ -366,7 +339,7 @@ Feature::setNull( const std::string& name, AttributeType type)
 void
 Feature::removeAttribute(const std::string& name)
 {
-    _attrs.erase(name);
+    _attrs.erase(toLower(name));
 }
 
 bool
@@ -418,6 +391,13 @@ Feature::isSet( const std::string& name) const
 }
 
 double
+Feature::eval(const NumericExpression& expr, FilterContext const* context) const
+{
+    NumericExpression temp(expr);
+    return eval(temp, context);
+}
+
+double
 Feature::eval( NumericExpression& expr, FilterContext const* context ) const
 {
     const NumericExpression::Variables& vars = expr.variables();
@@ -448,6 +428,13 @@ Feature::eval( NumericExpression& expr, FilterContext const* context ) const
     }
 
     return expr.eval();
+}
+
+double
+Feature::eval(const NumericExpression& expr, Session* session) const
+{
+    NumericExpression temp(expr);
+    return eval(temp, session);
 }
 
 double
@@ -486,6 +473,13 @@ Feature::eval(NumericExpression& expr, Session* session) const
     return expr.eval();
 }
 
+std::string
+Feature::eval(const StringExpression& expr, FilterContext const* context) const
+{
+    StringExpression temp(expr);
+    return eval(temp, context);
+}
+
 const std::string&
 Feature::eval(StringExpression& expr, FilterContext const* context) const
 {
@@ -520,6 +514,13 @@ Feature::eval(StringExpression& expr, FilterContext const* context) const
     }
 
     return expr.eval();
+}
+
+std::string
+Feature::eval(const StringExpression& expr, Session* session) const
+{
+    StringExpression temp(expr);
+    return eval(temp, session);
 }
 
 const std::string&
@@ -666,9 +667,9 @@ Feature::calculateExtent() const
 }
 
 std::string
-Feature::getGeoJSON() const
+Feature::getGeoJSON(bool includeNulls) const
 {
-    std::string geometry = GeometryUtils::geometryToGeoJSON( getGeometry() );
+    std::string geometry = GeometryUtils::geometryToGeoJSON( getGeometry(), getSRS() );
 
     Json::Value root(Json::objectValue);
     root["type"] = "Feature";
@@ -683,53 +684,51 @@ Feature::getGeoJSON() const
 
     //Write out all the properties
     Json::Value props(Json::objectValue);
-    if (getAttrs().size() > 0)
+
+    for (AttributeTable::const_iterator itr = getAttrs().begin(); itr != getAttrs().end(); ++itr)
     {
-        for (AttributeTable::const_iterator itr = getAttrs().begin(); itr != getAttrs().end(); ++itr)
+        if (itr->second.type == ATTRTYPE_INT)
         {
-            if (itr->second.type == ATTRTYPE_INT)
+            if (itr->second.value.set)
             {
-                if (itr->second.value.set)
-                {
-                    props[itr->first] = (double)itr->second.getInt();
-                }
-                else
-                {
-                    props[itr->first] = Json::nullValue;
-                }
+                props[itr->first] = (double)itr->second.getInt();
             }
-            else if (itr->second.type == ATTRTYPE_DOUBLE)
+            else if (includeNulls)
             {
-                if (itr->second.value.set)
-                {
-                    props[itr->first] = itr->second.getDouble();
-                }
-                else
-                {
-                    props[itr->first] = Json::nullValue;
-                }
+                props[itr->first] = Json::nullValue;
             }
-            else if (itr->second.type == ATTRTYPE_BOOL)
+        }
+        else if (itr->second.type == ATTRTYPE_DOUBLE)
+        {
+            if (itr->second.value.set)
             {
-                if (itr->second.value.set)
-                {
-                    props[itr->first] = itr->second.getBool();
-                }
-                else
-                {
-                    props[itr->first] = Json::nullValue;
-                }
+                props[itr->first] = itr->second.getDouble();
             }
-            else
+            else if (includeNulls)
             {
-                if (itr->second.value.set)
-                {
-                    props[itr->first] = itr->second.getString();
-                }
-                else
-                {
-                    props[itr->first] = Json::nullValue;
-                }
+                props[itr->first] = Json::nullValue;
+            }
+        }
+        else if (itr->second.type == ATTRTYPE_BOOL)
+        {
+            if (itr->second.value.set)
+            {
+                props[itr->first] = itr->second.getBool();
+            }
+            else if (includeNulls)
+            {
+                props[itr->first] = Json::nullValue;
+            }
+        }
+        else
+        {
+            if (itr->second.value.set)
+            {
+                props[itr->first] = itr->second.getString();
+            }
+            else if (includeNulls)
+            {
+                props[itr->first] = Json::nullValue;
             }
         }
     }
@@ -738,18 +737,19 @@ Feature::getGeoJSON() const
     return Json::FastWriter().write( root );
 }
 
-std::string Feature::featuresToGeoJSON( const FeatureList& features)
+std::string Feature::featuresToGeoJSON(const FeatureList& features, bool includeNulls)
 {
     std::stringstream buf;
 
     buf << "{\"type\": \"FeatureCollection\", \"features\": [";
 
-    FeatureList::const_iterator last = features.end();
+
+    auto last = features.end();
     last--;
 
     for (FeatureList::const_iterator i = features.begin(); i != features.end(); i++)
     {
-        buf << i->get()->getGeoJSON();
+        buf << i->get()->getGeoJSON(includeNulls);
         if (i != last)
         {
             buf << ",";
@@ -783,46 +783,32 @@ void Feature::transform( const SpatialReference* srs )
     setSRS( srs );
 }
 
-void Feature::splitAcrossDateLine(FeatureList& splitFeatures)
+void
+Feature::splitAcrossAntimeridian()
 {
-    splitFeatures.clear();
-
-     // If the feature is geodetic, try to split it across the dateline.
-    if (getSRS() && getSRS()->isGeodetic())
+    // If the feature is geodetic, try to split it across the dateline.
+    if (getSRS() && getSRS()->isGeodetic() && getGeometry())
     {
-        GeoExtent extent(getSRS(), getGeometry()->getBounds());
-        // Only split the feature if it crosses the antimerdian
-        if (extent.crossesAntimeridian())
-        {
-            // This tries to split features across the dateline in three different zones.  -540 to -180, -180 to 180, and 180 to 540.
-            double minLon = -540;
-            for (int i = 0; i < 3; i++)
-            {
-                double offset = minLon - -180.0;
-                double maxLon = minLon + 360.0;
-                Bounds bounds(minLon, -90.0, 0.0, maxLon, 90.0, 0.0);
-                osg::ref_ptr< Geometry > croppedGeometry;
-                if (getGeometry()->crop(bounds, croppedGeometry))
-                {
-                    // If the geometry was cropped, offset the x coordinate so it's within normal longitude ranges.
-                    for (int j = 0; j < croppedGeometry->size(); j++)
-                    {
-                        (*croppedGeometry)[j].x() -= offset;
-                    }
-                    osg::ref_ptr< Feature > croppedFeature = new Feature(*this);
-                    // Make sure the feature is wound correctly.
-                    croppedGeometry->rewind(osgEarth::Geometry::ORIENTATION_CCW);
-                    croppedFeature->setGeometry(croppedGeometry.get());
-                    splitFeatures.push_back(croppedFeature);
-                }
-                minLon += 360.0;
-            }
-        }
+        auto* split_geom = getGeometry()->splitAcrossAntimeridian();
+        setGeometry(split_geom);
     }
+}
 
-    // If we didn't actually split the feature then just add the original
-    if (splitFeatures.empty())
-    {
-        splitFeatures.push_back( this );
-    }
+
+
+std::string
+osgEarth::evaluateExpression(const std::string& expr, const Feature* feature, const FilterContext& context)
+{
+    OE_SOFT_ASSERT_AND_RETURN(feature, {});
+    OE_SOFT_ASSERT_AND_RETURN(context.getSession(), {});
+
+    auto* engine = context.getSession()->getScriptEngine();
+    OE_SOFT_ASSERT_AND_RETURN(engine, {});
+
+    auto result = engine->run(expr, feature, &context);
+    if (result.success())
+        return result.asString();
+
+    OE_WARN << LC << "Feature Script error on '" << expr << "': " << result.message() << std::endl;
+    return {};
 }

@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/ImageUtils>
@@ -95,11 +81,11 @@ ImageUtils::copyAsSubImage(const osg::Image* src, osg::Image* dst, int dst_start
         PixelReader read(src);
         PixelWriter write(dst);
 
-        for( int r=0; r<src->r(); ++r)
+        for (int r = 0; r < src->r(); ++r)
         {
-            for( int src_t=0, dst_t=dst_start_row; src_t < src->t(); src_t++, dst_t++ )
+            for (int src_t = 0, dst_t = dst_start_row; src_t < src->t(); src_t++, dst_t++)
             {
-                for( int src_s=0, dst_s=dst_start_col; src_s < src->s(); src_s++, dst_s++ )
+                for (int src_s = 0, dst_s = dst_start_col; src_s < src->s(); src_s++, dst_s++)
                 {
                     write(read(src_s, src_t, r), dst_s, dst_t, r);
                 }
@@ -170,8 +156,6 @@ ImageUtils::resizeImage(const osg::Image* input,
                         unsigned int mipmapLevel,
                         bool bilinear)
 {
-    //TODO: refactor this with gluScaleImage/CPU?
-
     if ( !input && out_s == 0 && out_t == 0 )
         return false;
 
@@ -684,9 +668,7 @@ ImageUtils::mipmapImageInPlace(osg::Image* input)
 }
 
 const osg::Image*
-ImageUtils::compressImage(
-    const osg::Image* input,
-    const std::string& method)
+ImageUtils::compressImage(const osg::Image* input, const std::string& method)
 {
     OE_PROFILING_ZONE;
 
@@ -742,9 +724,7 @@ ImageUtils::compressImage(
 }
 
 void
-ImageUtils::compressImageInPlace(
-    osg::Image* input,
-    const std::string& method)
+ImageUtils::compressImageInPlace(osg::Image* input, const std::string& method)
 {
     OE_PROFILING_ZONE;
 
@@ -849,7 +829,8 @@ ImageUtils::compressAndMipmapTextures(osg::Node* node)
 }
 
 osgDB::ReaderWriter*
-ImageUtils::getReaderWriterForStream(std::istream& stream) {
+ImageUtils::getReaderWriterForStream(std::istream& stream) 
+{
     // Modified from https://oroboro.com/image-format-magic-bytes/
 
     // Get the length of the stream
@@ -970,19 +951,19 @@ ImageUtils::mix(osg::Image* dest, const osg::Image* src, float a)
     osg::Vec4 src_value, dest_value;
     PixelReader read_src(src), read_dest(dest);
     PixelWriter write_dest(dest);
-    ImageIterator i(src);
 
-    i.forEachPixel([&]() {
-        read_src(src_value, i.s(), i.t());
-        read_dest(dest_value, i.s(), i.t());
-        float sa = srcHasAlpha ? a * src_value.a() : a;
-        float da = destHasAlpha ? dest_value.a() : 1.0f;
-        dest_value.set(
-            dest_value.r()*(1.0f - sa) + src_value.r()*sa,
-            dest_value.g()*(1.0f - sa) + src_value.g()*sa,
-            dest_value.b()*(1.0f - sa) + src_value.b()*sa,
-            osg::maximum(sa, da));
-        write_dest(dest_value, i.s(), i.t());
+    read_src.forEachPixel([&](auto& i)
+        {
+            read_src(src_value, i);
+            read_dest(dest_value, i);
+            float sa = srcHasAlpha ? a * src_value.a() : a;
+            float da = destHasAlpha ? dest_value.a() : 1.0f;
+            dest_value.set(
+                dest_value.r() * (1.0f - sa) + src_value.r() * sa,
+                dest_value.g() * (1.0f - sa) + src_value.g() * sa,
+                dest_value.b() * (1.0f - sa) + src_value.b() * sa,
+                osg::maximum(sa, da));
+            write_dest(dest_value, i);
         });
 
     return true;
@@ -1175,21 +1156,17 @@ ImageUtils::isEmptyImage(const osg::Image* image, float alphaThreshold)
         return isEmptyRGBA(image, (unsigned char)(alphaThreshold * 255.0f));
     }
 
+    bool is_empty = true;
     PixelReader read(image);
 
-    for(unsigned r=0; r<(unsigned)image->r(); ++r)
-    {
-        for(unsigned t=0; t<(unsigned)image->t(); ++t)
+    read.forEachPixel([&](auto& iter)
         {
-            for(unsigned s=0; s<(unsigned)image->s(); ++s)
-            {
-                osg::Vec4 color = read(s, t, r);
-                if ( color.a() > alphaThreshold )
-                    return false;
-            }
-        }
-    }
-    return true;
+            osg::Vec4 color = read(iter);
+            if (color.a() > alphaThreshold)
+                is_empty = false, iter.quit();
+        });
+
+    return is_empty;
 }
 
 osg::Image*
@@ -1331,27 +1308,29 @@ ImageUtils::replaceNoDataValues(osg::Image*       target,
     PixelReader readReference(reference);
     osg::Vec4 pixel;
 
-    ImageIterator i(target);
-    i.forEachPixel([&]() {
-        readTarget(pixel, i.s(), i.t());
+    readTarget.forEachPixel([&](auto& i) {
+        readTarget(pixel, i);
         if (pixel.r() == NO_DATA_VALUE)
         {
             osg::Vec4f refValue = readReference(xscale*i.u() + xbias, yscale*i.v() + ybias);
-            writeTarget(refValue, i.s(), i.t());
+            writeTarget(refValue, i);
         }
     });
 
-    for(int s=0; s<target->s(); ++s)
+    for (int r = 0; r < target->r(); ++r)
     {
-        for(int t=0; t<target->t(); ++t)
+        for (int s = 0; s < target->s(); ++s)
         {
-            osg::Vec4f pixel = readTarget(s, t);
-            if ( pixel.r() == NO_DATA_VALUE )
+            for (int t = 0; t < target->t(); ++t)
             {
-                float nx = (float)s / (float)(target->s()-1);
-                float ny = (float)t / (float)(target->t()-1);
-                osg::Vec4f refValue = readReference( xscale*nx+xbias, yscale*ny+ybias );
-                writeTarget(refValue, s, t);
+                osg::Vec4f pixel = readTarget(s, t);
+                if (pixel.r() == NO_DATA_VALUE)
+                {
+                    float nx = (float)s / (float)(target->s() - 1);
+                    float ny = (float)t / (float)(target->t() - 1);
+                    osg::Vec4f refValue = readReference(xscale * nx + xbias, yscale * ny + ybias);
+                    writeTarget(refValue, s, t, r);
+                }
             }
         }
     }
@@ -1433,11 +1412,11 @@ ImageUtils::convert(const osg::Image* image, GLenum pixelFormat, GLenum dataType
     // copy image to result
     PixelReader read(image);
     PixelWriter write(result);
+
     osg::Vec4 value;
-    ImageIterator iter(read);
-    iter.forEachPixel([&]() {
-        read(value, iter.s(), iter.t());
-        write(value, iter.s(), iter.t());
+    read.forEachPixel([&](auto& i) {
+        read(value, i);
+        write(value, i);
     });
 
     return result;
@@ -1558,12 +1537,12 @@ ImageUtils::convertToPremultipliedAlpha(osg::Image* image)
 
     PixelReader read(image);
     PixelWriter write(image);
-    ImageIterator iter(read);
+
     osg::Vec4 c;
-    iter.forEachPixel([&]() {
-        read(c, iter.s(), iter.t(), iter.r());
+    read.forEachPixel([&](auto& iter) {
+        read(c, iter);
         c.set(c.r()*c.a(), c.g()*c.a(), c.b()*c.a(), c.a());
-        write(c, iter.s(), iter.t(), iter.r());
+        write(c, iter);
     });
     return true;
 }
@@ -2211,6 +2190,17 @@ namespace
         }
     };
 
+    //! Select an appropriate reader for the given data type.
+    //! 
+    //! NOTE!!
+    //! Fopr UNSIGNED data types, we are using a SIGNED reader, except in the case
+    //! of GL_UNSIGNED_BYTE. This is because the OSG TIFF reader always declares
+    //! the data to be unsigned even when it's not. That's a bug, but it does not
+    //! hurt us to generate signed data for unsigned input, so this is an acceptable
+    //! workaround.
+    //! 
+    //! The exception is GL_UNSIGNED_BYTE which is commonly normalized into [0..1]
+    //! so we will maintain signed-ness for that.
     template<int GLFormat>
     inline ImageUtils::PixelReader::ReaderFunc
     chooseReader(GLenum dataType)
@@ -2222,13 +2212,13 @@ namespace
         case GL_UNSIGNED_BYTE:
             return &ColorReader<GLFormat, GLubyte>::read;
         case GL_SHORT:
-            return &ColorReader<GLFormat, GLshort>::read;
         case GL_UNSIGNED_SHORT:
-            return &ColorReader<GLFormat, GLushort>::read;
+            return &ColorReader<GLFormat, GLshort>::read;
+            //return &ColorReader<GLFormat, GLushort>::read;
         case GL_INT:
-            return &ColorReader<GLFormat, GLint>::read;
         case GL_UNSIGNED_INT:
-            return &ColorReader<GLFormat, GLuint>::read;
+            return &ColorReader<GLFormat, GLint>::read;
+            //return &ColorReader<GLFormat, GLuint>::read;
         case GL_FLOAT:
             return &ColorReader<GLFormat, GLfloat>::read;
         case GL_UNSIGNED_SHORT_5_5_5_1:
@@ -2242,6 +2232,7 @@ namespace
         }
     }
 
+    //! Selects a reader based on the input pixel format and type.
     inline ImageUtils::PixelReader::ReaderFunc
     getReader( GLenum pixelFormat, GLenum dataType )
     {
@@ -2876,12 +2867,15 @@ ImageUtils::getMaxTextureSize(const osg::Image* image, const osgDB::Options* opt
 
         else if (!options->getOptionString().empty())
         {
-            std::vector<std::string> tokens;
-            StringTokenizer(options->getOptionString(), tokens);
+            auto tokens = StringTokenizer()
+                .whitespaceDelims()
+                .standardQuotes()
+                .tokenize(options->getOptionString());
+
             for (auto& token : tokens)
             {
-                std::vector<std::string> kvp;
-                StringTokenizer(token, kvp, "=");
+                auto kvp = StringTokenizer().delim("=").standardQuotes().tokenize(token);
+
                 if (kvp.size() == 2 && kvp[0] == "osgearth.max_texture_size")
                 {
                     maxdim = std::max(as<int>(kvp[1], maxdim), 1);

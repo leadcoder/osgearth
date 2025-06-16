@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Notify>
 #include <osgEarth/StringUtils>
@@ -22,7 +8,6 @@
 #include <osg/ref_ptr>
 #include <sstream>
 #include <iostream>
-#include <stdlib.h>
 
 #ifdef OSGEARTH_HAVE_SPDLOG
 #include <spdlog/spdlog.h>
@@ -137,12 +122,6 @@ protected:
 
 using namespace osgEarth;
 
-std::string NotifyPrefix::DEBUG_INFO  = "[osgEarth]  ";
-std::string NotifyPrefix::INFO   = "[osgEarth]  ";
-std::string NotifyPrefix::NOTICE = "[osgEarth]  ";
-std::string NotifyPrefix::WARN   = "[osgEarth]* ";
-std::string NotifyPrefix::ALWAYS = "[osgEarth]**";
-
 namespace
 {
     static osg::ApplicationUsageProxy Notify_e0(osg::ApplicationUsage::ENVIRONMENTAL_VARIABLE, "OSGEARTH_NOTIFY_LEVEL <mode>", "FATAL | WARN | NOTICE | DEBUG_INFO | DEBUG_FP | DEBUG | INFO | ALWAYS");
@@ -155,19 +134,17 @@ namespace
             _logger = spdlog::stdout_color_mt("osgearth");
             _logger->set_pattern("%^[%n %l]%$ %v");
             _logger->set_level(spdlog::level::debug);
-
-            NotifyPrefix::DEBUG_INFO = {};
-            NotifyPrefix::INFO = {};
-            NotifyPrefix::NOTICE = {};
-            NotifyPrefix::WARN = {};
-            NotifyPrefix::ALWAYS = {};
         }
 
         void notify(osg::NotifySeverity severity, const char *message)
         {
             std::string buf(message);
-            std::vector<std::string> parts;
-            Util::StringTokenizer(buf, parts, "\n", {}, true, false);
+
+            auto parts = Strings::StringTokenizer()
+                .delim("\n")
+                .keepEmpties(true)
+                .trimTokens(false)
+                .tokenize(buf);
 
             for (auto& part : parts)
             {
@@ -239,20 +216,46 @@ namespace
             }
 
             // Setup standard notify handler
-            NotifyStreamBuffer *buffer = dynamic_cast<NotifyStreamBuffer *>(_notifyStream.rdbuf());
-            if (buffer && !buffer->getNotifyHandler())
+            _buffer = dynamic_cast<NotifyStreamBuffer *>(_notifyStream.rdbuf());
+            if (_buffer && !_buffer->getNotifyHandler())
             {
 #ifdef OSGEARTH_HAVE_SPDLOG
-                buffer->setNotifyHandler(new SpdLogNotifyHandler);
+                _buffer->setNotifyHandler(new SpdLogNotifyHandler);
 #else
-                buffer->setNotifyHandler(new osg::StandardNotifyHandler);
+                _buffer->setNotifyHandler(new osg::StandardNotifyHandler);
 #endif
             }
+        }
+
+        inline NotifyStream& prefix()
+        {
+#ifndef OSGEARTH_HAVE_SPDLOG
+            if (_buffer)
+            {
+                _notifyStream << "[osgEarth]";
+
+                switch (_notifyLevel)
+                {
+                case(osg::ALWAYS):
+                case(osg::FATAL):
+                    _notifyStream << "**";
+                    break;
+                case(osg::WARN):
+                    _notifyStream << "* ";
+                    break;
+                default:
+                    _notifyStream << "  ";
+                    break;
+                }
+            }
+#endif
+            return _notifyStream;
         }
 
         osg::NotifySeverity _notifyLevel;
         NullStream     _nullStream;
         NotifyStream   _notifyStream;
+        NotifyStreamBuffer* _buffer = nullptr;
     };
 
     static NotifySingleton& getNotifySingleton()
@@ -306,7 +309,7 @@ std::ostream& osgEarth::notify(const osg::NotifySeverity severity)
     if (osgEarth::isNotifyEnabled(severity))
     {
         getNotifySingleton()._notifyStream.setCurrentSeverity(severity);
-        return getNotifySingleton()._notifyStream;
+        return getNotifySingleton().prefix();
     }
     return getNotifySingleton()._nullStream;
 }

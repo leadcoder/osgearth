@@ -251,7 +251,8 @@ void get_pixel(out Pixel res, inout vec3 weights, in int index, in vec2 coord)
 
 float heightAndEffectMix(in float h1, in float a1, in float h2, in float a2)
 {
-    // https://tinyurl.com/y5nkw2l9
+    // Andrey Mishkinis height+alpha blender.
+    // https://www.gamedeveloper.com/programming/advanced-terrain-texture-splatting
     float ma = max(h1 + a1, h2 + a2) - oe_displacement_depth;
     float b1 = max(h1 + a1 - ma, 0.0);
     float b2 = max(h2 + a2 - ma, 0.0);
@@ -292,11 +293,11 @@ void resolveRow(out Pixel result, int level, int row, float xvar)
     float m = heightAndEffectMix(p1.rgbh[3], 1.0 - x_mix, p2.rgbh[3], x_mix);
     pixmix(result, p1, p2, m);
 
+    // publish splatting variables for use by other shaders
     SplatRowData rowData;
     rowData.p1_weights = w1;
     rowData.p2_weights = w2;
     rowData.column_mix = m;
-
     splatData.levelData[level].rowData[row] = rowData;
 }
 

@@ -1,0 +1,299 @@
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
+ */
+#pragma once
+
+#include <osgEarthImGui/ImGuiPanel>
+#include <osgEarth/FeatureNode>
+#include <osgEarth/Geometry>
+#include <osgEarth/Draggers>
+#include <osgEarth/SelectExtentTool>
+
+namespace osgEarth
+{
+    using namespace osgEarth::Threading;
+
+    class FeatureEditGUI : public ImGuiPanel
+    {
+    public:
+        FeatureEditGUI() : ImGuiPanel("Feature Patch Exporter") { }
+
+        osg::observer_ptr<MapNode> _mapNode;
+        FeatureList _features;
+        float _x, _y;
+        osg::ref_ptr<FeatureNode> _featureNode;
+        osg::ref_ptr<osg::Group> _draggers;
+        osg::ref_ptr<DrapeableNode> _draper;
+        bool _dirty = false;
+        GeoExtent _selectedExtent;
+        TiledFeatureSource* _inputLayer = nullptr;
+
+        const GeoExtent& selectedExtent() const { return _selectedExtent; }
+
+        void load(const Config& conf) override
+        {
+        }
+
+        void save(Config& conf) override
+        {
+        }
+
+        void draw(osg::RenderInfo& ri) override
+        {
+            if (!isVisible()) return;
+            if (!findNodeOrHide(_mapNode, ri)) return;
+
+            ImGui::Begin(name(), visible());
+            {
+                install(ri);
+
+#if 0
+                if (ImGui::Button("Refresh"))
+                {
+                    renderFeatures();
+                    renderDraggers();
+                }
+#endif
+
+                ImGuiLTable::Begin("Feature Tile Export");
+
+                // ask the user for a feature source to query
+                std::vector<osg::ref_ptr<Layer>> layers;
+                _mapNode->getMap()->getLayers(layers, [](const Layer* layer)
+                    {
+                        auto* fs = dynamic_cast<const TiledFeatureSource*>(layer);
+                        return fs && fs->hasTilePatch();
+                    });
+
+                if (layers.size() > 0)
+                {
+                    static int inputLayerIndex = -1;
+                    static GeoExtent extent;
+                    static std::vector<TileKey> keys;
+                    static bool exported = false;
+                    static bool overwritePatches = false;
+
+                    const char* idef = inputLayerIndex >= 0 ? layers[inputLayerIndex]->getName().c_str() : "Select..";
+                    if (ImGuiLTable::BeginCombo("Layer", idef))
+                    {
+                        for (int n = 0; n < layers.size(); ++n) {
+                            ImGui::PushID(n);
+                            const bool is_selected = (inputLayerIndex == n);
+                            if (ImGui::Selectable(layers[n]->getName().c_str(), is_selected))
+                            {
+                                inputLayerIndex = n;
+                                exported = false;
+                                _inputLayer = dynamic_cast<TiledFeatureSource*>(layers[n].get());
+                            }
+                            if (is_selected)
+                                ImGui::SetItemDefaultFocus();
+                            ImGui::PopID();
+                        }
+                        ImGuiLTable::EndCombo();
+                    }
+
+                    ImGuiLTable::End();
+
+                    if (_inputLayer)
+                    {
+                        if (selectedExtent().isValid())
+                        {
+                            if (selectedExtent() != extent)
+                            {
+                                keys.clear();
+                                exported = false;
+                                extent = selectedExtent();
+                                auto* fp = _inputLayer->getFeatureProfile();
+                                auto* tp = fp->getTilingProfile();
+                                tp->getIntersectingTiles(extent, fp->getFirstLevel(), keys);
+                            }
+
+                            ImGui::Text("Tile keys in selection:");
+                            for (auto& key : keys)
+                            {
+                                ImGui::Text("%s", key.str().c_str());
+                            }
+
+                            if (ImGui::Checkbox("Overwrite existing patches", &overwritePatches))
+                            {
+                                keys.clear();
+                                exported = false;
+                                extent = {};
+                            }
+
+                            if (overwritePatches)
+                            {
+                                ImGui::TextColored(ImVec4(1,0.5,0,1), "WARNING: PREVIOUS EDITS WILL BE LOST!!");
+                            }
+
+                            if (ImGui::Button("Export tiles to patch"))
+                            {
+                                for (auto& key : keys)
+                                {
+                                    auto cursor = _inputLayer->createFeatureCursor(Query(key));
+                                    if (cursor.valid() && cursor->hasMore())
+                                    {
+                                        FeatureList features;
+                                        cursor->fill(features);
+                                        if (!features.empty())
+                                        {
+                                            auto status = _inputLayer->insertPatch(key, features, overwritePatches);
+                                            if (status.isError())
+                                            {
+                                                OE_WARN << "Patch not exported: " << status.message() << std::endl;
+                                            }
+                                        }
+                                    }
+                                }
+                                exported = true;
+                            }
+
+                            if (exported)
+                            {
+                                ImGui::Text("Export complete!");
+                            }
+                        }
+                        else
+                        {
+                            keys.clear();
+                            ImGui::TextWrapped("Click on the map to select export tiles");
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui::Text("No tiled feature sources available");
+                }
+
+            }
+            ImGui::End();
+        }
+
+        void install(osg::RenderInfo& ri)
+        {
+            static bool installed = false;
+            if (installed) return;
+            installed = true;
+
+            EventRouter::get(view(ri))
+            //    .onDrag([&](osg::View* v, float x, float y) { onDrag(v, x, y); }, false)
+                .onClick([&](osg::View* v, float x, float y) { onClick(v, x, y); }, false);
+
+            //loadFeatures();
+            //renderFeatures();
+            //renderDraggers();
+        }
+
+        void onDrag(osg::View* view, float x, float y)
+        {
+            _x = x, _y = y;
+        }
+
+        void onClick(osg::View* view, float x, float y)
+        {
+            _x = x, _y = y;
+            if (_dirty)
+                refresh();
+
+            if (_inputLayer)
+            {
+                _selectedExtent = {};
+
+                auto point = _mapNode->getGeoPointUnderMouse(view, x, y);
+                if (point.isValid())
+                {
+                    auto key = _mapNode->getMap()->getProfile()->createTileKey(point,
+                        _inputLayer->getFeatureProfile()->getFirstLevel());
+
+                    _selectedExtent = key.getExtent();
+                }
+            }
+        }
+
+        void refresh()
+        {
+            renderFeatures();
+            _dirty = false;
+        }
+
+        void loadFeatures()
+        {
+            _features.clear();
+
+#if 0
+            osg::ref_ptr<OGRFeatureSource> fs = new OGRFeatureSource();
+            fs->setURL("../data/virginia.shp");
+            fs->open();
+            auto cursor = fs->createFeatureCursor();
+            cursor->fill(_features);
+            fs->close();
+#endif
+        }
+
+        void renderFeatures()
+        {
+            Style style;
+
+            auto* line = style.getOrCreate<LineSymbol>();
+            line->stroke()->color() = Color::Yellow;
+            line->stroke()->width() = Distance(2.0, Units::PIXELS);
+
+            auto* alt = style.getOrCreate<AltitudeSymbol>();
+            alt->clamping() = AltitudeSymbol::CLAMP_TO_TERRAIN;
+            alt->technique() = AltitudeSymbol::TECHNIQUE_DRAPE;
+
+            if (_featureNode.valid())
+                _mapNode->removeChild(_featureNode.get());
+
+            _featureNode = new FeatureNode(_features, style);
+            _mapNode->addChild(_featureNode);
+        }
+
+        struct SourceData : public osg::Referenced
+        {
+            SourceData(osg::Vec3d* point) : point(point) { }
+            osg::Vec3d* point = nullptr;
+        };
+
+        void renderDraggers()
+        {
+            if (_draggers.valid())
+                _mapNode->removeChild(_draggers.get());
+
+            _draggers = new osg::Group();
+            _mapNode->addChild(_draggers);
+
+            for (const auto& feature : _features)
+            {   
+                osg::Group* featureGroup = new osg::Group();
+                GeometryIterator(feature->getGeometry(), true).forEach([&](Geometry* geom)
+                    {
+                        for(std::size_t i = 0; i < geom->size(); ++i)
+                        {
+                            auto& p = (*geom)[i];
+                            auto* dragger = new SphereDragger(_mapNode.get());
+                            dragger->setColor(Color::Red);
+                            dragger->setSize(10.0f);
+                            dragger->setPosition(GeoPoint(feature->getSRS(), p.x(), p.y(), 0.0, ALTMODE_RELATIVE));
+                            dragger->setUserData(new SourceData{&p});
+
+                            dragger->onPositionChanged([&](auto* dragger, const GeoPoint& position)
+                                {
+                                    auto* data = dynamic_cast<const SourceData*>(dragger->getUserData());
+                                    if (data)
+                                    {
+                                        data->point->x() = position.x();
+                                        data->point->y() = position.y();
+                                        _dirty = true;
+                                    }
+                                });
+
+                            featureGroup->addChild(dragger);
+                        }
+                    });
+                _draggers->addChild(featureGroup);
+            }
+        }
+    };
+}

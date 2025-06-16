@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "FilteredFeatureSource"
 
@@ -29,16 +15,17 @@ REGISTER_OSGEARTH_LAYER(filteredfeatures, FilteredFeatureSource);
 Config
 FilteredFeatureSource::Options::getConfig() const
 {
-    Config conf = FeatureSource::Options::getConfig();
+    Config conf = super::getConfig();
     featureSource().set(conf, "features");
 
-    if (filters().empty() == false)
+    if (!filters().empty())
     {
-        Config temp;
-        for (auto& filter : filters())
-            temp.add(filter.getConfig());
-        conf.set("filters", temp);
+        conf.set_with_function("filters", [this](Config& conf) {
+            for (auto& filter : filters())
+                conf.add(filter.getConfig());
+            });
     }
+
     return conf;
 }
 
@@ -47,14 +34,13 @@ FilteredFeatureSource::Options::fromConfig(const Config& conf)
 {
     featureSource().get(conf, "features");
 
-    auto& filters_conf = conf.child("filters");
-    for(auto& i : filters_conf.children())
-        filters().push_back(ConfigOptions(i));
+    for (auto& filterConf : conf.child("filters").children())
+        filters().push_back(filterConf);
 }
 
 Status FilteredFeatureSource::openImplementation()
 {
-    Status parent = FeatureSource::openImplementation();
+    Status parent = super::openImplementation();
     if (parent.isError())
         return parent;
 
@@ -82,12 +68,13 @@ void FilteredFeatureSource::addedToMap(const Map* map)
 
     setFeatureProfile(getFeatureSource()->getFeatureProfile());
 
-    FeatureSource::addedToMap(map);
+    super::addedToMap(map);
 }
 
 void FilteredFeatureSource::removedFromMap(const Map* map)
 {    
     options().featureSource().removedFromMap(map);
+    super::removedFromMap(map);
 }
 
 void

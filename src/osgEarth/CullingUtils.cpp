@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "CullingUtils"
 #include "LineFunctor"
@@ -22,6 +8,7 @@
 #include "Utils"
 #include "Math"
 #include "Notify"
+#include "Horizon"
 
 #include <osg/TemplatePrimitiveFunctor>
 #include <osgDB/ObjectWrapper>
@@ -969,42 +956,6 @@ LODScaleGroup::traverse(osg::NodeVisitor& nv)
     osg::Group::traverse( nv );
 }
 
-//------------------------------------------------------------------
-
-ClipToGeocentricHorizon::ClipToGeocentricHorizon(
-    const osgEarth::SpatialReference* srs,
-    osg::ClipPlane* clipPlane)
-{
-    if ( srs )
-    {
-        _horizon = new Horizon();
-        _horizon->setEllipsoid(srs->getEllipsoid());
-    }
-
-    _clipPlane = clipPlane;
-}
-
-void
-ClipToGeocentricHorizon::operator()(osg::Node* node, osg::NodeVisitor* nv)
-{
-    osg::ref_ptr<osg::ClipPlane> clipPlane;
-    if ( _clipPlane.lock(clipPlane) )
-    {
-        osg::ref_ptr<Horizon> horizon;
-        if (!ObjectStorage::get(nv, horizon))
-        {
-            horizon = new Horizon(*_horizon.get());
-            horizon->setEye( nv->getViewPoint() );
-        }
-
-        osg::Plane horizonPlane;
-        horizon->getPlane( horizonPlane );
-
-        _clipPlane->setClipPlane( horizonPlane );
-    }
-    traverse(node, nv);
-}
-
 //..........................................................................
 
 void
@@ -1170,6 +1121,58 @@ InstallCameraUniform::operator()(osg::Node* node, osg::NodeVisitor* nv)
     if (ss.valid())
         cv->popStateSet();
 }
+
+
+//...................................................................
+
+
+void
+ToggleVisibleCullCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
+{
+    if (_visible)
+    {
+        traverse(node, nv);
+    }
+    else
+    {
+        osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
+        osg::ref_ptr<osgUtil::RenderBin> savedBin;
+        osg::ref_ptr<EmptyRenderBin> emptyStage;
+        osg::UserDataContainer* udc;
+        if (cv)
+        {
+            savedBin = cv->getCurrentRenderBin();
+            emptyStage = new EmptyRenderBin(savedBin->getStage());
+            cv->setCurrentRenderBin(emptyStage.get());
+            cv->setUserValue("oe_visible", false);
+            udc = cv->getUserDataContainer();
+        }
+
+        traverse(node, nv);
+
+        if (cv)
+        {
+            auto index = udc->getUserObjectIndex("oe_visible");
+            udc->removeUserObject(index);
+            cv->setCurrentRenderBin(savedBin.get());
+        }
+    }
+}
+
+void
+CheckVisibilityCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
+{
+    osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
+    bool visible = true;
+    if (cv && cv->getUserValue("oe_visible", visible) && !visible)
+        return;
+
+    traverse(node, nv);
+}
+
+
+//...................................................................
+
 
 namespace osgEarth { namespace Serializers { namespace InstallCameraUniform
 {

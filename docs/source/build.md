@@ -1,119 +1,85 @@
-# Building osgEarth from Scratch
+# Build osgEarth from Scratch
 
-Normally it is sufficient to install osgEarth from `vcpkg` and use it in your appplication. However, if you want to contribute to the project or make local modifications, you will need to build osgEarth yourself.
+If you want to contribute to the project or make local modifications, you will need to build osgEarth yourself.
 
-The documentation here is focused on Windows. 
+## Windows Build (vcpkg)
 
-## Building with vcpkg
+[vcpkg](https://github.com/Microsoft/vcpkg) is a package manager. It works on Windows, Linux and MacOS but works best on Windows.
 
-[vcpkg](https://github.com/Microsoft/vcpkg) is a package manager. It works on Windows, Linux and MacOS but for this guide we will focus on Windows.
 
-**Step 1 - Configure vcpkg**
-
-First, clone and bootstrap [vcpkg](https://github.com/Microsoft/vcpkg) following the instructions on the page.
-
-**Step 2 - (Optional) Configure the osg_OPENGL_PROFILE triplet variable**
-
-You can configure OSG to build in GL3 or GLCORE mode if you require it. Some platforms (like OSX or VMWare) require a GLCORE build.
-
-As of this writing, vcpkg will build OSG with OPENGL_PROFILE=GL2 by default.  This is sufficient for running many osgEarth applications, but if you run into trouble with newer features, try a GL3 or GLCORE build instead.
-
-Open your existing x64-windows.cmake triplet file at path\to\vcpkg\triplets\x64-windows.cmake and add this line to the end of the file.
-```
-set(osg_OPENGL_PROFILE GL3)
-```
-
-This will build osg with modern OpenGL features and remove the fixed function pipeline.
-
-If you wish to build OSG with a different OPENGL_PROFILE such as GLCORE you can set the osg_OPENGL_PROFILE to GLCORE like this
-```
-set(osg_OPENGL_PROFILE GLCORE)
-```
-When you install osg using vcpkg with this variable set it will build osg against the <GL/glcorearb.h> headers instead of the usual <GL/gl.h> header.
-
-**Step 3 - Clone the repository**
+### Step 1 - Clone the osgEarth repository
 
 Pull down the source from GitHub and create a ```build``` folder for your out-of-source build. We always recommend doing an out-of-source build to avoid problems down the road!
 
 ```
-git clone --recurse-submodules https://github.com/gwaldron/osgearth.git osgearth
-mkdir build
+mkdir osgearth && cd osgearth
+git clone --recurse-submodules https://github.com/gwaldron/osgearth.git repo
 ```
 
-This will clone the repository into a folder called `osgearth` and pull down all the submodules.
+This will clone the repository into a folder called `repo` and pull down any submodules.
 
-**Step 4 - Configure CMake**
 
-On Windows, you can run the provided script `bootstrap-vcpkg.bat` to configure your CMake build. This can take a while since it needs to download and build all your dependencies.
+### Step 2 - Install vcpkg
 
-Otherwise, follow these steps:
+First, clone and bootstrap the [vcpkg](https://github.com/Microsoft/vcpkg) package manager by following the instructions.
 
-vcpkg provides a CMake toolchain file that helps osgEarth find all of its dependencies.
 
-Note: You’ll need to specify a different build directory based on your build configuration (Release, RelWIthDebInfo, Debug) and specify the build type using ```-DCMAKE_BUILD_TYPE```. This is because some dependencies of osgEarth don’t pick up both debug and release versions without specifying the build type. Hopefully this will be fixed in future CMake versions.
+### Step 3 - Configure for GL3 or GLCORE support (OPTIONAL but RECOMMENDED)
 
-Most developers will use a RelWithDebInfo build, like so:
-
+If you want to build with OpenSceneGraph that support GL3 or GLCORE OpenGL profile, go into your `vcpkg` installation and locate the file
 ```
-cmake -S osgearth -B build -G "Visual Studio 17 2022 Win64" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DWIN32_USE_MP=ON -DCMAKE_INSTALL_PREFIX=[installroot] -DCMAKE_TOOLCHAIN_FILE=[vcpkgroot]\scripts\buildsystems\vcpkg.cmake
+ports/osg/portfile.cmake
+```
+In this file, find the line
+```
+set(osg_OPENGL_PROFILE "GL2")
+```
+...and change "GL2" to either "GL3" or "GLCORE".
+
+(Note: GLCORE is required for some platforms like MacOSX, Mesa, or VMWare).
+
+
+### Step 4 - Configure your build
+
+On Windows we provide a batch script to configure your CMake build. This can take a while since it needs to fetch and build all your dependencies:
+```
+cd repo
+bootstrap-vcpkg.bat
 ```
 
-osgEarth provides a vcpkg.json manifest file that lists all of it's necessary dependencies.  The vcpkg toolchain integration will notice this file and install the necessary dependencies in your build\vcpkg_installed directory.
+### Step 5 - Build and install osgEarth
 
-**Step 5 - Build and install osgEarth**
-
-You can build and install osgEarth on the command line using CMake or you can open up the Visual Studio solution and build it from there.
-
+You can build and install osgEarth on the command line using CMake or you can open up the Visual Studio solution and build it from there. Either way, build the INSTALL target.
 ```
 cmake --build build --target INSTALL --config RelWithDebInfo
 ```
 
-**Step 6 - Set up your runtime environment**
+### Step 6 - Set up your runtime environment
 
 You’ll need to make sure that the vcpkg dependencies and osgEarth are in your path:
-
 ```
 set PATH=%PATH%;path\to\build\vcpkg_installed\x64-windows\bin
+set PATH=%PATH%;path\to\build\vcpkg_installed\x64-windows\plugins\osgPlugins-3.6.5
 set PATH=%PATH%;path\to\build\vcpkg_installed\x64-windows\tools\osg
 set PATH=%PATH%;[installroot]
 ```
 
-## Building with support for cesium-native
-See documentation at [here](cesium_native.md) for building osgEarth with support for cesium-native.
+Done!
 
-## Checking for an OpenGL Core Profile Context
-Some situations require you to have an OpenGL Core Profile context.  The ability to create a core context is available when OSG is built with OPENGL_PROFILE=GL3 or GLCORE.  Environments such as Apple OSX and VMWare require it as does debugging with tools like NVidia NSight.  You can check to see if you are running with an OpenGL Core Profile by running a command like this (Windows)
-```
-set OSG_GL_CONTEXT_VERSION=4.6
-osgearth_version --caps
-```
+## Linux Build
 
-If all went well, it should report **"Core Profile = yes"**.
+vcpkg is one option for building osgEarth and all the dependencies, but it is also possible to use the Linux binary repositories to install dependencies quickly.  This is based on Ubuntu but the idea is the same; install the required dependencies and compile osgEarth.  Here are the basics:
 
-You can disable the CORE profile and select a compatibility profile by setting a profile mask like so
-
-```
-set OSG_GL_CONTEXT_PROFILE_MASK=1
-```
-
-The context version and profile mask are also settable via the `osg::DisplaySettings` class in the OpenSceneGraph API.
-
-## Linux Build Example
-vcpkg is one option for building osgEarth and all the dependencies, but it is also possible to use the Linux binary repositories to install dependencies quickly.  This is based on Ubuntu but the idea is the same, install the required dependencies and compile osgEarth.  Here are the basics:
-
-Install Build essentials
+Install your compiler if you haven't already:
 ```
 sudo apt update && sudo apt install build-essential
 ```
-Install GDAL:
+Install GDAL & GLEW:
 ```
 sudo apt-get install libgdal-dev
-```
-Install GLEW
-```
 sudo apt-get install libglew-dev
 ```
-Build Openscenegraph.  This sets GL profile and context which aren't necessary so change accordingly for your needs.
+Build OpenSceneGraph. You can customize the `OPENGL_PROFILE` based on your needs:
 ```
 git clone https://github.com/openscenegraph/OpenSceneGraph.git
 cd OpenSceneGraph
@@ -122,7 +88,7 @@ cmake .. -DOPENGL_PROFILE=GL3 -DOSG_GL_CONTEXT_VERSION=4.6
 make -j8
 sudo make install
 ```
-Build Draco.  This is optional but included in case it is not available in a repo.  The -fPIC flag may be required on some platforms but not others.
+OPTIONAL: Build Draco.  This is optional but included in case it is not available in a repo.  The -fPIC flag may be required on some platforms but not others.
 ```
 git clone https://github.com/google/draco.git
 cd draco
@@ -131,7 +97,7 @@ cmake .. -DCMAKE_CXX_FLAGS=-fPIC
 make -j8
 sudo make install
 ```
-Build osgEarth. Turning off OSGEARTH_ENABLE_FASTDXT may not be necessary but left it here for platforms where it will not build
+Build osgEarth. Turning off OSGEARTH_ENABLE_FASTDXT may not be necessary but left it here for platforms where it will not build.
 ```
 git clone https://github.com/gwaldron/osgearth.git
 cd osgEarth
@@ -144,7 +110,10 @@ After a successful build, it might be necessary to set your dynamic library sear
 ```
 export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64
 ```
-## Tips for Running on Windows WSL2 with nVidia GPU
+
+# Advanced Topics
+
+## Running on Windows WSL2 with nVidia GPU
 In WSL2 (I have tried Ubuntu 20 and 22), follow the previous Linux build example with this change to Openscenegraph:
 Build Openscenegraph.  This sets GL profile to Core and context to 3.3 for Mesa compatibility
 ```
@@ -210,11 +179,32 @@ osgearth_version --caps
 [osgEarth]  [Capabilities] GL_VERSION:        4.2 (Core Profile) Mesa 23.0.4-0ubuntu1~22.04.1
 [osgEarth]  [Capabilities] GL CORE Profile:   yes
 ```
+
+## Cesium-Native Support
+See documentation at [here](cesium_native.md) for building osgEarth with support for cesium-native.
+
+## How to Check for an OpenGL CORE Profile Context
+Some situations require you to have an OpenGL Core Profile context.  The ability to create a core context is available when OSG is built with OPENGL_PROFILE=GL3 or GLCORE.  Environments such as Apple OSX and VMWare require it as does debugging with tools like NVidia NSight.  You can check to see if you are running with an OpenGL Core Profile by running a command like this (Windows)
+```
+set OSG_GL_CONTEXT_VERSION=4.6
+osgearth_version --caps
+```
+
+If all went well, it should report **"Core Profile = yes"**.
+
+You can disable the CORE profile and select a compatibility profile by setting a profile mask like so
+
+```
+set OSG_GL_CONTEXT_PROFILE_MASK=1
+```
+
+The context version and profile mask are also settable via the `osg::DisplaySettings` class in the OpenSceneGraph API.
+
 ## Tips for VMware Users
 
 Running osgEarth in a virtual machine environment can be tricky since they usually don't have direct access to the graphics hardware by default. If you are having trouble you can try these tips.
 
-First, build OSG and osgEarth for GL CORE profile (as above). 
+First, build OpenSceneGraph with support for the `GLCORE` profile (see above).
 
 Next, assess the situation with a capabilities check:
 

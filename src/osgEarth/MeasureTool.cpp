@@ -1,25 +1,11 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 
 #include <osgEarth/MeasureTool>
 #include <osgEarth/GLUtils>
-
+#include <osgEarth/GeoMath>
 
 #define LC "[MeasureTool] "
 
@@ -105,14 +91,12 @@ MeasureToolHandler::rebuild()
 
     // offset to mitigate Z fighting
     RenderSymbol* render = _feature->style().mutable_value().getOrCreate<RenderSymbol>();
-    render->depthOffset().mutable_value().enabled() = true;
     render->depthOffset().mutable_value().automatic() = true;
 
     // define a style for the line
     LineSymbol* ls = _feature->style().mutable_value().getOrCreate<LineSymbol>();
     ls->stroke().mutable_value().color() = Color::Yellow;
-    ls->stroke().mutable_value().width() = 2.0f;
-    ls->stroke().mutable_value().widthUnits() = Units::PIXELS;
+    ls->stroke().mutable_value().width() = Distance(2.0f, Units::PIXELS);
     ls->tessellation() = 150;
 
     _featureNode = new FeatureNode( _feature.get() );

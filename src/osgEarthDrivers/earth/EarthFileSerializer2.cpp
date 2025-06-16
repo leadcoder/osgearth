@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "EarthFileSerializer"
 #include <osgEarth/FileUtils>
@@ -137,9 +123,10 @@ namespace
         Config libraries = conf.child("libraries");
         if (!libraries.value().empty())
         {
-            StringTokenizer izer( ";" );
-            StringVector libs;
-            izer.tokenize( libraries.value(), libs );
+            auto libs = StringTokenizer()
+                .delim(";")
+                .tokenize(libraries.value());
+
             for (StringVector::iterator itr = libs.begin(); itr != libs.end(); ++itr)
             {
                 std::string lib = *itr;

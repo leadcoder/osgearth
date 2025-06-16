@@ -1,33 +1,66 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/FilterContext>
 #include <osgEarth/Session>
 #include <osgEarth/ResourceCache>
-#include <osgEarth/Registry>
+#include <osgEarth/FeatureSource>
 
 using namespace osgEarth;
 
-FilterContext::FilterContext(Session* session,
-    const FeatureProfile* profile,
-    const GeoExtent& workingExtent,
-    FeatureIndexBuilder* index) :
+FilterContext::FilterContext(Session* session, const GeoExtent& workingExtent, FeatureIndexBuilder* index) :
+    _session(session),
+    _extent(workingExtent),
+    _isGeocentric(false),
+    _index(index),
+    _shaderPolicy(osgEarth::SHADERPOLICY_GENERATE)
+{
+    //OE_SOFT_ASSERT(session, "ILLEGAL - session cannot be nullptr");
 
+    _extent = workingExtent;
+
+    if (session)
+    {
+        if (session->getResourceCache())
+        {
+            _resourceCache = session->getResourceCache();
+        }
+        else
+        {
+            _resourceCache = new ResourceCache();
+        }
+
+        if (session->getFeatureSource())
+        {
+            _profile = session->getFeatureSource()->getFeatureProfile();
+        }
+    }
+
+    // attempt to establish a working extent if we don't have one:
+
+    if (!_extent->isValid() &&
+        _profile &&
+        _profile->getExtent().isValid())
+    {
+        _extent = _profile->getExtent();
+    }
+
+    if (!_extent->isValid() &&
+        session &&
+        session->getMapProfile())
+    {
+        _extent = session->getMapProfile()->getExtent();
+    }
+
+    // if the session is set, push its name as the first bc.
+    if (_session.valid())
+    {
+        pushHistory(_session->getName());
+    }
+}
+
+FilterContext::FilterContext(Session* session, const FeatureProfile* profile, const GeoExtent& workingExtent, FeatureIndexBuilder* index) :
     _session(session),
     _profile(profile),
     _extent(workingExtent),
@@ -35,6 +68,8 @@ FilterContext::FilterContext(Session* session,
     _index(index),
     _shaderPolicy(osgEarth::SHADERPOLICY_GENERATE)
 {
+    OE_SOFT_ASSERT(session, "ILLEGAL - session cannot be nullptr");
+
     _extent = workingExtent;
 
     if (session)

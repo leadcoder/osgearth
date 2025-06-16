@@ -1,29 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-
-#ifndef OSGEARTH_TMS_H
-#define OSGEARTH_TMS_H
+#pragma once
 
 #include <osgEarth/Common>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/ElevationLayer>
 #include <osgEarth/URI>
+#include <osgEarth/Containers>
 
 /**
  * TMS (TileMapService)
@@ -503,6 +488,14 @@ namespace osgEarth { namespace TMS
             ProgressCallback* progress,
             const osgDB::Options* writeOptions) const;
 
+        bool write(
+            const URI& uri,
+            const TileKey& key,
+            const osg::HeightField* heightfield,
+            bool invertY,
+            ProgressCallback* progress,
+            const osgDB::Options* writeOptions) const;
+
     private:
         osg::ref_ptr<TMS::TileMap> _tileMap;
         osg::ref_ptr<osgDB::ReaderWriter> _writer;
@@ -539,7 +532,7 @@ namespace osgEarth
         class OSGEARTH_EXPORT Options : public ImageLayer::Options, public TMS::Options {
         public:
             META_LayerOptions(osgEarth, Options, ImageLayer::Options);
-            virtual Config getConfig() const;
+            Config getConfig() const override;
         private:
             void fromConfig(const Config& conf);
         };
@@ -564,21 +557,25 @@ namespace osgEarth
     public: // Layer
         
         //! Establishes a connection to the TMS repository
-        virtual Status openImplementation() override;
-        virtual Status closeImplementation() override;
+        Status openImplementation() override;
+        Status closeImplementation() override;
 
         //! Creates a raster image for the given tile key
-        virtual GeoImage createImageImplementation(const TileKey& key, ProgressCallback* progress) const override;
+        GeoImage createImageImplementation(const TileKey& key, ProgressCallback* progress) const override;
 
         //! Writes a raster image for he given tile key (if open for writing)
-        virtual Status writeImageImplementation(const TileKey& key, const osg::Image* image, ProgressCallback* progress) const override;
+        Status writeImageImplementation(const TileKey& key, const osg::Image* image, ProgressCallback* progress) const override;
+
+        TMS::Driver& getDriver() {
+            return  _driver;
+        }
 
     protected: // Layer
 
         //! Called by constructors
-        virtual void init() override;
+        void init() override;
 
-        virtual bool isWritingSupported() const override { return true; }
+        bool isWritingSupported() const override { return true; }
 
     protected:
 
@@ -600,7 +597,10 @@ namespace osgEarth
         class OSGEARTH_EXPORT Options : public ElevationLayer::Options, public TMS::Options {
         public:
             META_LayerOptions(osgEarth, Options, ElevationLayer::Options);
-            virtual Config getConfig() const;
+            OE_OPTION(std::string, elevationEncoding, {});
+            OE_OPTION(bool, stitchEdges, false);
+            OE_OPTION(RasterInterpolation, interpolation, INTERP_BILINEAR);
+            Config getConfig() const override;
         private:
             void fromConfig(const Config& conf);
         };
@@ -621,24 +621,42 @@ namespace osgEarth
         void setFormat(const std::string& value);
         const std::string& getFormat() const;
 
+        //! Encoding encoding type
+        //! @param value Encoding type, one of "" (default), "mapbox", "terrarium"
+        void setElevationEncoding(const std::string& value);
+        const std::string& getElevationEncoding() const;
+
+        //! Whether to stitch the edges of abutting tiles together to prevent gaps.
+        //! Some elevation data is image based, and the side of one tile does not match
+        //! the value on the correspond side of the abutting tile. This option will
+        //! resample the data to make the edges match, for a small performance hit.
+        //! @param value True to stitch edges (default is false)
+        void setStitchEdges(const bool& value);
+        const bool& getStitchEdges() const;
+
+        //! Interpolation method to use when stitching edges = true.
+        //! Default is INTERP_BILINEAR.
+        void setInterpolation(const RasterInterpolation& value);
+        const RasterInterpolation& getInterpolation() const;
+
     public: // Layer
         
         //! Establishes a connection to the TMS repository
-        virtual Status openImplementation() override;
-        virtual Status closeImplementation() override;
+        Status openImplementation() override;
+        Status closeImplementation() override;
 
         //! Creates a heightfield for the given tile key
-        virtual GeoHeightField createHeightFieldImplementation(const TileKey& key, ProgressCallback* progress) const override;
+        GeoHeightField createHeightFieldImplementation(const TileKey& key, ProgressCallback* progress) const override;
 
         //! Writes a raster image for he given tile key (if open for writing)
-        virtual Status writeHeightFieldImplementation(const TileKey& key, const osg::HeightField* hf, ProgressCallback* progress) const override;
+        Status writeHeightFieldImplementation(const TileKey& key, const osg::HeightField* hf, ProgressCallback* progress) const override;
 
     protected: // Layer
 
         //! Called by constructors
-        virtual void init() override;
+        void init() override;
 
-        virtual bool isWritingSupported() const override { return true; }
+        bool isWritingSupported() const override { return true; }
 
     protected:
 
@@ -647,11 +665,10 @@ namespace osgEarth
 
     private:
         osg::ref_ptr<TMSImageLayer> _imageLayer;
+        mutable Util::LRUCache<TileKey, GeoImage> _stitchingCache{ true, 64 };
     };
 
 } // namespace osgEarth
 
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::TMSImageLayer::Options);
 OSGEARTH_SPECIALIZE_CONFIG(osgEarth::TMSElevationLayer::Options);
-
-#endif // OSGEARTH_TMS_H

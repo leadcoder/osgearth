@@ -1,27 +1,12 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-
-#ifndef OSGEARTHSYMBOLOGY_ALTITUDE_SYMBOL_H
-#define OSGEARTHSYMBOLOGY_ALTITUDE_SYMBOL_H 1
+#pragma once
 
 #include <osgEarth/Symbol>
 #include <osgEarth/Expression>
+#include <osgEarth/Units>
 
 namespace osgEarth
 {
@@ -76,11 +61,14 @@ namespace osgEarth
          */
         enum Binding
         {
-            /** Clamp every vertex independently */
+            //! Clamp every vertex independently
             BINDING_VERTEX,
 
-            /** Clamp to the centroid of the entire geometry */
-            BINDING_CENTROID
+            //! Clamp to the centroid of the entire geometry
+            BINDING_CENTROID,
+            
+            //! Clamp each endpoint of a linestring and interpolate the rest
+            BINDING_ENDPOINT
         };
 
     public:
@@ -90,44 +78,31 @@ namespace osgEarth
         AltitudeSymbol( const Config& conf =Config() );
 
         /** How to clamp instances to the terrain (default is CLAMP_NONE) */
-        optional<Clamping>& clamping() { return _clamping; }
-        const optional<Clamping>& clamping() const { return _clamping; }
+        OE_OPTION(Clamping, clamping, CLAMP_NONE);
 
         /** Method of terrain following to use (default is TECHNIQUE_MAP) */
-        optional<Technique>& technique() { return _technique; }
-        const optional<Technique>& technique() const { return _technique; }
+        OE_OPTION(Technique, technique, TECHNIQUE_MAP);
 
-        /** Terrain resolution at which to perform clamping (in map units) */
-        optional<float>& clampingResolution() { return _resolution; }
-        const optional<float>& clampingResolution() const { return _resolution; }
+        /** Terrain resolution at which to perform clamping */
+        OE_OPTION(Distance, clampingResolution, Distance(5.0, Units::METERS));
 
         /** Granularity at which to clamp a geometry */
-        optional<Binding>& binding() { return _binding; }
-        const optional<Binding>& binding() const { return _binding; }
+        OE_OPTION(Binding, binding, BINDING_VERTEX);
 
         /** Vertical offset of geometry after clamping */
-        optional<NumericExpression>& verticalOffset() { return _verticalOffset; }
-        const optional<NumericExpression>& verticalOffset() const { return _verticalOffset; }
+        //! TODO: change this to Expression<Distance>
+        OE_OPTION(NumericExpression, verticalOffset, { 1.0 });
 
         /** Vertical scale factor to apply to geometry's Z after clamping. */
-        optional<NumericExpression>& verticalScale() { return _verticalScale; }
-        const optional<NumericExpression>& verticalScale() const { return _verticalScale; }
+        //! TODO: change this to Expression<float>
+        OE_OPTION(NumericExpression, verticalScale, { 0.0 });
 
     public:
-        virtual Config getConfig() const;
-        virtual void mergeConfig( const Config& conf );
+        Config getConfig() const override;
+        void mergeConfig(const Config& conf) override;
         static void parseSLD(const Config& c, class Style& style);
 
     protected:
         virtual ~AltitudeSymbol() { }
-
-        optional<Clamping>           _clamping;
-        optional<Technique>          _technique;
-        optional<Binding>            _binding;
-        optional<float>              _resolution;
-        optional<NumericExpression>  _verticalOffset;
-        optional<NumericExpression>  _verticalScale;
     };
 } // namespace osgEarth
-
-#endif // OSGEARTH_SYMBOLOGY_SYMBOL_H

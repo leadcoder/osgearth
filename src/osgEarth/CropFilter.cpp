@@ -1,26 +1,14 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/CropFilter>
 
 #define LC "[CropFilter] "
 
 using namespace osgEarth;
+
+//OSGEARTH_REGISTER_SIMPLE_FEATUREFILTER(crop, CropFilter);
 
 CropFilter::CropFilter(CropFilter::Method method) :
     _method(method)
@@ -82,7 +70,13 @@ CropFilter::push( FeatureList& input, FilterContext& context )
     {
 #ifdef OSGEARTH_HAVE_GEOS
         // create the intersection polygon:
-        osg::ref_ptr<Polygon> poly;
+        Polygon poly;
+        poly.reserve(4);
+        poly.push_back(osg::Vec3d(extent.xMin(), extent.yMin(), 0));
+        poly.push_back(osg::Vec3d(extent.xMax(), extent.yMin(), 0));
+        poly.push_back(osg::Vec3d(extent.xMax(), extent.yMax(), 0));
+        poly.push_back(osg::Vec3d(extent.xMin(), extent.yMax(), 0));
+
         FeatureList output;
         output.reserve(input.size());
         
@@ -110,24 +104,12 @@ CropFilter::push( FeatureList& input, FilterContext& context )
                     // then move on to the cropping operation:
                     else
                     {
-                        if (!poly.valid())
+                        osg::ref_ptr<Geometry> cropped = featureGeom->crop(&poly);
+                        if (cropped.valid() && cropped->isValid())
                         {
-                            poly = new Polygon();
-                            poly->push_back(osg::Vec3d(extent.xMin(), extent.yMin(), 0));
-                            poly->push_back(osg::Vec3d(extent.xMax(), extent.yMin(), 0));
-                            poly->push_back(osg::Vec3d(extent.xMax(), extent.yMax(), 0));
-                            poly->push_back(osg::Vec3d(extent.xMin(), extent.yMax(), 0));
-                        }
-
-                        osg::ref_ptr<Geometry> croppedGeometry;
-                        if (featureGeom->crop(poly.get(), croppedGeometry))
-                        {
-                            if (croppedGeometry->isValid())
-                            {
-                                feature->setGeometry(croppedGeometry.get());
-                                keepFeature = true;
-                                newExtent.expandToInclude(GeoExtent(newExtent.getSRS(), croppedGeometry->getBounds()));
-                            }
+                            feature->setGeometry(cropped);
+                            keepFeature = true;
+                            newExtent.expandToInclude(GeoExtent(newExtent.getSRS(), cropped->getBounds()));
                         }
                     }
                 }

@@ -1,23 +1,8 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
-#ifndef OSGEARTH_STRING_UTILS_H
-#define OSGEARTH_STRING_UTILS_H 1
+#pragma once
 
 #include <osgEarth/Common>
 #include <osg/Vec3>
@@ -35,325 +20,380 @@
 #include <set>
 #include <cctype>
 
-namespace osgEarth { namespace Util
-{
-    extern OSGEARTH_EXPORT const std::string EMPTY_STRING;
+namespace osgEarth {
+    namespace Util
+    {
+        extern OSGEARTH_EXPORT const std::string EMPTY_STRING;
 
-    using StringVector = std::vector<std::string>;
-    using StringSet = std::set<std::string>;
-    using StringTable = std::unordered_map<std::string, std::string>;
+        using StringVector = std::vector<std::string>;
+        using StringSet = std::set<std::string>;
+        using StringTable = std::unordered_map<std::string, std::string>;
 
-    /** Replaces all the instances of "pattern" with "replacement" in "in_out" */
-    extern OSGEARTH_EXPORT std::string& replaceIn(
-        std::string&       in_out,
-        const std::string& pattern,
-        const std::string& replacement );
+        /** Replaces all the instances of "pattern" with "replacement" in "in_out" */
+        extern OSGEARTH_EXPORT std::string& replaceIn(
+            std::string& in_out,
+            const std::string& pattern,
+            const std::string& replacement);
 
-    /** Replaces all the instances of "pattern" with "replacement" in "in_out" (case-insensitive) */
-    extern OSGEARTH_EXPORT std::string& ciReplaceIn(
-        std::string&       in_out,
-        const std::string& pattern,
-        const std::string& replacement );
+        /** Replaces all the instances of "pattern" with "replacement" in "in_out" (case-insensitive) */
+        extern OSGEARTH_EXPORT std::string& ciReplaceIn(
+            std::string& in_out,
+            const std::string& pattern,
+            const std::string& replacement);
 
-    /**
-     * Trims whitespace from the ends of a string.
-     */
-    extern OSGEARTH_EXPORT std::string trim( const std::string& in );
+        //! Whether string contains a valid number.
+        extern OSGEARTH_EXPORT std::pair<bool,double> isValidNumber(const std::string& str);
 
-    /**
-     * Trims whitespace from the ends of a string; in-place modification on the string to reduce string copies.
-     */
-    extern OSGEARTH_EXPORT void trim2( std::string& str );
+        /**
+         * Trims whitespace from the ends of a string.
+         */
+        extern OSGEARTH_EXPORT std::string trim(const std::string& in);
 
-    //! Removes leading and trailing whitespace, and replaces all other
-    //! whitespace with single spaces
-    extern OSGEARTH_EXPORT std::string trimAndCompress(const std::string& in);
+        /**
+         * Trims whitespace from the ends of a string; in-place modification on the string to reduce string copies.
+         */
+        extern OSGEARTH_EXPORT void trim2(std::string& str);
 
-    /**
-     * True is "ref" starts with "pattern"
-     */
-    extern OSGEARTH_EXPORT bool startsWith(
-        const std::string& ref,
-        const std::string& pattern,
-        bool               caseSensitive =true,
-        const std::locale& locale        =std::locale() );
+        //! Removes leading and trailing whitespace, and replaces all other
+        //! whitespace with single spaces
+        extern OSGEARTH_EXPORT std::string trimAndCompress(const std::string& in);
 
-    /**
-     * True is "ref" ends with "pattern"
-     */
-    extern OSGEARTH_EXPORT bool endsWith(
-        const std::string& ref,
-        const std::string& pattern,
-        bool               caseSensitive =true,
-        const std::locale& locale        =std::locale() );
+        /**
+         * True is "ref" starts with "pattern"
+         */
+        extern OSGEARTH_EXPORT bool startsWith(
+            const std::string& ref,
+            const std::string& pattern,
+            bool               caseSensitive = true,
+            const std::locale& locale = std::locale());
 
-    /**
-     * Case-insensitive compare
-     */
-    extern OSGEARTH_EXPORT bool ciEquals(
-        const std::string& lhs,
-        const std::string& rhs,
-        const std::locale& local = std::locale() );
+        /**
+         * True is "ref" ends with "pattern"
+         */
+        extern OSGEARTH_EXPORT bool endsWith(
+            const std::string& ref,
+            const std::string& pattern,
+            bool               caseSensitive = true,
+            const std::locale& locale = std::locale());
 
-    /**
-     * Case-insensitive STL comparator
-     */
-    inline bool ci_char_equals(char c1, char c2) {
-        return std::tolower(c1) == std::tolower(c2);
-    }
-    inline bool ci_equals(const std::string& lhs, const std::string& rhs) {
-        return (lhs.size() == rhs.size()) &&
-            std::equal(lhs.begin(), lhs.end(), rhs.begin(), ci_char_equals);
-    }
-    struct ci_string_less {
-        bool operator()(const std::string& lhs, const std::string& rhs) const {
-            for(size_t i=0; i<std::min(lhs.size(), rhs.size()); ++i) {
-                if (std::tolower(lhs[i]) < std::tolower(rhs[i])) return true;
-                if (std::tolower(lhs[i]) > std::tolower(rhs[i])) return false;
+        /**
+         * Case-insensitive compare
+         */
+        extern OSGEARTH_EXPORT bool ciEquals(
+            const std::string& lhs,
+            const std::string& rhs,
+            const std::locale& local = std::locale());
+
+        /**
+         * Case-insensitive STL comparator
+         */
+        inline bool ci_char_equals(char c1, char c2) {
+            return std::tolower(c1) == std::tolower(c2);
+        }
+        inline bool ci_equals(const std::string& lhs, const std::string& rhs) {
+            return (lhs.size() == rhs.size()) &&
+                std::equal(lhs.begin(), lhs.end(), rhs.begin(), ci_char_equals);
+        }
+        struct ci_string_less {
+            inline bool operator()(const std::string& a, const std::string& b) const {
+                return std::lexicographical_compare(
+                    a.begin(), a.end(),
+                    b.begin(), b.end(),
+                    [](unsigned char c1, unsigned char c2) {
+                        return std::tolower(c1) < std::tolower(c2);
+                    });
+            };
+        };
+        struct ci_ascii_string_less {
+            bool operator()(const std::string& a, const std::string& b) const {
+                size_t len = std::min(a.size(), b.size());
+                for (size_t i = 0; i < len; ++i) {
+                    char ac = std::tolower(static_cast<unsigned char>(a[i]));
+                    char bc = std::tolower(static_cast<unsigned char>(b[i]));
+                    if (ac < bc) return true;
+                    if (ac > bc) return false;
+                }
+                return a.size() < b.size();
             }
-            return lhs.size() < rhs.size();
+        };
+
+        //! Parse a string into a double, return NAN if it fails.
+        extern OSGEARTH_EXPORT double parseDouble(const std::string& str);
+
+        //! Parse a string into a double, return the value and the index of the end of the parsed number.
+        //! return NAN is it failes.
+        extern OSGEARTH_EXPORT std::pair<double, int> parseDoubleAndIndex(const std::string& str);
+
+        extern OSGEARTH_EXPORT std::string joinStrings(const StringVector& input, char delim);
+
+        //! Returns a lower-case version of the input string.
+        inline std::string toLower(const std::string& input) {
+            std::string output(input);
+            std::transform(output.begin(), output.end(), output.begin(), ::tolower);
+            return output;
         }
-    };
+
+        //! Lower-cases a string in sutu.
+        inline std::string& toLowerInPlace(std::string& input) {
+            std::transform(input.begin(), input.end(), input.begin(), ::tolower);
+            return input;
+        }
+
+        /** Parses a color string in the form "255 255 255 255" (r g b a [0..255]) into an OSG color. */
+        extern OSGEARTH_EXPORT osg::Vec4ub stringToColor(const std::string& str, osg::Vec4ub default_value);
+
+        /** Creates a string in the form "255 255 255 255" (r g b a [0..255]) from a color */
+        extern OSGEARTH_EXPORT std::string colorToString(const osg::Vec4ub& c);
+
+        /** Converts a string to a vec3f */
+        extern OSGEARTH_EXPORT osg::Vec3f stringToVec3f(const std::string& str, const osg::Vec3f& default_value);
+
+        /** Converts a vec3f to a string */
+        extern OSGEARTH_EXPORT std::string vec3fToString(const osg::Vec3f& v);
+
+        /** Parses an HTML color ("#rrggbb" or "#rrggbbaa") into an OSG color. */
+        extern OSGEARTH_EXPORT osg::Vec4f htmlColorToVec4f(const std::string& html);
+
+        /** Makes an HTML color ("#rrggbb" or "#rrggbbaa") from an OSG color. */
+        extern OSGEARTH_EXPORT std::string vec4fToHtmlColor(const osg::Vec4f& c);
+
+        /** Makes a valid filename out of a string */
+        extern OSGEARTH_EXPORT std::string toLegalFileName(const std::string& input, bool allowSubdir = false, const char* replacementChar = NULL);
+
+        /** Generates a hashed integer for a string (poor man's MD5) */
+        extern OSGEARTH_EXPORT unsigned hashString(const std::string& input);
+
+        /** Same as hashString but returns a string value. */
+        extern OSGEARTH_EXPORT std::string hashToString(const std::string& input);
+
+        /**
+        * Gets the total number of seconds formatted as H:M:S
+        */
+        extern OSGEARTH_EXPORT std::string prettyPrintTime(double seconds);
+
+        /**
+        * Gets a pretty printed version of the given size in MB.
+        */
+        extern OSGEARTH_EXPORT std::string prettyPrintSize(double mb);
+
+        //! Extract the "i-th" token from a delimited string
+        extern OSGEARTH_EXPORT std::string getToken(const std::string& input, unsigned i, char delim);
+
+        //! Remove outer quotes from a string
+        extern OSGEARTH_EXPORT std::string unquote(const std::string& input);
 
 
-    extern OSGEARTH_EXPORT std::string joinStrings( const StringVector& input, char delim );
+        //------------------------------------------------------------------------
+        // conversion templates
 
-    /** Returns a lower-case version of the input string. */
-    extern OSGEARTH_EXPORT std::string toLower( const std::string& input );
-
-    /** Parses a color string in the form "255 255 255 255" (r g b a [0..255]) into an OSG color. */
-    extern OSGEARTH_EXPORT osg::Vec4ub stringToColor(const std::string& str, osg::Vec4ub default_value);
-
-    /** Creates a string in the form "255 255 255 255" (r g b a [0..255]) from a color */
-    extern OSGEARTH_EXPORT std::string colorToString( const osg::Vec4ub& c );
-
-    /** Converts a string to a vec3f */
-    extern OSGEARTH_EXPORT osg::Vec3f stringToVec3f( const std::string& str, const osg::Vec3f& default_value );
-
-    /** Converts a vec3f to a string */
-    extern OSGEARTH_EXPORT std::string vec3fToString( const osg::Vec3f& v );
-
-    /** Parses an HTML color ("#rrggbb" or "#rrggbbaa") into an OSG color. */
-    extern OSGEARTH_EXPORT osg::Vec4f htmlColorToVec4f( const std::string& html );
-
-    /** Makes an HTML color ("#rrggbb" or "#rrggbbaa") from an OSG color. */
-    extern OSGEARTH_EXPORT std::string vec4fToHtmlColor( const osg::Vec4f& c );
-
-    /** Makes a valid filename out of a string */
-    extern OSGEARTH_EXPORT std::string toLegalFileName( const std::string& input, bool allowSubdir=false, const char* replacementChar=NULL);
-
-    /** Generates a hashed integer for a string (poor man's MD5) */
-    extern OSGEARTH_EXPORT unsigned hashString( const std::string& input );
-
-    /** Same as hashString but returns a string value. */
-    extern OSGEARTH_EXPORT std::string hashToString(const std::string& input);
-
-    /**
-    * Gets the total number of seconds formatted as H:M:S
-    */
-    extern OSGEARTH_EXPORT std::string prettyPrintTime( double seconds );
-
-    /**
-    * Gets a pretty printed version of the given size in MB.
-    */
-    extern OSGEARTH_EXPORT std::string prettyPrintSize( double mb );  
-    
-    //! Extract the "i-th" token from a delimited string
-    extern OSGEARTH_EXPORT std::string getToken(const std::string& input, unsigned i, const std::string& delims=",");
-
-
-    //------------------------------------------------------------------------
-    // conversion templates
-
-    // converts a string to primitive using serialization
-    template<typename T> inline T
-    as( const std::string& str, const T& default_value )
-    {
-        T temp = default_value;
-        std::istringstream strin( str );
-        if ( !strin.eof() ) strin >> temp;
-        return temp;
-    }
-
-    // template specialization for integers (to handle hex)
-#define AS_INT_DEC_OR_HEX(TYPE) \
-    template<> inline TYPE \
-    as< TYPE >(const std::string& str, const TYPE & dv) { \
-        TYPE temp = dv; \
-        std::istringstream strin( trim(str) ); \
-        if ( !strin.eof() ) { \
-            if ( str.length() >= 2 && str[0] == '0' && str[1] == 'x' ) { \
-                strin.seekg( 2 ); \
-                strin >> std::hex >> temp; \
-            } \
-            else { \
-                strin >> temp; \
-            } \
-        } \
-        return temp; \
-    }
-
-    AS_INT_DEC_OR_HEX(int)
-    AS_INT_DEC_OR_HEX(unsigned)
-    AS_INT_DEC_OR_HEX(short)
-    AS_INT_DEC_OR_HEX(unsigned short)
-    AS_INT_DEC_OR_HEX(long)
-    AS_INT_DEC_OR_HEX(unsigned long)
-
-    // template specialization for a bool
-    template<> inline bool
-    as<bool>( const std::string& str, const bool& default_value )
-    {
-        std::string temp = toLower(str);
-        return
-            temp == "true"  || temp == "yes" || temp == "on" ? true :
-            temp == "false" || temp == "no" || temp == "off" ? false :
-            default_value;
-    }
-
-    template<> inline osg::Vec3f
-    as<osg::Vec3f>( const std::string& str, const osg::Vec3f& default_value )
-    {
-        return stringToVec3f(str, default_value);
-    }
-
-    // template specialization for string
-    template<> inline std::string
-    as<std::string>( const std::string& str, const std::string& default_value )
-    {
-        return str;
-    }
-
-    // snips a substring and parses it.
-    template<typename T> inline bool
-    as(const std::string& in, unsigned start, unsigned len, T default_value)
-    {
-        std::string buf;
-        std::copy( in.begin()+start, in.begin()+start+len, std::back_inserter(buf) );
-        return as<T>(buf, default_value);
-    }
-
-    // converts a primitive to a string
-    template<typename T> inline std::string
-    toString(const T& value)
-    {
-        std::stringstream out;
-		//out << std::setprecision(20) << std::fixed << value;
-		out << std::setprecision(20) <<  value;
-        std::string outStr;
-        outStr = out.str();
-        return outStr;
-    }
-
-    // template speciallization for a bool to print out "true" or "false"
-    template<> inline std::string
-    toString<bool>(const bool& value)
-    {
-        return value ? "true" : "false";
-    }
-
-    template<> inline std::string
-    toString<osg::Vec3f>(const osg::Vec3f& value)
-    {
-        return vec3fToString(value);
-    }
-
-    /**
-     * Assembles and returns an inline string using a stream-like << operator.
-     * Example:
-     *     std::string str = Stringify() << "Hello, world " << variable;
-     */
-    struct Stringify
-    {
-        operator std::string () const
+        // converts a string to primitive using serialization
+        template<typename T> inline T as(const std::string& str, const T& default_value)
         {
-            std::string result;
-            result = buf.str();
-            return result;
+            T temp = default_value;
+            std::istringstream strin(str);
+            if (!strin.eof()) strin >> temp;
+            return temp;
         }
 
-        template<typename T>
-        Stringify& operator << (const T& val) { buf << val; return (*this); }
+        // template specialization for integers (to handle hex)
+#define AS_INT_DEC_OR_HEX(TYPE) \
+        template<> inline TYPE as<TYPE>(const std::string& str, const TYPE& dv) { \
+            auto value = parseDouble(str); \
+            return std::isnan(value) ? dv : (TYPE)value; }
 
-        Stringify& operator << (const Stringify& val) { buf << (std::string)val; return (*this); }
+        AS_INT_DEC_OR_HEX(int);
+        AS_INT_DEC_OR_HEX(unsigned);
+        AS_INT_DEC_OR_HEX(short);
+        AS_INT_DEC_OR_HEX(unsigned short);
+        AS_INT_DEC_OR_HEX(long);
+        AS_INT_DEC_OR_HEX(unsigned long);
 
-    protected:
-        std::stringstream buf;
-    };
+        // template specialization for a bool
+        template<> inline bool
+        as<bool>(const std::string& str, const bool& default_value)
+        {
+            std::string temp = toLower(str);
+            return
+                temp == "true" || temp == "yes" || temp == "on" ? true :
+                temp == "false" || temp == "no" || temp == "off" ? false :
+                default_value;
+        }
 
-    template<> inline
-    Stringify& Stringify::operator << <bool>(const bool& val) { buf << (val ? "true" : "false"); return (*this); }
+        template<> inline osg::Vec3f
+            as<osg::Vec3f>(const std::string& str, const osg::Vec3f& default_value)
+        {
+            return stringToVec3f(str, default_value);
+        }
 
-    template<> inline
-    Stringify& Stringify::operator << <osg::Vec3f>(const osg::Vec3f& val) {
-        buf << val.x() << " " << val.y() << " " << val.z(); return (*this); }
+        // template specialization for string
+        template<> inline std::string
+            as<std::string>(const std::string& str, const std::string& default_value)
+        {
+            return str;
+        }
 
-    template<> inline
-    Stringify& Stringify::operator << <osg::Vec3d>(const osg::Vec3d& val ) {
-        buf << val.x() << " " << val.y() << " " << val.z(); return (*this); }
+        // snips a substring and parses it.
+        template<typename T> inline bool
+            as(const std::string& in, unsigned start, unsigned len, T default_value)
+        {
+            std::string buf;
+            std::copy(in.begin() + start, in.begin() + start + len, std::back_inserter(buf));
+            return as<T>(buf, default_value);
+        }
 
-    template<> inline
-    Stringify& Stringify::operator << <osg::Vec4f>(const osg::Vec4f& val) {
-        buf << val.r() << " " << val.g() << " " << val.b() << " " << val.a(); return (*this); }
+        // converts a primitive to a string
+        template<typename T> inline std::string
+            toString(const T& value)
+        {
+            std::stringstream out;
+            //out << std::setprecision(20) << std::fixed << value;
+            out << std::setprecision(20) << value;
+            std::string outStr;
+            outStr = out.str();
+            return outStr;
+        }
 
-    /**
-     * Splits a string up into a vector of strings based on a set of
-     * delimiters, quotes, and rules.
-     */
-    class OSGEARTH_EXPORT StringTokenizer
-    {
-    public:
-        StringTokenizer( 
-            const std::string& delims =" \t\r\n", 
-            const std::string& quotes ="'\"" );
+        // template speciallization for a bool to print out "true" or "false"
+        template<> inline std::string
+            toString<bool>(const bool& value)
+        {
+            return value ? "true" : "false";
+        }
 
-        StringTokenizer(
-            const std::string& input,
-            StringVector& output,
-            const std::string& delims =" \t\r\n", 
-            const std::string& quotes ="'\"",
-            bool keepEmpties =true, 
-            bool trimTokens =true);
+        template<> inline std::string
+            toString<osg::Vec3f>(const osg::Vec3f& value)
+        {
+            return vec3fToString(value);
+        }
 
-        StringTokenizer(
-            const std::string& input,
-            StringTable& output,
-            const std::string& delims = " \t\r\n",
-            const std::string& keypairseparators = "=",
-            const std::string& quotes = "'\"",
-            bool keepEmpties = true,
-            bool trimTokens = true);
+        /**
+         * Assembles and returns an inline string using a stream-like << operator.
+         * Example:
+         *     std::string str = Stringify() << "Hello, world " << variable;
+         */
+        struct Stringify
+        {
+            operator std::string() const
+            {
+                std::string result;
+                result = buf.str();
+                return result;
+            }
 
+            template<typename T>
+            Stringify& operator << (const T& val) { buf << val; return (*this); }
 
-        void tokenize( const std::string& input, StringVector& output ) const;
+            Stringify& operator << (const Stringify& val) { buf << (std::string)val; return (*this); }
 
-        bool& keepEmpties() { return _allowEmpties; }
+        protected:
+            std::stringstream buf;
+        };
 
-        bool& trimTokens() { return _trimTokens; }
+        template<> inline
+            Stringify& Stringify::operator << <bool>(const bool& val) { buf << (val ? "true" : "false"); return (*this); }
 
-        void addDelim( char delim, bool keepAsToken =false );
+        template<> inline
+            Stringify& Stringify::operator << <osg::Vec3f>(const osg::Vec3f& val) {
+            buf << val.x() << " " << val.y() << " " << val.z(); return (*this);
+        }
 
-        void addDelims( const std::string& delims, bool keepAsTokens =false );
+        template<> inline
+            Stringify& Stringify::operator << <osg::Vec3d>(const osg::Vec3d& val) {
+            buf << val.x() << " " << val.y() << " " << val.z(); return (*this);
+        }
 
-        void addQuote( char delim, bool keepInToken =false );
+        template<> inline
+            Stringify& Stringify::operator << <osg::Vec4f>(const osg::Vec4f& val) {
+            buf << val.r() << " " << val.g() << " " << val.b() << " " << val.a(); return (*this);
+        }
 
-        void addQuotes( const std::string& delims, bool keepInTokens =false );
+        /**
+         * Splits a string up into a vector of strings based on a set of
+         * delimiters, quotes, and rules.
+         */
+        class OSGEARTH_EXPORT StringTokenizer
+        {
+        public:
+            StringTokenizer() = default;
 
-    private:
-        using TokenMap = std::map<char,bool>;
-        TokenMap _delims;
-        TokenMap _quotes;
-        bool     _allowEmpties;
-        bool     _trimTokens;
-    };
-} }
+            //! Tokenize input into output.
+            //! @return true upon success, false if there was a dangling quote.
+            std::vector<std::string> operator()(const std::string& input, bool* error = nullptr) const;
+
+            //! Backwards compatibility
+            OE_DEPRECATED("Use std::vector<std::string> tokenize instead")
+            void tokenize(const std::string& input, std::vector<std::string>& output) const {
+                output = operator()(input, nullptr);
+            }
+
+            //! Alias
+            std::vector<std::string> tokenize(const std::string& input) const {
+                return operator()(input, nullptr);
+            }
+
+            //! Whether to keep emptry tokens in the output.
+            StringTokenizer& keepEmpties(bool value) {
+                _keepEmptyTokens = value;
+                return *this;
+            }
+
+            //! Whether to trim leading and training whitespace from tokens.
+            StringTokenizer& trimTokens(bool value) {
+                _trimTokens = value;
+                return *this;
+            }
+
+            //! Adds a delimiter and whether to keep it in the output as a separate token.
+            StringTokenizer& delim(const std::string& value, bool keepAsToken = false) {
+                _delims[value] = keepAsToken;
+                return *this;
+            }
+
+            //! Adds a quote character and whether to keep it in the output as a separate token.
+            //! Use this is the quote opener is the same as the closer (like "'")
+            StringTokenizer& quote(char opener_and_closer, bool keepInToken = true) {
+                _quotes[opener_and_closer] = std::make_pair(opener_and_closer, keepInToken);
+                return *this;
+            }
+
+            //! Adds a quote character pair and whether to keep them in the output as separate tokens.
+            //! Use this if the quote chars don't match (like '{' and '}')
+            StringTokenizer& quotePair(char opener, char closer, bool keepInToken = true) {
+                _quotes[opener] = std::make_pair(closer, keepInToken);
+                return *this;
+            }
+
+            //! Adds standard whitespace characters as delimiters.
+            StringTokenizer& whitespaceDelims() {
+                return delim(" ").delim("\t").delim("\n").delim("\r");
+            }
+
+            //! Adds the standard quote characters: single and double quotes, kept in the token.
+            StringTokenizer& standardQuotes() {
+                return quote('\'').quote('"');
+            }
+
+            //! Ignores a situation where a quote is opened and never closed.
+            StringTokenizer& ignoreDanglingQuotes() {
+                _ignoreDanglingQuotes = true;
+                return *this;
+            }
+
+        private:
+            using DelimiterMap = std::map<std::string, bool>; // string, keep?
+            using QuoteMap = std::map<char, std::pair<char, bool>>; // open, close, keep?
+
+            DelimiterMap _delims;
+            QuoteMap _quotes;
+            bool _keepEmptyTokens = true;
+            bool _trimTokens = true;
+            bool _ignoreDanglingQuotes = false;
+        };
+    }
+}
 
 
 namespace osgEarth
 {
     namespace Strings = osgEarth::Util;
 }
-
-
-#endif // OSGEARTH_STRING_UTILS_H
-

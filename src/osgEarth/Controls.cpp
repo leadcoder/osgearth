@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/Controls>
 #include <osgEarth/NodeUtils>
@@ -661,12 +647,12 @@ Control::draw(const ControlContext& cx)
                 osg::ref_ptr<LineSymbol> line = new LineSymbol;
                 Stroke& stroke = line->stroke().mutable_value();
                 stroke.color() = *_borderColor;
-                stroke.width() = _borderWidth;
+                stroke.width() = Distance(_borderWidth, Units::PIXELS);
                 stroke.lineCap() = Stroke::LINECAP_SQUARE;
                 stroke.lineJoin() = Stroke::LINEJOIN_MITRE;
 
                 PolygonizeLinesOperator makeBorder(line.get());
-                osg::Geometry* geom = makeBorder( verts.get(), 0L );
+                osg::Geometry* geom = makeBorder(verts.get(), 0L, _borderWidth);
 
                 getGeode()->addDrawable( geom );
             }
@@ -1553,7 +1539,7 @@ Frame::draw( const ControlContext& cx )
         Style style;
         LineSymbol* line = style.getOrCreate<LineSymbol>();
         line->stroke().mutable_value().color() = Color::White;
-        line->stroke().mutable_value().width() = 2.5f;
+        line->stroke().mutable_value().width() = Distance(2.5f, Units::PIXELS);
         GeometryRasterizer ras( (int)_renderSize.x(), (int)_renderSize.y(), style );
         ras.draw( geom.get() );
 

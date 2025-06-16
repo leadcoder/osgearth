@@ -1,23 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
-* Copyright 2020 Pelican Mapping
-* http://osgearth.org
-*
-* osgEarth is free software; you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-* IN THE SOFTWARE.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+* Copyright 2025 Pelican Mapping
+* MIT License
 */
 #include <osgEarth/GLUtils>
 #include <osgEarth/Lighting>
@@ -28,12 +11,12 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Notify>
 
-#include <osg/LineStipple>
 #include <osg/GraphicsContext>
 #include <osgUtil/IncrementalCompileOperation>
 #include <osgViewer/GraphicsWindow>
 #include <osg/Texture2D>
 #include <osg/BindImageTexture>
+#include <osg/LineStipple>
 
 #ifdef OSG_GL_FIXED_FUNCTION_AVAILABLE
 #include <osg/LineWidth>
@@ -482,6 +465,12 @@ CustomRealizeOperation::operator()(osg::Object* object)
             gl.DebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_MEDIUM, 0, nullptr, GL_TRUE);
             gl.DebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_HIGH, 0, nullptr, GL_TRUE);
         }
+    }
+
+    for(auto& op : _moreOperations)
+    {
+        if (op.valid())
+            (*op)(object);
     }
 }
 
@@ -1642,33 +1631,57 @@ GLPipeline::Dispatcher::operator()(osg::GraphicsContext* gc)
         return;
     }
 
-    osg::ref_ptr<osg::Operation> next;
+    OpQ keptOps;
 
-    // check for new job:
-    _queue_mutex.lock();
+    const double MAX_TIME_MS = 1.5;
+    double elapsedTimeMS = 0.0;    
+
+    osg::Timer_t startTick = osg::Timer::instance()->tick();
+
+    while (!_thisQ.empty())
     {
-        if (!_thisQ.empty())
+        osg::ref_ptr<osg::Operation> next;
+
+        // check for new job:
+        _queue_mutex.lock();
         {
-            next = _thisQ.front();
-            _thisQ.pop();
+            if (!_thisQ.empty())
+            {
+                next = _thisQ.front();
+                _thisQ.pop();
+            }
+        }
+        _queue_mutex.unlock();
+
+        if (next.valid())
+        {
+            // run it
+            next->operator()(gc);
+
+            // if keep==true, that means the delegate wishes to run
+            // again for another invocation. In this case we defer it to
+            // the next "frame" as deliniated by the frame-sync. The whole
+            // point of a multi-invocation operation is to let the GPU have
+            // time to complete its async calls between invocations!
+            if (next->getKeep())
+            {
+                _thisQ.push(next);
+            }
+        }
+
+        elapsedTimeMS += osg::Timer::instance()->delta_m(startTick, osg::Timer::instance()->tick());
+        if (elapsedTimeMS >= MAX_TIME_MS)
+        {
+            break;
         }
     }
-    _queue_mutex.unlock();
 
-    if (next.valid())
+    // Add the kept operations back to the queue
+    while (!keptOps.empty())
     {
-        // run it
-        next->operator()(gc);
-
-        // if keep==true, that means the delegate wishes to run
-        // again for another invocation. In this case we defer it to
-        // the next "frame" as deliniated by the frame-sync. The whole
-        // point of a multi-invocation operation is to let the GPU have
-        // time to complete its async calls between invocations!
-        if (next->getKeep())
-        {
-            _thisQ.push(next);
-        }
+        osg::ref_ptr<osg::Operation> i = keptOps.front();
+        keptOps.pop();
+        _thisQ.push(i);
     }
 }
 
@@ -1939,7 +1952,7 @@ void
 GLObjectsCompiler::requestIncrementalCompile(
     const osg::ref_ptr<osg::Node>& node,
     osgUtil::StateToCompile* state,
-    const osg::Object* host,
+    osg::observer_ptr<const osg::Object> host_weak,
     jobs::promise<osg::ref_ptr<osg::Node>> promise) const
 {
     if (!node.valid())
@@ -1953,8 +1966,9 @@ GLObjectsCompiler::requestIncrementalCompile(
 
     if (state != nullptr && !state->empty())
     {
+        osg::ref_ptr<const osg::Object> host;
         osg::ref_ptr<ICO> ico;
-        if (ObjectStorage::get(host, ico) && ico->isActive())
+        if (host_weak.lock(host) && ObjectStorage::get(host.get(), ico) && ico->isActive())
         {
             auto compileSet = new osgUtil::IncrementalCompileOperation::CompileSet();
             compileSet->buildCompileMap(ico->getContextSet(), *state);

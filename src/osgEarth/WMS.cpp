@@ -1,28 +1,12 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "WMS"
 #include <osgEarth/XmlUtils>
 #include <osgEarth/Registry>
 #include <osgEarth/StringUtils>
-#include <osgEarth/Registry>
 #include <osgEarth/TimeSeriesImage>
-#include <osg/ImageSequence>
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
 #include <locale>
@@ -416,7 +400,11 @@ WMS::Driver::open(osg::ref_ptr<const Profile>& profile,
 {
     if (options().times().isSet())
     {
-        StringTokenizer(options().times().get(), _timesVec, ",", "", false, true);
+        _timesVec = StringTokenizer()
+            .delim(",")
+            .keepEmpties(false)
+            .tokenize(options().times().value());
+
         OE_INFO << LC << "WMS-T: found " << _timesVec.size() << " times." << std::endl;
 
         for (unsigned i = 0; i < _timesVec.size(); ++i)
@@ -516,9 +504,10 @@ WMS::Driver::open(osg::ref_ptr<const Profile>& profile,
     // Next, try to glean the extents from the layer list
     if (capabilities.valid())
     {
-        StringTokenizer tok(",");
-        StringVector tized;
-        tok.tokenize(options().layers().value(), tized);
+        auto tized = StringTokenizer()
+            .delim(",")
+            .standardQuotes()
+            .tokenize(options().layers().value());
 
         for (StringVector::const_iterator itr = tized.begin(); itr != tized.end(); ++itr)
         {

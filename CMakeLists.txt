@@ -5,7 +5,6 @@ cmake_minimum_required(VERSION 3.20)
 if (${CMAKE_TOOLCHAIN_FILE} MATCHES ".*vcpkg.cmake.*")
     message(STATUS "Building with vcpkg toolchain.")
     set(USING_VCPKG ON)
-    set(VCPKG_OVERLAY_TRIPLETS ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/triplets)
 endif()
 
 
@@ -20,15 +19,16 @@ project(
 # SDK version number
 set(OSGEARTH_MAJOR_VERSION 3)
 set(OSGEARTH_MINOR_VERSION 7)
-set(OSGEARTH_PATCH_VERSION 0)
+set(OSGEARTH_PATCH_VERSION 3)
 set(OSGEARTH_VERSION ${OSGEARTH_MAJOR_VERSION}.${OSGEARTH_MINOR_VERSION}.${OSGEARTH_PATCH_VERSION})
 
 # Increment this each time the ABI changes
-set(OSGEARTH_SOVERSION 163)
+set(OSGEARTH_SOVERSION 174)
 
-# Require C++14
+# Require C++14, don't fall back, and don't use compiler-specific extensions:
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Detect out-of-source build. We'll need this for protobuf generated files.
 if (NOT "${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
@@ -47,15 +47,25 @@ include_directories(${OSGEARTH_BUILDTIME_INCLUDE_DIR})
 
 # Third-party sources included in the reposotory
 set(OSGEARTH_EMBEDDED_THIRD_PARTY_DIR ${PROJECT_SOURCE_DIR}/src/third_party)
-    
-# Platform-specific settings ............................................
 
-# Default installation folders. The platform-specific includes will
-# override these values as necessary.
-set(INSTALL_RUNTIME_FOLDER "bin${OSGEARTH_INSTALL_FOLDER_SUFFIX}")  # executables
-set(INSTALL_LIBRARY_FOLDER "bin${OSGEARTH_INSTALL_FOLDER_SUFFIX}")  # .dll/.so
-set(INSTALL_ARCHIVE_FOLDER "lib${OSGEARTH_INSTALL_FOLDER_SUFFIX}")  # .lib/.a
-set(INSTALL_PLUGINS_FOLDER "bin${OSGEARTH_INSTALL_FOLDER_SUFFIX}")  # parent folder of OSG plugins folder
+include(GNUInstallDirs)
+
+if(BUILDING_VCPKG_PORT)
+    # this path taken when vcpkg is building from the portfile.
+    set(OSGEARTH_INSTALL_PLUGINSDIR "plugins")
+    set(OSGEARTH_INSTALL_CMAKEDIR "${CMAKE_INSTALL_DATADIR}/osgearth")
+else()
+    if(WIN32)
+        set(OSGEARTH_INSTALL_PLUGINSDIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING "Parent folder of OSG plugins folder")
+    else()
+        set(OSGEARTH_INSTALL_PLUGINSDIR "${CMAKE_INSTALL_LIBDIR}" CACHE STRING "Parent folder of OSG plugins folder")
+    endif()
+    set(OSGEARTH_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/osgearth" CACHE STRING "osgEarth CMake package install directory")
+endif()
+
+set(OSGEARTH_INSTALL_DATADIR "${CMAKE_INSTALL_DATADIR}/osgearth" CACHE STRING "osgEarth data directory")
+
+# Platform-specific settings ............................................
 
 include(oe_ios)
 include(oe_osx)
@@ -106,6 +116,22 @@ if(WIN32)
     option(OSGEARTH_INSTALL_PDBS "Whether to deploy Windows .pdb files" OFF)
 endif()
 
+
+# Shared v. static build .................................................
+
+option(OSGEARTH_BUILD_SHARED_LIBS "ON to build shared libraries; OFF to build static libraries." ON)
+if(OSGEARTH_BUILD_SHARED_LIBS)
+    set(OSGEARTH_DYNAMIC_OR_STATIC "SHARED")
+else()
+    set(OSGEARTH_DYNAMIC_OR_STATIC "STATIC")
+endif()
+message(STATUS "Building ${OSGEARTH_DYNAMIC_OR_STATIC} libraries")
+
+
+# Whether to append SOVERSIONs to libraries (unix)
+option(OSGEARTH_SONAMES "ON to append so-version numbers to libraries" ON)
+
+
 # Dependencies ...........................................................
 
 # Update git submodules
@@ -125,6 +151,15 @@ endif()
 find_package(OpenGL REQUIRED)
 find_package(OpenSceneGraph REQUIRED COMPONENTS osgManipulator osgShadow osgSim osgViewer osgGA osgUtil osgText osgDB osg OpenThreads)
 
+# For static builds we need to link with Fontconfig directly.
+# There is an unknown issue where the Fc symbols are not found when linking executables statically.
+if(NOT OSGEARTH_BUILD_SHARED_LIBS)
+    find_package(Fontconfig QUIET)
+    if (Fontconfig_FOUND)
+        list(APPEND OPENSCENEGRAPH_LIBRARIES Fontconfig::Fontconfig)
+    endif()
+endif()
+
 # integrated profiling with tracy?
 if(OSGEARTH_ENABLE_PROFILING)
     find_package(Tracy)
@@ -132,6 +167,9 @@ if(OSGEARTH_ENABLE_PROFILING)
         message(STATUS "Found Tracy. Enabling frame profiling.")
     endif()
 endif()
+
+# Find SuperLuminalAPI
+find_package(SuperluminalAPI QUIET)
 
 # optimization option:
 if(OSGEARTH_ASSUME_SINGLE_GL_CONTEXT)
@@ -167,19 +205,6 @@ mark_as_advanced(OSGEARTH_GLCORE_INCLUDE_DIR)
 if(OSGEARTH_GLCORE_INCLUDE_DIR)
     include_directories(${OSGEARTH_GLCORE_INCLUDE_DIR})
 endif()
-
-# Shared v. static build .................................................
-
-option(OSGEARTH_BUILD_SHARED_LIBS "ON to build shared libraries; OFF to build static libraries." ON)
-if(OSGEARTH_BUILD_SHARED_LIBS)
-    set(OSGEARTH_DYNAMIC_OR_STATIC "SHARED")
-else()
-    set(OSGEARTH_DYNAMIC_OR_STATIC "STATIC")
-endif()
-message(STATUS "Building ${OSGEARTH_DYNAMIC_OR_STATIC} libraries")
-
-# Whether to append SOVERSIONs to libraries (unix)
-option(OSGEARTH_SONAMES "ON to append so-version numbers to libraries" ON)
 
 
 # Source code ............................................................

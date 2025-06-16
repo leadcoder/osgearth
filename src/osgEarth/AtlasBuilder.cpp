@@ -1,20 +1,6 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/AtlasBuilder>
 #include <osgDB/FileNameUtils>
@@ -112,17 +98,15 @@ AtlasBuilder::build(const ResourceLibrary* inputLib,
     // fetch all the skins from the catalog:
     SkinResourceVector skins;
     out._lib->getSkins( skins );
-    for(SkinResourceVector::iterator i = skins.begin(); i != skins.end(); ++i)
+    for(auto& skin : skins)
     {
-        SkinResource* skin = i->get();
-
         // skip skins that say "no atlas please"
         if ( skin->atlasHint() == false )
         {
             continue;
         }
 
-        osg::ref_ptr<osg::Image> image = skin->createImage( _options.get() );
+        osg::ref_ptr<osg::Image> image = skin->createColorImage( _options.get() );
         if ( image.valid() )
         {
             OE_INFO << LC << "Loaded skin file: " << skin->imageURI()->full() << std::endl;
@@ -132,7 +116,7 @@ AtlasBuilder::build(const ResourceLibrary* inputLib,
             {
                 OE_WARN << LC <<
                     "Found an image with more than one layer. You cannot create an "
-                    "altas from another atlas. Stopping." << std::endl;
+                    "atlas from another atlas. Stopping." << std::endl;
                 return false;
             }
 
@@ -230,7 +214,7 @@ AtlasBuilder::build(const ResourceLibrary* inputLib,
         unsigned t = mainAtlasList[r]->_image->t();
 
         OE_INFO << LC
-            << "Altas image " << r << ": size = (" << s << ", " << t << ")" << std::endl;
+            << "Atlas image " << r << ": size = (" << s << ", " << t << ")" << std::endl;
 
         if ( s > maxS )
             maxS = s;

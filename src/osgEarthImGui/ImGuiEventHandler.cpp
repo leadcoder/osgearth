@@ -1,34 +1,18 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2018 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include "ImGuiEventHandler"
 #include "imgui_internal.h"
 #include "imgui_impl_opengl3.h"
-#include <osgEarth/GLUtils>
 
 using namespace osgEarth;
 
 #include "ImGuiPanel"
-void ImGuiPanel::dirtySettings()
-{
-    if (ImGui::GetCurrentContext())
-        ImGui::MarkIniSettingsDirty();
-}
+
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
 
 namespace
 {
@@ -51,36 +35,26 @@ namespace
     };
 }
 
-ImGuiRealizeOperation::ImGuiRealizeOperation() :
-    osg::Operation("ImGuiRealizeOperation", false)
-{
-    //nop
-}
-
-void
-ImGuiRealizeOperation::operator()(osg::Object* object)
-{
-    osg::GraphicsContext* context = dynamic_cast<osg::GraphicsContext*>(object);
-    if (context)
-    {
-        if (glewInit() != GLEW_OK)
-        {
-            OE_FATAL << "glewInit() failed" << std::endl;
-        }
-    }
-}
-
 void
 ImGuiEventHandler::newFrame(osg::RenderInfo& renderInfo)
 {
     if (_firstFrame)
     {
         ImGui::CreateContext();
+        ImNodes::CreateContext();
+        //ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
+        ImNodesIO& imNodesio = ImNodes::GetIO();
+        imNodesio.LinkDetachWithModifierClick.Modifier = &ImGui::GetIO().KeyCtrl;
+        imNodesio.MultipleSelectModifier.Modifier = &ImGui::GetIO().KeyCtrl;
+
         ImGui_ImplOpenGL3_Init();
         auto& io = ImGui::GetIO();
 #ifdef IMGUI_HAS_DOCK
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 #endif
+        // call a user startup function if set
+        if (onStartup)
+            onStartup();
     }
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -112,8 +86,11 @@ namespace
 void ImGuiEventHandler::handleReadSetting(
     ImGuiContext* ctx, ImGuiSettingsHandler* handler, void* entry, const char* line)
 {
-    std::vector<std::string> tokens;
-    StringTokenizer(std::string(line), tokens, "=");
+    auto tokens = StringTokenizer()
+        .delim("=")
+        .standardQuotes()
+        .tokenize(std::string(line));
+
     if (tokens.size() == 2)
     {
         s_guiHandler->load(entry, tokens[0], tokens[1]);
@@ -209,6 +186,25 @@ void ImGuiEventHandler::render(osg::RenderInfo& ri)
             camera->setProjectionMatrixAsOrtho(viewport->x(), viewport->x() + viewport->width(), viewport->y(), viewport->y() + viewport->height(), znear, zfar);
         }
     }
+
+    if (_dirtySettings)
+    {
+        if (ImGui::GetCurrentContext())
+            ImGui::MarkIniSettingsDirty();
+
+        _dirtySettings = false;
+    }
+}
+
+namespace
+{
+    void applyModifiers(const osgGA::GUIEventAdapter& ea, ImGuiIO& io)
+    {
+        io.AddKeyEvent(ImGuiMod_Ctrl, (ea.getModKeyMask() & ea.MODKEY_CTRL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (ea.getModKeyMask() & ea.MODKEY_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (ea.getModKeyMask() & ea.MODKEY_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (ea.getModKeyMask() & ea.MODKEY_SUPER) != 0);
+    }
 }
 
 bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)
@@ -218,8 +214,9 @@ bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActio
         auto view = aa.asView();
         if (view)
         {
-            view->getCamera()->setPreDrawCallback(new PreDrawOp(*this));
-            view->getCamera()->setPostDrawCallback(new PostDrawOp(*this));
+            osg::Camera* camera = view->getNumSlaves() > 0 ? view->getSlave(0)._camera.get() : view->getCamera();
+            camera->setPreDrawCallback(new PreDrawOp(*this));
+            camera->setPostDrawCallback(new PostDrawOp(*this));
             _initialized = true;
             return false;
         }
@@ -247,11 +244,7 @@ bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActio
 
         if (io.WantCaptureKeyboard || c == ea.KEY_Return)
         {
-            // first apply any modifiers:
-            io.AddKeyEvent(ImGuiMod_Ctrl, (ea.getModKeyMask() & ea.MODKEY_CTRL) != 0);
-            io.AddKeyEvent(ImGuiMod_Shift, (ea.getModKeyMask() & ea.MODKEY_SHIFT) != 0);
-            io.AddKeyEvent(ImGuiMod_Alt, (ea.getModKeyMask() & ea.MODKEY_ALT) != 0);
-            io.AddKeyEvent(ImGuiMod_Super, (ea.getModKeyMask() & ea.MODKEY_SUPER) != 0);
+            applyModifiers(ea, io);
 
             // map the OSG key code to the ImGui key code and send to imgui:
             auto imgui_key = convertKey(c);
@@ -280,9 +273,16 @@ bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActio
     {
         if (io.WantCaptureMouse)
         {
-            auto imgui_button = convertMouseButton(ea.getButtonMask());
+            applyModifiers(ea, io);
+
             io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
-            io.AddMouseButtonEvent(imgui_button, true); // true = press
+
+            if (ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON)
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            else if (ea.getButton() == osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON)
+                io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+            else if (ea.getButton() == osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON)
+                io.AddMouseButtonEvent(ImGuiMouseButton_Middle, true);
         }
         return io.WantCaptureMouse;
     }
@@ -293,8 +293,13 @@ bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActio
         {
             io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
         }
-        auto imgui_button = convertMouseButton(ea.getButtonMask());
-        io.AddMouseButtonEvent(imgui_button, false); // false = release
+
+        if (ea.getButton() == osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON)
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        else if (ea.getButton() == osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON)
+            io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+        else if (ea.getButton() == osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON)
+            io.AddMouseButtonEvent(ImGuiMouseButton_Middle, false);
 
         return io.WantCaptureMouse;
     }
@@ -302,17 +307,19 @@ bool ImGuiEventHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActio
     case (osgGA::GUIEventAdapter::DRAG):
     case (osgGA::GUIEventAdapter::MOVE):
     {
+        applyModifiers(ea, io);
         io.AddMousePosEvent(ea.getX(), io.DisplaySize.y - ea.getY());
         return io.WantCaptureMouse;
     }
 
     case (osgGA::GUIEventAdapter::SCROLL):
     {
+        applyModifiers(ea, io);
         auto scrolling = ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0 : -1.0;
         io.AddMouseWheelEvent(0.0, io.MouseWheel += scrolling);
         return io.WantCaptureMouse;
     }
-        }
+    }
 
     return false;
 }
@@ -369,17 +376,4 @@ ImGuiEventHandler::convertKey(int c)
     }
 
     return ImGuiKey_None;
-}
-
-ImGuiButtonFlags
-ImGuiEventHandler::convertMouseButton(int m)
-{
-    ImGuiButtonFlags flags = 0;
-    if (m & osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON)
-        flags |= ImGuiMouseButton_Left;
-    if (m & osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON)
-        flags |= ImGuiMouseButton_Right;
-    if (m & osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON)
-        flags |= ImGuiMouseButton_Middle;
-    return flags;
 }

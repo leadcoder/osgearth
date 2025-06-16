@@ -1,26 +1,10 @@
-/* -*-c++-*- */
-/* osgEarth - Geospatial SDK for OpenSceneGraph
- * Copyright 2020 Pelican Mapping
- * http://osgearth.org
- *
- * osgEarth is free software; you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
+/* osgEarth
+ * Copyright 2025 Pelican Mapping
+ * MIT License
  */
 #include <osgEarth/FeatureSourceIndexNode>
-#include <osgEarth/Registry>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/Metrics>
-#include <algorithm>
 
 using namespace osgEarth;
 
@@ -49,20 +33,18 @@ namespace
 //-----------------------------------------------------------------------------
 
 
-FeatureSourceIndexOptions::FeatureSourceIndexOptions(const Config& conf) :
-_enabled      ( false ),
-_embedFeatures( false )
+FeatureSourceIndexOptions::FeatureSourceIndexOptions(const Config& conf)
 {
-    conf.get( "enabled",        _enabled );
-    conf.get( "embed_features", _embedFeatures );
+    conf.get("enabled", _enabled);
+    conf.get("embed_features", _embedFeatures);
 }
 
 Config
 FeatureSourceIndexOptions::getConfig() const
 {
     Config conf("feature_indexing");
-    conf.set( "enabled",        _enabled );
-    conf.set( "embed_features", _embedFeatures );
+    conf.set("enabled", _enabled);
+    conf.set("embed_features", _embedFeatures);
     return conf;
 }
 
@@ -145,12 +127,6 @@ FeatureSourceIndexNode::getAllFIDs(std::vector<FeatureID>& output) const
     {
         output.push_back(iter.first);
     }
-    //KeyIter<FID_to_RefIDPair> start( _fids.begin() );
-    //KeyIter<FID_to_RefIDPair> end  ( _fids.end() );
-    //for(KeyIter<FID_to_RefIDPair> i = start; i != end; ++i )
-    //{
-    //    output.push_back( *i );
-    //}
 
     return true;
 }
